@@ -4,6 +4,7 @@ import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -46,6 +47,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -163,69 +165,104 @@ fun HostDashboardScreen(
             .fillMaxSize()
             .testTag("host-dashboard-screen"),
     ) {
-        TopAppBar(
-            title = { Text(uiState.hostForm.sessionName.ifBlank { "Hosting" }) },
-            navigationIcon = {
-                IconButton(
-                    onClick = onBackRequest,
-                    modifier = Modifier.size(WorkflowTouchTarget.minimum),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                }
-            },
-            actions = {
-                IconButton(
-                    onClick = onAddSongs,
-                    modifier = Modifier.size(WorkflowTouchTarget.minimum),
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = "Add songs")
-                }
-                IconButton(
-                    onClick = onManageQueue,
-                    modifier = Modifier.size(WorkflowTouchTarget.minimum),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Manage queue")
-                }
-                TextButton(
-                    onClick = onInvite,
-                    modifier = Modifier.heightIn(min = WorkflowTouchTarget.minimum),
-                ) { Text("Invite") }
-                IconButton(
-                    onClick = { overflowOpen = true },
-                    modifier = Modifier.size(WorkflowTouchTarget.minimum),
-                ) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "Session actions")
-                }
-                DropdownMenu(
-                    expanded = overflowOpen,
-                    onDismissRequest = { overflowOpen = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Connection help") },
-                        onClick = {
-                            overflowOpen = false
-                            onOpenConnectionHelp()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("End session", color = MaterialTheme.colorScheme.error) },
-                        onClick = {
-                            overflowOpen = false
-                            onEndSessionRequest()
-                        },
-                    )
-                    if (BuildConfig.DEBUG) {
+        // A narrow or enlarged-text app bar cannot fit Back, title, Add,
+        // Queue, Invite and More. Keep the session actions discoverable in a
+        // 48 dp overflow target instead of clipping them outside the viewport.
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val compactActions = maxWidth < 340.dp || LocalDensity.current.fontScale >= 1.5f
+            TopAppBar(
+                title = { Text(uiState.hostForm.sessionName.ifBlank { "Hosting" }, maxLines = 1) },
+                navigationIcon = {
+                    IconButton(
+                        onClick = onBackRequest,
+                        modifier = Modifier.size(WorkflowTouchTarget.minimum),
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    if (!compactActions) {
+                        IconButton(
+                            onClick = onAddSongs,
+                            modifier = Modifier.size(WorkflowTouchTarget.minimum),
+                        ) {
+                            Icon(Icons.Filled.Add, contentDescription = "Add songs")
+                        }
+                        IconButton(
+                            onClick = onManageQueue,
+                            modifier = Modifier.size(WorkflowTouchTarget.minimum),
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "Manage queue")
+                        }
+                        TextButton(
+                            onClick = onInvite,
+                            modifier = Modifier.heightIn(min = WorkflowTouchTarget.minimum),
+                        ) { Text("Invite") }
+                    }
+                    IconButton(
+                        onClick = { overflowOpen = true },
+                        modifier = Modifier.size(WorkflowTouchTarget.minimum)
+                            .testTag("host-session-actions"),
+                    ) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Session actions")
+                    }
+                    DropdownMenu(
+                        expanded = overflowOpen,
+                        onDismissRequest = { overflowOpen = false },
+                    ) {
+                        if (compactActions) {
+                            DropdownMenuItem(
+                                text = { Text("Add songs") },
+                                modifier = Modifier.testTag("host-menu-add-songs"),
+                                onClick = {
+                                    overflowOpen = false
+                                    onAddSongs()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Manage queue") },
+                                modifier = Modifier.testTag("host-menu-manage-queue"),
+                                onClick = {
+                                    overflowOpen = false
+                                    onManageQueue()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Invite") },
+                                modifier = Modifier.testTag("host-menu-invite"),
+                                onClick = {
+                                    overflowOpen = false
+                                    onInvite()
+                                },
+                            )
+                        }
                         DropdownMenuItem(
-                            text = { Text("[Debug] Add demo join") },
+                            text = { Text("Connection help") },
                             onClick = {
                                 overflowOpen = false
-                                onAddDemoJoinRequest()
+                                onOpenConnectionHelp()
                             },
                         )
+                        DropdownMenuItem(
+                            text = { Text("End session", color = MaterialTheme.colorScheme.error) },
+                            onClick = {
+                                overflowOpen = false
+                                onEndSessionRequest()
+                            },
+                        )
+                        if (BuildConfig.DEBUG) {
+                            DropdownMenuItem(
+                                text = { Text("[Debug] Add demo join") },
+                                onClick = {
+                                    overflowOpen = false
+                                    onAddDemoJoinRequest()
+                                },
+                            )
+                        }
                     }
-                }
-            },
-        )
+                },
+            )
+        }
 
         Card(modifier = Modifier.fillMaxWidth().padding(horizontal = WorkflowSpacing.large)) {
             Column(

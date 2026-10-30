@@ -75,6 +75,7 @@ class WorkflowScreenshotCaptureTest {
         LIVE_ERROR("host_live_playback_error", 360, 640, 1f),
         LIVE_ENDED("host_live_queue_ended", 360, 640, 1f),
         LIVE_LANDSCAPE("host_live_landscape", 640, 360, 1f),
+        LIVE_COMPACT_LARGE("host_live_compact_large_text", 320, 480, 2f),
         PENDING_APPROVAL("host_pending_approval", 360, 640, 1f),
         CLIENT_INVITE_CODE("client_invite_code", 360, 640, 1f),
         CLIENT_INVITE_CODE_LARGE("client_invite_code_large_text", 320, 480, 2f),
@@ -189,7 +190,7 @@ class WorkflowScreenshotCaptureTest {
                                 onRemoveQueueEntry = {},
                             )
                             Scene.PENDING_APPROVAL, Scene.LIVE_PLAYING, Scene.LIVE_PAUSED,
-                            Scene.LIVE_LANDSCAPE, Scene.LIVE_BUFFERING, Scene.LIVE_ERROR,
+                            Scene.LIVE_LANDSCAPE, Scene.LIVE_COMPACT_LARGE, Scene.LIVE_BUFFERING, Scene.LIVE_ERROR,
                             Scene.LIVE_ENDED -> HostDashboardScreen(
                                 uiState = state.copy(
                                     selectedRole = AppRole.HOST,

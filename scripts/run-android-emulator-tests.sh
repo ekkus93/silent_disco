@@ -57,6 +57,7 @@ expected = {
     "host_live_playback_error": (360, 640),
     "host_live_queue_ended": (360, 640),
     "host_live_landscape": (640, 360),
+    "host_live_compact_large_text": (320, 480),
     "host_pending_approval": (360, 640),
     "client_invite_code": (360, 640),
     "client_invite_code_large_text": (320, 480),
