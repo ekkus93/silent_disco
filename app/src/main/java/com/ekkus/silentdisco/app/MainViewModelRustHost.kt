@@ -547,8 +547,12 @@ private suspend fun MainViewModel.executeRustTransportEffect(
 
     val delivery = when (effect) {
         is FfiTransportEffect.DeliverJoinRejection -> {
-            pendingListenerDatagramPorts.discard(effect.requestId, effect.listenerId)
-            hostTransportController.sendJoinRejection(effect.listenerId, effect.reasonCode)
+            val route = pendingListenerDatagramPorts.take(effect.requestId, effect.listenerId)
+            route?.let {
+                hostTransportController.sendJoinRejectionForGeneration(
+                    it.sourceHandle, effect.listenerId, effect.reasonCode,
+                )
+            }
         }
         is FfiTransportEffect.DisconnectListener -> {
             pendingListenerDatagramPorts.removeDevice(effect.listenerId)

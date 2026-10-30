@@ -54,6 +54,18 @@ class HostTransportGenerationAdmissionTest {
             assertThat(fresh?.delivery).isEqualTo(delivered)
             Mockito.verify(replacement).authorizeListener("reused-device-id", 211u, 212u)
             Mockito.verify(replacement, Mockito.never()).authorizeListener("reused-device-id", 111u, 112u)
+
+            // Rejection is also bound to the originating native generation;
+            // an old actor rejection must not kick the fresh same-ID peer.
+            assertThat(controller.sendJoinRejectionForGeneration(
+                old, "reused-device-id", "stale-denial",
+            )).isNull()
+            Mockito.verify(replacement, Mockito.never()).sendJoinRejection("reused-device-id", "stale-denial")
+            Mockito.`when`(replacement.sendJoinRejection("reused-device-id", "current-denial"))
+                .thenReturn(delivered)
+            assertThat(controller.sendJoinRejectionForGeneration(
+                replacement, "reused-device-id", "current-denial",
+            )).isEqualTo(delivered)
         } finally {
             controller.close()
         }

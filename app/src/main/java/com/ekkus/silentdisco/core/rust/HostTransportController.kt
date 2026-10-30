@@ -129,6 +129,15 @@ class HostTransportController(
     suspend fun sendJoinRejection(listenerId: String, reason: String): FfiHostTransportDelivery? =
         withHandle { it.sendJoinRejection(listenerId, reason) }
 
+    /** Never reject a replacement session's same-ID listener for an old actor request. */
+    internal suspend fun sendJoinRejectionForGeneration(
+        expected: FfiHostTransportHandle,
+        listenerId: String,
+        reason: String,
+    ): FfiHostTransportDelivery? = withContext(callDispatcher) {
+        handleGate.withExpected(expected) { it.sendJoinRejection(listenerId, reason) }
+    }
+
     suspend fun disconnectPeer(listenerId: String, reason: String): FfiHostTransportDelivery? =
         withHandle { it.disconnectPeer(listenerId, reason) }
 

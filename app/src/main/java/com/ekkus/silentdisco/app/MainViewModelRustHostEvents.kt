@@ -1,6 +1,10 @@
 package com.ekkus.silentdisco.app
 
 import android.os.SystemClock
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
@@ -20,12 +24,25 @@ internal fun MainViewModel.handleHostTransportEvent(
                 requestId, event.deviceId, event.syncPort, event.audioPort, sourceHandle,
             )
             if (!tracked) {
-                // Bounded route tracking must fail closed rather than silently
-                // losing the original TCP generation and approving another one.
+                // Do not enqueue an unapprovable actor request. Attempt a
+                // generation-bound busy refusal on the original TCP session
+                // instead of silently dropping this accepted join under load.
                 reportRustHostCommandFailure(
                     "track listener join",
                     IllegalStateException("Pending listener route capacity exceeded"),
                 )
+                viewModelScope.launch(Dispatchers.IO) {
+                    try {
+                        hostTransportController.sendJoinRejectionForGeneration(
+                            sourceHandle, event.deviceId, "host_busy",
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        reportRustHostCommandFailure("reject saturated join", error)
+                    }
+                }
+                return
             }
             runCatching {
                 controller.submitJoinRequest(
