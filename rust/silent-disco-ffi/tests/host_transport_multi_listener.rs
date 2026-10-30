@@ -165,7 +165,6 @@ fn assert_stream_start_and_boundary(
             }
         ));
     }
-
 }
 
 fn assert_targeted_clock_sync(
@@ -218,7 +217,6 @@ fn assert_targeted_clock_sync(
             .is_err(),
         "unknown peer cannot receive a targeted synchronization response"
     );
-
 }
 
 fn assert_pause_recovery(
@@ -277,7 +275,6 @@ fn assert_pause_recovery(
             ..
         }
     ));
-
 }
 
 fn assert_terminal_stop(
@@ -301,7 +298,6 @@ fn assert_terminal_stop(
             }
         ));
     }
-
 }
 
 fn assert_fresh_pcm(
