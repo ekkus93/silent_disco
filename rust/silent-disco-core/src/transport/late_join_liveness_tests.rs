@@ -94,7 +94,8 @@ fn late_joined_listener_keeps_replayed_boundary_while_sync_probes_refresh_livene
         // Exercise the complete host-to-listener synchronization round trip,
         // not merely the inbound probe that refreshes host liveness.
         let response = sync_response(&session_id, round + 1, clock.now().get());
-        let sync_delivery = host.send_sync_to_peer(&device_id, &response)
+        let sync_delivery = host
+            .send_sync_to_peer(&device_id, &response)
             .expect("targeted host sync response");
         assert_eq!(sync_delivery.report.intended_peers, 1);
         assert_eq!(sync_delivery.report.successful_peers, 1);
@@ -234,7 +235,8 @@ fn assert_only_probing_late_joiner_survives(
         // The active late joiner must receive the reply even while the
         // earlier peer is being evicted for silence.
         let response = sync_response(session_id, round + 1, clock.now().get());
-        let sync_delivery = host.send_sync_to_peer(active_id, &response)
+        let sync_delivery = host
+            .send_sync_to_peer(active_id, &response)
             .expect("targeted host sync response");
         assert_eq!(sync_delivery.report.intended_peers, 1);
         assert_eq!(sync_delivery.report.successful_peers, 1);
@@ -551,3 +553,28 @@ fn late_join_pause_replay_and_resume_keep_one_active_boundary() {
 
 fn assert_resumed_late_join_controls(
     listener: &mut dyn super::ListenerTransportNode,
+    expected: &[ControlMessage],
+) {
+    use std::time::{Duration, Instant};
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut received = Vec::new();
+    while received.len() < expected.len() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "missing resumed late-join controls");
+        if let super::TransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            frame: ProtocolFrame::Control(message),
+            ..
+        } = listener
+            .recv_event(remaining)
+            .expect("resumed listener control event")
+        {
+            received.push(message);
+        }
+    }
+    assert!(
+        received.as_slice() == expected,
+        "resumed late join must replay StreamStart and upcoming boundary without stale Pause"
+    );
+}
