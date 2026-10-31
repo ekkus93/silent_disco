@@ -177,10 +177,12 @@ fn full_join_and_approval_flow_delivers_typed_events() {
     };
     host.authorize_peer(&device_id, routes)
         .expect("host should authorize the peer");
+    // Plaintext v3 cannot assert durable identity; session-only approval
+    // remains valid and is the only approval the listener FFI may accept.
     let approval = ControlMessage::JoinApproval(silent_disco_core::protocol::JoinApproval {
         session_id: session_id.clone(),
         listener_id: device_id.clone(),
-        trusted_for_future: true,
+        trusted_for_future: false,
     });
     host.send_control(&device_id, &approval)
         .expect("approval should be deliverable to the authorized peer");
@@ -190,7 +192,7 @@ fn full_join_and_approval_flow_delivers_typed_events() {
     assert_eq!(
         approved,
         FfiListenerTransportEvent::JoinApproved {
-            trusted_for_future: true
+            trusted_for_future: false
         }
     );
 
