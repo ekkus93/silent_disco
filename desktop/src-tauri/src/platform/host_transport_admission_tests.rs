@@ -132,7 +132,6 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
     runtime.shutdown().expect("runtime shutdown");
 }
 
-
 #[test]
 fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
     let factory = production_transport_factory();
@@ -141,7 +140,10 @@ fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
     let listener_id = DeviceId::new("legacy-unverified-desktop-listener").expect("listener");
     let clock = Arc::new(SystemTransportClock::default());
     let node = factory
-        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .bind_host(
+            HostTransportConfig::loopback(session.clone()),
+            clock.clone(),
+        )
         .expect("bind host");
     let endpoint = node.endpoint();
     let (sender, receiver) = mpsc::channel();
@@ -149,13 +151,9 @@ fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
         snapshot: Mutex::new(CoreSnapshot::default()),
         sender,
     });
-    let runtime = DesktopHostTransportRuntime::start(
-        node,
-        advertisement(&session, &host_id),
-        sink,
-        clock,
-    )
-    .expect("runtime");
+    let runtime =
+        DesktopHostTransportRuntime::start(node, advertisement(&session, &host_id), sink, clock)
+            .expect("runtime");
     let mut listener = connect_listener(&factory, &session, &listener_id, endpoint);
     send_join(listener.as_ref(), &session, &listener_id);
     wait_for_control(listener.as_mut(), |message| {
@@ -196,7 +194,10 @@ fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
                 && report.failed_peers == 1
     ));
     assert!(
-        runtime.status().expect("status").last_error
+        runtime
+            .status()
+            .expect("status")
+            .last_error
             .as_deref()
             .is_some_and(|error| error.contains("cannot remember an unverified listener")),
         "host must expose why a plaintext approval was refused"
