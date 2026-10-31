@@ -259,15 +259,39 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # Ubuntu hosted images contain large toolchains unrelated to this job.
+      # The API 29 emulator needs ~7.4 GiB for its userdata partition *after*
+      # SDK/NDK installation; without cleanup the runner can boot with only
+      # ~4.6 GiB free and fail before any instrumentation tests execute.
+      - name: Reclaim unused hosted-runner toolchains for the emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf -- \
+            /usr/share/dotnet \
+            /usr/local/share/powershell \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/swift
+          df -h /
+
       - name: Install required Android SDK and NDK packages
         run: bash scripts/install-android-sdk-packages.sh
 
       - name: Install pinned Rust toolchain for Android
         run: rustup toolchain install 1.97.1 --profile minimal
 
-      - name: Report emulator runner disk availability
+      - name: Verify emulator runner disk headroom
         shell: bash
-        run: df -h /
+        run: |
+          set -euo pipefail
+          df -h /
+          # Reserve 10 GiB for emulator userdata, system image and Gradle work.
+          available_kib=$(df -Pk / | awk 'NR == 2 { print $4 }')
+          if (( available_kib < 10 * 1024 * 1024 )); then
+            echo "::error::Insufficient free disk for API 29 emulator: ${available_kib} KiB (need at least 10 GiB)."
+            exit 1
+          fi
 
       - name: Run instrumentation suite on snapshot-free API 29 emulator
         id: connected-tests
