@@ -514,6 +514,97 @@ fn resume_after_reconnect(
     }
 }
 
+fn assert_stop_and_replay_after_reconnect(
+    host: &FfiHostTransportHandle,
+    listener_a: &FfiListenerTransportHandle,
+    replacement: &FfiListenerTransportHandle,
+) {
+    // A Stop immediately after peer replacement must reach both live sockets.
+    // The following Play starts at sample zero on a fresh stream; neither
+    // survivor may accidentally resume the stopped stream's cached timeline.
+    assert_eq!(
+        host.broadcast_stop("ffi-fresh-stream".to_owned(), 2_200)
+            .expect("stop after reconnect")
+            .successful_peers,
+        2
+    );
+    for listener in [listener_a, replacement] {
+        assert!(matches!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::Stopped { .. }
+            )),
+            FfiListenerTransportEvent::Stopped {
+                stream_id,
+                host_stop_time_ms: 2_200,
+            } if stream_id == "ffi-fresh-stream"
+        ));
+    }
+    assert_eq!(
+        host.broadcast_stream_start(
+            "ffi-after-reconnect-stop".to_owned(),
+            3_000,
+            48_000,
+            2,
+            240,
+            Some("new-first".to_owned()),
+            Some("New first track".to_owned()),
+        )
+        .expect("play after reconnect Stop")
+        .successful_peers,
+        2
+    );
+    for listener in [listener_a, replacement] {
+        assert!(matches!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::StreamStarted { .. }
+            )),
+            FfiListenerTransportEvent::StreamStarted {
+                stream_id,
+                current_entry_id: Some(entry),
+                ..
+            } if stream_id == "ffi-after-reconnect-stop" && entry == "new-first"
+        ));
+    }
+    let restarted_pcm: Vec<u8> = (0..960_u32)
+        .map(|index| u8::try_from((index * 23) % 256).expect("byte"))
+        .collect();
+    assert_eq!(
+        host.broadcast_audio(
+            "ffi-after-reconnect-stop".to_owned(),
+            0,
+            48_000,
+            2,
+            240,
+            0,
+            3_000,
+            restarted_pcm.clone(),
+        )
+        .expect("broadcast first PCM after Stop/replay")
+        .successful_peers,
+        2
+    );
+    for listener in [listener_a, replacement] {
+        assert_eq!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::AudioReceived { .. }
+            )),
+            FfiListenerTransportEvent::AudioReceived {
+                stream_id: "ffi-after-reconnect-stop".to_owned(),
+                sequence: 0,
+                sample_rate: 48_000,
+                channels: 2,
+                samples_per_packet: 240,
+                first_sample_index: 0,
+                host_presentation_time_ms: 3_000,
+                payload: restarted_pcm.clone(),
+            }
+        );
+    }
+}
+
 /// Replacing a still-live TCP socket with the same logical ID must retire
 /// only its old generation. The survivor remains live, the new generation
 /// gets cached Pause, and post-resume UDP reaches exactly the two live peers.
@@ -599,90 +690,7 @@ fn assert_reconnect_and_resume_pcm(
         ),
         "retired generation must not receive post-reconnect PCM or control"
     );
-    // A Stop immediately after peer replacement must reach both live sockets.
-    // The following Play starts at sample zero on a fresh stream; neither
-    // survivor may accidentally resume the stopped stream's cached timeline.
-    assert_eq!(
-        host.broadcast_stop("ffi-fresh-stream".to_owned(), 2_200)
-            .expect("stop after reconnect")
-            .successful_peers,
-        2
-    );
-    for listener in [listener_a, &replacement] {
-        assert!(matches!(
-            poll_listener_until(listener, |event| matches!(
-                event,
-                FfiListenerTransportEvent::Stopped { .. }
-            )),
-            FfiListenerTransportEvent::Stopped {
-                stream_id,
-                host_stop_time_ms: 2_200,
-            } if stream_id == "ffi-fresh-stream"
-        ));
-    }
-    assert_eq!(
-        host.broadcast_stream_start(
-            "ffi-after-reconnect-stop".to_owned(),
-            3_000,
-            48_000,
-            2,
-            240,
-            Some("new-first".to_owned()),
-            Some("New first track".to_owned()),
-        )
-        .expect("play after reconnect Stop")
-        .successful_peers,
-        2
-    );
-    for listener in [listener_a, &replacement] {
-        assert!(matches!(
-            poll_listener_until(listener, |event| matches!(
-                event,
-                FfiListenerTransportEvent::StreamStarted { .. }
-            )),
-            FfiListenerTransportEvent::StreamStarted {
-                stream_id,
-                current_entry_id: Some(entry),
-                ..
-            } if stream_id == "ffi-after-reconnect-stop" && entry == "new-first"
-        ));
-    }
-    let restarted_pcm: Vec<u8> = (0..960_u32)
-        .map(|index| u8::try_from((index * 23) % 256).expect("byte"))
-        .collect();
-    assert_eq!(
-        host.broadcast_audio(
-            "ffi-after-reconnect-stop".to_owned(),
-            0,
-            48_000,
-            2,
-            240,
-            0,
-            3_000,
-            restarted_pcm.clone(),
-        )
-        .expect("broadcast first PCM after Stop/replay")
-        .successful_peers,
-        2
-    );
-    for listener in [listener_a, &replacement] {
-        assert_eq!(
-            poll_listener_until(listener, |event| matches!(
-                event,
-                FfiListenerTransportEvent::AudioReceived { .. }
-            )),
-            FfiListenerTransportEvent::AudioReceived {
-                stream_id: "ffi-after-reconnect-stop".to_owned(),
-                sequence: 0,
-                sample_rate: 48_000,
-                channels: 2,
-                samples_per_packet: 240,
-                first_sample_index: 0,
-                host_presentation_time_ms: 3_000,
-                payload: restarted_pcm.clone(),
-            }
-        );
-    }
+    assert_stop_and_replay_after_reconnect(host, listener_a, &replacement);
     replacement.shutdown().expect("close reconnected listener");
 }
 
