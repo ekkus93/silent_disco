@@ -534,13 +534,16 @@ fn assert_reconnect_and_resume_pcm(
     .expect("reconnect previous listener");
     let admitted = join_approve_and_authorize(host, &replacement, "Listener B Reconnected");
     assert_eq!(admitted, reconnect_id);
-    assert!(matches!(
-        poll_listener_until(retired, |event| matches!(
-            event,
+    assert!(
+        matches!(
+            poll_listener_until(retired, |event| matches!(
+                event,
+                FfiListenerTransportEvent::ConnectionClosed { .. }
+            )),
             FfiListenerTransportEvent::ConnectionClosed { .. }
-        )),
-        FfiListenerTransportEvent::ConnectionClosed { .. }
-    ), "the old authorized TCP generation must close on replacement");
+        ),
+        "the old authorized TCP generation must close on replacement"
+    );
     host.replay_cached_playback_to_listener(admitted)
         .expect("replay current stream to reconnected listener");
     assert!(matches!(
