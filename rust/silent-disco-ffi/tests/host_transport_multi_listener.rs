@@ -444,25 +444,31 @@ fn assert_late_join_recovery(
     late.shutdown().expect("close late listener");
 }
 
-/// Pause while the surviving listener is still attached, before the old
-/// listener's replacement is admitted. The host must retain paused state.
-fn pause_before_reconnect(host: &FfiHostTransportHandle, listener: &FfiListenerTransportHandle) {
+/// Pause while both live listeners are attached. The old TCP generation
+/// must receive Pause before its same-identity replacement takes over.
+fn pause_before_reconnect(
+    host: &FfiHostTransportHandle,
+    survivor: &FfiListenerTransportHandle,
+    retired: &FfiListenerTransportHandle,
+) {
     assert_eq!(
         host.broadcast_pause("ffi-fresh-stream".to_owned(), 2_015)
             .expect("pause before same-ID reconnect")
             .successful_peers,
-        1
+        2
     );
-    assert!(matches!(
-        poll_listener_until(listener, |event| matches!(
-            event,
-            FfiListenerTransportEvent::Paused { .. }
-        )),
-        FfiListenerTransportEvent::Paused {
-            host_pause_time_ms: 2_015,
-            ..
-        }
-    ));
+    for listener in [survivor, retired] {
+        assert!(matches!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::Paused { .. }
+            )),
+            FfiListenerTransportEvent::Paused {
+                host_pause_time_ms: 2_015,
+                ..
+            }
+        ));
+    }
 }
 
 /// The late replacement must first observe the authoritative cached Pause,
@@ -508,15 +514,17 @@ fn resume_after_reconnect(
     }
 }
 
-/// A replaced TCP socket with the same logical ID must receive a fresh
-/// authorization and explicit cache replay; surviving listeners remain live.
+/// Replacing a still-live TCP socket with the same logical ID must retire
+/// only its old generation. The survivor remains live, the new generation
+/// gets cached Pause, and post-resume UDP reaches exactly the two live peers.
 fn assert_reconnect_and_resume_pcm(
     host: &FfiHostTransportHandle,
     listener_a: &FfiListenerTransportHandle,
+    retired: &FfiListenerTransportHandle,
     endpoint: &str,
     reconnect_id: &str,
 ) {
-    pause_before_reconnect(host, listener_a);
+    pause_before_reconnect(host, listener_a, retired);
     let replacement = FfiListenerTransportHandle::connect(
         endpoint.to_owned(),
         now_wall_clock_ms(),
@@ -526,6 +534,13 @@ fn assert_reconnect_and_resume_pcm(
     .expect("reconnect previous listener");
     let admitted = join_approve_and_authorize(host, &replacement, "Listener B Reconnected");
     assert_eq!(admitted, reconnect_id);
+    assert!(matches!(
+        poll_listener_until(retired, |event| matches!(
+            event,
+            FfiListenerTransportEvent::ConnectionClosed { .. }
+        )),
+        FfiListenerTransportEvent::ConnectionClosed { .. }
+    ), "the old authorized TCP generation must close on replacement");
     host.replay_cached_playback_to_listener(admitted)
         .expect("replay current stream to reconnected listener");
     assert!(matches!(
@@ -574,6 +589,13 @@ fn assert_reconnect_and_resume_pcm(
             }
         );
     }
+    assert!(
+        retired
+            .poll_event(150)
+            .expect("poll retired listener after replacement")
+            .is_none(),
+        "retired generation must not receive post-reconnect PCM or control"
+    );
     replacement.shutdown().expect("close reconnected listener");
 }
 
@@ -617,21 +639,8 @@ fn ffi_two_listener_targeted_sync_pause_recovery_stop_and_fresh_pcm() {
     assert_terminal_stop(&host, &listener_a, &listener_b);
     assert_fresh_pcm(&host, &listener_a, &listener_b);
     assert_late_join_recovery(&host, &listener_a, &listener_b, &endpoint);
-    assert_eq!(
-        host.disconnect_peer(b_id.clone(), "peer B leaving".to_owned())
-            .expect("disconnect B")
-            .successful_peers,
-        1
-    );
-    assert!(matches!(
-        poll_listener_until(&listener_b, |event| matches!(
-            event,
-            FfiListenerTransportEvent::HostDisconnected { .. }
-        )),
-        FfiListenerTransportEvent::HostDisconnected { .. }
-    ));
-    listener_b.shutdown().expect("close listener B");
-    assert_reconnect_and_resume_pcm(&host, &listener_a, &endpoint, &b_id);
+    assert_reconnect_and_resume_pcm(&host, &listener_a, &listener_b, &endpoint, &b_id);
+    listener_b.shutdown().expect("close retired listener B");
     listener_a.shutdown().expect("close listener A");
     host.shutdown().expect("close host");
 }
