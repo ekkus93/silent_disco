@@ -693,7 +693,12 @@ fn assert_reconnect_and_resume_pcm(
         ),
         "retired generation must not receive post-reconnect PCM or control"
     );
-    reconnect::assert_post_reconnect_boundary_and_late_join(host, listener_a, &replacement, endpoint);
+    reconnect::assert_post_reconnect_boundary_and_late_join(
+        host,
+        listener_a,
+        &replacement,
+        endpoint,
+    );
     assert_stop_and_replay_after_reconnect(host, listener_a, &replacement);
     replacement.shutdown().expect("close reconnected listener");
 }
