@@ -438,10 +438,9 @@ fn assert_late_join_recovery(
             .successful_peers,
         1
     );
-    poll_listener_until(&late, |event| matches!(
-        event,
-        FfiListenerTransportEvent::HostDisconnected { .. }
-    ));
+    poll_listener_until(&late, |event| {
+        matches!(event, FfiListenerTransportEvent::HostDisconnected { .. })
+    });
     late.shutdown().expect("close late listener");
 }
 
