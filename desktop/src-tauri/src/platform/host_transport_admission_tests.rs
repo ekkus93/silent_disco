@@ -78,6 +78,10 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
     wait_for_control(&mut *listener, |message| {
         matches!(message, ControlMessage::Hello(_))
     });
+    assert!(matches!(
+        receiver.recv_timeout(TEST_TIMEOUT).expect("actor received join"),
+        CoreTransportEvent::JoinRequested(request) if request.device_id == listener_id
+    ));
 
     runtime
         .dispatch(
@@ -87,7 +91,7 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
                     request_id: RequestId::new("request-1").expect("request"),
                     session_id: session_id.clone(),
                     listener_id: listener_id.clone(),
-                    trusted_for_future: true,
+                    trusted_for_future: false,
                 },
             )
             .expect("effect"),
@@ -99,7 +103,7 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
             message,
             ControlMessage::JoinApproval(JoinApproval {
                 listener_id: delivered,
-                trusted_for_future: true,
+                trusted_for_future: false,
                 ..
             }) if delivered == &listener_id
         )
@@ -120,10 +124,87 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
         CoreTransportEvent::ListenerConnected(listener)
             if listener.device_id == listener_id
                 && listener.display_name == "Block 23 listener"
-                && listener.trust_state == silent_disco_core::domain::TrustState::Trusted
+                && listener.trust_state == silent_disco_core::domain::TrustState::SessionOnly
                 && listener.transport_state == silent_disco_core::domain::TransportState::Connected
     ));
 
+    listener.shutdown().expect("listener shutdown");
+    runtime.shutdown().expect("runtime shutdown");
+}
+
+
+#[test]
+fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
+    let factory = production_transport_factory();
+    let session = SessionId::new("legacy-unverified-desktop-session").expect("session");
+    let host_id = DeviceId::new("legacy-unverified-desktop-host").expect("host");
+    let listener_id = DeviceId::new("legacy-unverified-desktop-listener").expect("listener");
+    let clock = Arc::new(SystemTransportClock::default());
+    let node = factory
+        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .expect("bind host");
+    let endpoint = node.endpoint();
+    let (sender, receiver) = mpsc::channel();
+    let sink = Arc::new(RecordingSink {
+        snapshot: Mutex::new(CoreSnapshot::default()),
+        sender,
+    });
+    let runtime = DesktopHostTransportRuntime::start(
+        node,
+        advertisement(&session, &host_id),
+        sink,
+        clock,
+    )
+    .expect("runtime");
+    let mut listener = connect_listener(&factory, &session, &listener_id, endpoint);
+    send_join(listener.as_ref(), &session, &listener_id);
+    wait_for_control(listener.as_mut(), |message| {
+        matches!(message, ControlMessage::Hello(_))
+    });
+    assert!(matches!(
+        receiver.recv_timeout(TEST_TIMEOUT).expect("actor received join"),
+        CoreTransportEvent::JoinRequested(request) if request.device_id == listener_id
+    ));
+
+    runtime
+        .dispatch(
+            TransportEffect::new(
+                OperationId::new("unverified-durable-approval").expect("operation"),
+                TransportEffectRequest::DeliverJoinApproval {
+                    request_id: RequestId::new("unverified-request").expect("request"),
+                    session_id: session,
+                    listener_id: listener_id.clone(),
+                    trusted_for_future: true,
+                },
+            )
+            .expect("effect"),
+        )
+        .expect("dispatch");
+    wait_for_control(listener.as_mut(), |message| {
+        matches!(
+            message,
+            ControlMessage::JoinRejection(rejection)
+                if rejection.listener_id == listener_id
+                    && rejection.reason.contains("Secure listener identity")
+        )
+    });
+    assert!(matches!(
+        wait_for_delivery(&receiver),
+        CoreTransportEvent::DeliveryCompleted { report, .. }
+            if report.intended_peers == 1
+                && report.successful_peers == 0
+                && report.failed_peers == 1
+    ));
+    assert!(
+        runtime.status().expect("status").last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("cannot remember an unverified listener")),
+        "host must expose why a plaintext approval was refused"
+    );
+    assert!(
+        receiver.recv_timeout(Duration::from_millis(200)).is_err(),
+        "unverified listener must not be projected as connected"
+    );
     listener.shutdown().expect("listener shutdown");
     runtime.shutdown().expect("runtime shutdown");
 }

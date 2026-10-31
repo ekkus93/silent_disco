@@ -35,7 +35,30 @@ fn process_effect(
             trusted_for_future,
             ..
         } => {
-            approved_listener = Some((listener_id.clone(), trusted_for_future));
+            // Legacy v3 TCP is plaintext and has no listener key proof. A
+            // claimed device ID must never become durable Trusted identity.
+            // Refuse this effect before any JoinApproval or UDP authorization;
+            // the Rust actor receives a failed delivery and the listener sees
+            // a visible rejection rather than a misleading success.
+            if trusted_for_future {
+                processor.take_pending_ports(&listener_id);
+                set_last_error(
+                    status,
+                    "Legacy v3 cannot remember an unverified listener identity".to_owned(),
+                )?;
+                let rejection = ControlMessage::JoinRejection(JoinRejection {
+                    session_id,
+                    listener_id: listener_id.clone(),
+                    reason: "Secure listener identity verification is required for durable trust"
+                        .to_owned(),
+                });
+                if let Err(error) = node.send_pending_control(&listener_id, &rejection) {
+                    set_last_error(status, error.to_string())?;
+                }
+                submit_delivery(sink, operation_id, failed_delivery_report())?;
+                return Ok(());
+            }
+            approved_listener = Some((listener_id.clone(), false));
             eprintln!(
                 "join_approval_send_started operation_id={operation_id} send_started_unix_ms={}",
                 unix_time_ms()
