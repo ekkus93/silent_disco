@@ -190,8 +190,8 @@ fn host_transport_completes_join_request_through_approval_and_disconnect() {
     };
 
     let approval_delivery = host
-        .send_join_approval(device_id.clone(), true)
-        .expect("send join approval");
+        .send_join_approval(device_id.clone(), false)
+        .expect("send session-only join approval");
     assert_eq!(approval_delivery.intended_peers, 1);
     assert_eq!(approval_delivery.successful_peers, 1);
     assert_eq!(approval_delivery.failed_peers, 0);
@@ -202,7 +202,7 @@ fn host_transport_completes_join_request_through_approval_and_disconnect() {
     assert_eq!(
         approved,
         FfiListenerTransportEvent::JoinApproved {
-            trusted_for_future: true,
+            trusted_for_future: false,
         }
     );
 

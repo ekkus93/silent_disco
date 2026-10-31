@@ -88,7 +88,9 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
         "unapproved listener cannot receive StreamStart"
     );
 
-    let first_pcm: Vec<u8> = (0..960_u32).map(|index| u8::try_from(index % 251).expect("PCM byte")).collect();
+    let first_pcm: Vec<u8> = (0..960_u32)
+        .map(|index| u8::try_from(index % 251).expect("PCM byte"))
+        .collect();
     assert_eq!(
         host.broadcast_audio(
             "admission-stream".to_owned(),
@@ -200,7 +202,9 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
                 if stream_id == "admission-replay"
         ));
     }
-    let replay_pcm: Vec<u8> = (0..960_u32).map(|index| u8::try_from(index % 239).expect("PCM byte")).collect();
+    let replay_pcm: Vec<u8> = (0..960_u32)
+        .map(|index| u8::try_from(index % 239).expect("PCM byte"))
+        .collect();
     assert_eq!(
         host.broadcast_audio(
             "admission-replay".to_owned(),
