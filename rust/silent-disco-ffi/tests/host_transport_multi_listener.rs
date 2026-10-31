@@ -5,6 +5,8 @@ use silent_disco_ffi::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "host_transport_multi_listener/legacy_admission.rs"]
+mod legacy_admission;
 #[path = "host_transport_multi_listener/reconnect.rs"]
 mod reconnect;
 

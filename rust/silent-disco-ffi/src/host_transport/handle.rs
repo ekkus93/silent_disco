@@ -135,12 +135,19 @@ impl FfiHostTransportHandle {
         }))
     }
 
-    /// Sends a join approval to one identified listener.
+    /// Sends a session-only join approval to one identified listener.
+    /// Legacy v3 has no verified key identity, so it cannot grant durable trust.
     pub fn send_join_approval(
         &self,
         listener_id: String,
         trusted_for_future: bool,
     ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
+        if trusted_for_future {
+            return Err(FfiHostTransportError::Unauthorized(
+                "Legacy v3 transport cannot remember a listener without verified cryptographic identity"
+                    .to_owned(),
+            ));
+        }
         self.with_transport(|inner| {
             let listener_id = device_id(listener_id)?;
             let message = ControlMessage::JoinApproval(JoinApproval {
