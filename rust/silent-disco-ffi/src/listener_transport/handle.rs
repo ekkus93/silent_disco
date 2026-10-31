@@ -518,8 +518,17 @@ fn map_control_frame(
             host_name: value.host_name,
             approval_required: value.approval_required,
         }),
-        ControlMessage::JoinApproval(value) => Some(FfiListenerTransportEvent::JoinApproved {
-            trusted_for_future: value.trusted_for_future,
+        // Legacy v3 carries no verified host or listener key identity.
+        // An untrusted host must not persuade the app to persist a durable
+        // approval just by setting a boolean in a plaintext TCP frame.
+        ControlMessage::JoinApproval(value) if value.trusted_for_future => {
+            Some(FfiListenerTransportEvent::JoinRejected {
+                reason: "Legacy v3 host advertised unverified permanent trust; rejoin with session-only approval"
+                    .to_owned(),
+            })
+        }
+        ControlMessage::JoinApproval(_) => Some(FfiListenerTransportEvent::JoinApproved {
+            trusted_for_future: false,
         }),
         ControlMessage::JoinRejection(value) => Some(FfiListenerTransportEvent::JoinRejected {
             reason: value.reason,
@@ -556,6 +565,10 @@ fn map_control_frame(
         | ControlMessage::SynchronizationReport(_) => None,
     }
 }
+
+#[cfg(test)]
+#[path = "legacy_trust_tests.rs"]
+mod legacy_trust_tests;
 
 #[cfg(test)]
 mod audio_forwarding_tests {
