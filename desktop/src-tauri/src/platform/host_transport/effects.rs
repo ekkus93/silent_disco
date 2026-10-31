@@ -41,21 +41,9 @@ fn process_effect(
             // the Rust actor receives a failed delivery and the listener sees
             // a visible rejection rather than a misleading success.
             if trusted_for_future {
-                processor.take_pending_ports(&listener_id);
-                set_last_error(
-                    status,
-                    "Legacy v3 cannot remember an unverified listener identity".to_owned(),
+                refuse_legacy_durable_trust(
+                    node, sink, status, processor, operation_id, session_id, &listener_id,
                 )?;
-                let rejection = ControlMessage::JoinRejection(JoinRejection {
-                    session_id,
-                    listener_id: listener_id.clone(),
-                    reason: "Secure listener identity verification is required for durable trust"
-                        .to_owned(),
-                });
-                if let Err(error) = node.send_pending_control(&listener_id, &rejection) {
-                    set_last_error(status, error.to_string())?;
-                }
-                submit_delivery(sink, operation_id, failed_delivery_report())?;
                 return Ok(());
             }
             approved_listener = Some((listener_id.clone(), false));
@@ -135,6 +123,34 @@ fn process_effect(
     }
 
     Ok(())
+}
+
+/// Refuse an unverified durable-trust request before any admission or route
+/// authorization. Legacy v3 may grant only one-session approval.
+#[allow(clippy::too_many_arguments)]
+fn refuse_legacy_durable_trust(
+    node: &dyn HostTransportNode,
+    sink: &dyn DesktopHostTransportEventSink,
+    status: &SharedStatus,
+    processor: &mut HostTransportEventProcessor,
+    operation_id: silent_disco_core::domain::OperationId,
+    session_id: silent_disco_core::domain::SessionId,
+    listener_id: &silent_disco_core::domain::DeviceId,
+) -> Result<(), DesktopNetworkError> {
+    processor.take_pending_ports(listener_id);
+    set_last_error(
+        status,
+        "Legacy v3 cannot remember an unverified listener identity".to_owned(),
+    )?;
+    let rejection = ControlMessage::JoinRejection(JoinRejection {
+        session_id,
+        listener_id: listener_id.clone(),
+        reason: "Secure listener identity verification is required for durable trust".to_owned(),
+    });
+    if let Err(error) = node.send_pending_control(listener_id, &rejection) {
+        set_last_error(status, error.to_string())?;
+    }
+    submit_delivery(sink, operation_id, failed_delivery_report())
 }
 
 fn unix_time_ms() -> u128 {
