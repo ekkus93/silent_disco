@@ -444,6 +444,73 @@ fn assert_late_join_recovery(
     late.shutdown().expect("close late listener");
 }
 
+/// Pause while the surviving listener is still attached, before the old
+/// listener's replacement is admitted. The host must retain paused state.
+fn pause_before_reconnect(
+    host: &FfiHostTransportHandle,
+    listener: &FfiListenerTransportHandle,
+) {
+    assert_eq!(
+        host.broadcast_pause("ffi-fresh-stream".to_owned(), 2_015)
+            .expect("pause before same-ID reconnect")
+            .successful_peers,
+        1
+    );
+    assert!(matches!(
+        poll_listener_until(listener, |event| matches!(
+            event,
+            FfiListenerTransportEvent::Paused { .. }
+        )),
+        FfiListenerTransportEvent::Paused {
+            host_pause_time_ms: 2_015,
+            ..
+        }
+    ));
+}
+
+/// The late replacement must first observe the authoritative cached Pause,
+/// then both sockets must observe same-stream resume before new PCM delivery.
+fn resume_after_reconnect(
+    host: &FfiHostTransportHandle,
+    survivor: &FfiListenerTransportHandle,
+    replacement: &FfiListenerTransportHandle,
+) {
+    assert!(matches!(
+        poll_listener_until(replacement, |event| matches!(
+            event,
+            FfiListenerTransportEvent::Paused { .. }
+        )),
+        FfiListenerTransportEvent::Paused {
+            host_pause_time_ms: 2_015,
+            ..
+        }
+    ));
+    assert_eq!(
+        host.broadcast_stream_start(
+            "ffi-fresh-stream".to_owned(),
+            2_100,
+            48_000,
+            2,
+            240,
+            Some("replay".to_owned()),
+            Some("Replay".to_owned()),
+        )
+        .expect("resume the existing stream after replacement")
+        .successful_peers,
+        2
+    );
+    for listener in [survivor, replacement] {
+        assert!(matches!(
+            poll_listener_until(listener, |event| matches!(
+                event,
+                FfiListenerTransportEvent::StreamStarted { .. }
+            )),
+            FfiListenerTransportEvent::StreamStarted { stream_id, .. }
+                if stream_id == "ffi-fresh-stream"
+        ));
+    }
+}
+
 /// A replaced TCP socket with the same logical ID must receive a fresh
 /// authorization and explicit cache replay; surviving listeners remain live.
 fn assert_reconnect_and_resume_pcm(
@@ -452,6 +519,7 @@ fn assert_reconnect_and_resume_pcm(
     endpoint: &str,
     reconnect_id: &str,
 ) {
+    pause_before_reconnect(host, listener_a);
     let replacement = FfiListenerTransportHandle::connect(
         endpoint.to_owned(),
         now_wall_clock_ms(),
@@ -471,6 +539,7 @@ fn assert_reconnect_and_resume_pcm(
         FfiListenerTransportEvent::StreamStarted { stream_id, .. }
             if stream_id == "ffi-fresh-stream"
     ));
+    resume_after_reconnect(host, listener_a, &replacement);
 
     let pcm: Vec<u8> = (0..960_u32)
         .map(|index| u8::try_from((index * 19) % 256).expect("byte"))
@@ -483,7 +552,7 @@ fn assert_reconnect_and_resume_pcm(
             2,
             240,
             480,
-            2_010,
+            2_110,
             pcm.clone(),
         )
         .expect("send post-reconnect PCM")
@@ -503,7 +572,7 @@ fn assert_reconnect_and_resume_pcm(
                 channels: 2,
                 samples_per_packet: 240,
                 first_sample_index: 480,
-                host_presentation_time_ms: 2_010,
+                host_presentation_time_ms: 2_110,
                 payload: pcm.clone(),
             }
         );
