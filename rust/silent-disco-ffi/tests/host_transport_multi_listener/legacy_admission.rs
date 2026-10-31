@@ -1,9 +1,14 @@
 use super::*;
+use silent_disco_ffi::FfiHostTransportError;
 
 /// A legacy plaintext host must not advertise permanent trust on the wire.
 /// Until a verified v4 identity exists, pending and rejected peers must not
 /// receive the authorized listener's playback or targeted synchronization.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "integrated legacy admission, denied peer isolation, Stop and fresh real-socket PCM"
+)]
 fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peers() {
     let (control_port, sync_port, audio_port) = available_host_ports();
     let session = "ffi-legacy-admission";
@@ -76,11 +81,14 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
             if stream_id == "admission-stream"
     ));
     assert!(
-        pending.poll_event(150).expect("pending control poll").is_none(),
+        pending
+            .poll_event(150)
+            .expect("pending control poll")
+            .is_none(),
         "unapproved listener cannot receive StreamStart"
     );
 
-    let first_pcm: Vec<u8> = (0..960_u32).map(|index| (index % 251) as u8).collect();
+    let first_pcm: Vec<u8> = (0..960_u32).map(|index| u8::try_from(index % 251).expect("PCM byte")).collect();
     assert_eq!(
         host.broadcast_audio(
             "admission-stream".to_owned(),
@@ -111,7 +119,10 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
         } if stream_id == "admission-stream" && payload == first_pcm
     ));
     assert!(
-        pending.poll_event(150).expect("pending audio poll").is_none(),
+        pending
+            .poll_event(150)
+            .expect("pending audio poll")
+            .is_none(),
         "unapproved listener cannot receive PCM"
     );
     assert!(
@@ -136,10 +147,9 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
     ));
     host.disconnect_peer(pending_id, "Admission rejected".to_owned())
         .expect("retire rejected TCP peer");
-    poll_listener_until(&pending, |event| matches!(
-        event,
-        FfiListenerTransportEvent::HostDisconnected { .. }
-    ));
+    poll_listener_until(&pending, |event| {
+        matches!(event, FfiListenerTransportEvent::HostDisconnected { .. })
+    });
     pending.shutdown().expect("close rejected listener");
 
     assert_eq!(
@@ -148,10 +158,9 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
             .successful_peers,
         1
     );
-    poll_listener_until(&approved, |event| matches!(
-        event,
-        FfiListenerTransportEvent::Stopped { .. }
-    ));
+    poll_listener_until(&approved, |event| {
+        matches!(event, FfiListenerTransportEvent::Stopped { .. })
+    });
 
     let late = FfiListenerTransportHandle::connect(
         endpoint,
@@ -162,7 +171,9 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
     .expect("connect after Stop");
     let late_id = join_approve_and_authorize(&host, &late, "Late listener");
     assert!(
-        late.poll_event(150).expect("stopped late join poll").is_none(),
+        late.poll_event(150)
+            .expect("stopped late join poll")
+            .is_none(),
         "a new listener must not replay the retired stream after Stop"
     );
     assert_eq!(
@@ -189,7 +200,7 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
                 if stream_id == "admission-replay"
         ));
     }
-    let replay_pcm: Vec<u8> = (0..960_u32).map(|index| (index % 239) as u8).collect();
+    let replay_pcm: Vec<u8> = (0..960_u32).map(|index| u8::try_from(index % 239).expect("PCM byte")).collect();
     assert_eq!(
         host.broadcast_audio(
             "admission-replay".to_owned(),
