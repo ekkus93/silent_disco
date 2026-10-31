@@ -158,6 +158,19 @@ impl HostTransportNode for SocketHostTransport {
                 "pending TCP peers may receive admission controls only",
             ));
         }
+        // This legacy socket transport has no cryptographically verified
+        // listener identity. Even a direct desktop/core caller must not grant
+        // persistent trust by setting a self-declared JoinApproval flag.
+        if matches!(
+            message,
+            ControlMessage::JoinApproval(approval) if approval.trusted_for_future
+        ) {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "legacy v3 cannot grant durable trust without verified cryptographic identity",
+            ));
+        }
         // Pending Hello/approval delivery must not interleave with late-join
         // authorization replay. Acquire the ordering guard before looking up
         // the peer so a concurrent authorization cannot insert its route and
