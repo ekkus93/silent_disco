@@ -2,9 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::protocol::{ControlMessage, JoinApproval, ProtocolFrame};
-use crate::transport::test_support::{
-    id_device, id_session, join_request, wait_for_control_from,
-};
+use crate::transport::test_support::{id_device, id_session, join_request, wait_for_control_from};
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
     SocketTransportFactory, TransportChannel, TransportErrorKind, TransportEvent, TransportFactory,
@@ -24,11 +22,7 @@ fn legacy_socket_cannot_issue_durable_join_approval_even_through_core_transport(
     .expect("bind legacy socket host");
     let mut listener = SocketTransportFactory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                device.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
             clock,
         )
         .expect("connect listener");

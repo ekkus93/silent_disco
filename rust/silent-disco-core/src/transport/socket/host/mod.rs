@@ -23,8 +23,6 @@ mod audio_generation_tests;
 mod authorization;
 #[cfg(test)]
 mod authorization_order_tests;
-#[cfg(test)]
-mod legacy_trust_tests;
 mod bind;
 mod broadcast;
 #[cfg(test)]
@@ -33,6 +31,8 @@ mod clock_reconnect_pcm_tests;
 mod duplicate_join_tests;
 #[cfg(test)]
 mod host_only_control_injection_tests;
+#[cfg(test)]
+mod legacy_trust_tests;
 mod lookup;
 #[cfg(test)]
 mod multi_peer_control_pressure_tests;
