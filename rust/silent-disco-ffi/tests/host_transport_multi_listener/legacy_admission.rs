@@ -147,12 +147,22 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
         FfiListenerTransportEvent::JoinRejected { reason }
             if reason == "Manual admission denied"
     ));
-    host.disconnect_peer(pending_id, "Admission rejected".to_owned())
-        .expect("retire rejected TCP peer");
-    poll_listener_until(&pending, |event| {
-        matches!(event, FfiListenerTransportEvent::HostDisconnected { .. })
-    });
+    assert!(
+        host.disconnect_peer(pending_id.clone(), "Admission rejected".to_owned())
+            .is_err(),
+        "a rejected pending peer cannot be promoted or targeted as an admitted route"
+    );
     pending.shutdown().expect("close rejected listener");
+    assert!(matches!(
+        poll_host_until(&host, |event| matches!(
+            event,
+            FfiHostTransportEvent::PeerDisconnected {
+                listener_id: Some(id),
+                ..
+            } if id == &pending_id
+        )),
+        FfiHostTransportEvent::PeerDisconnected { .. }
+    ));
 
     assert_eq!(
         host.broadcast_stop("admission-stream".to_owned(), 1_250)
