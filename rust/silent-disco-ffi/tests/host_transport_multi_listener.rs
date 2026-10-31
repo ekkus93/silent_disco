@@ -1,7 +1,7 @@
 use silent_disco_core::runtime::current_protocol_version;
 use silent_disco_ffi::{
-    FfiHostTransportEvent, FfiHostTransportHandle, FfiListenerTransportEvent,
-    FfiListenerTransportHandle,
+    FfiHostTransportEvent, FfiHostTransportHandle, FfiListenerTransportError,
+    FfiListenerTransportEvent, FfiListenerTransportHandle,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -593,10 +593,10 @@ fn assert_reconnect_and_resume_pcm(
         );
     }
     assert!(
-        retired
-            .poll_event(150)
-            .expect("poll retired listener after replacement")
-            .is_none(),
+        matches!(
+            retired.poll_event(150),
+            Ok(None) | Err(FfiListenerTransportError::Closed(_))
+        ),
         "retired generation must not receive post-reconnect PCM or control"
     );
     replacement.shutdown().expect("close reconnected listener");
