@@ -21,12 +21,16 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.ekkus.silentdisco.app.AppUiState
+import com.ekkus.silentdisco.app.ConnectionProgressState
 import com.ekkus.silentdisco.app.HostFormState
 import com.ekkus.silentdisco.core.model.HostLifecycleState
+import com.ekkus.silentdisco.core.model.ListenerLifecycleState
+import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.SelectedAudioFile
 import com.ekkus.silentdisco.feature.host.HostAccessSetupScreen
 import com.ekkus.silentdisco.feature.host.HostReadyScreen
+import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
@@ -298,5 +302,65 @@ class WorkflowConfigurationStateTest {
             .performClick()
         composeRule.onNodeWithTag("host-start-session").assertIsNotEnabled()
         composeRule.runOnIdle { assertThat(startCalls).isEqualTo(2) }
+    }
+
+    @Test
+    fun listenerJoinCannotSubmitTwiceAcrossSavedStateAndCanRetryAfterFailure() {
+        val session = SessionInfo(
+            id = "listener-restore-session",
+            name = "Test party",
+            hostDeviceName = "Test host",
+            approvalMode = ApprovalMode.INVITE_CODE,
+            inviteCodeRequired = true,
+        )
+        var joinCalls = 0
+        var state by mutableStateOf(
+            AppUiState(
+                selectedSession = session,
+                listenerState = ListenerLifecycleState.SESSION_SELECTED,
+                connectionProgress = ConnectionProgressState(inviteCode = "4826"),
+            ),
+        )
+        val restoration = StateRestorationTester(composeRule)
+        restoration.setContent {
+            SilentDiscoTheme {
+                SessionJoinScreen(
+                    uiState = state,
+                    onInviteCodeChanged = {},
+                    onJoin = { joinCalls += 1 },
+                    onCancel = {},
+                    onRetry = {},
+                    onReturnToSessions = {},
+                    onOpenSettings = {},
+                    onShareSupportReport = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("session-request-join").assertIsEnabled().performClick()
+        composeRule.onNodeWithTag("session-request-join").assertIsNotEnabled()
+        composeRule.runOnIdle { assertThat(joinCalls).isEqualTo(1) }
+        restoration.emulateSavedInstanceStateRestore()
+        composeRule.onNodeWithTag("session-request-join").assertIsNotEnabled()
+        composeRule.runOnIdle { assertThat(joinCalls).isEqualTo(1) }
+
+        // A failed attempt followed by a fresh session-selection state is a
+        // deliberate retry, not a duplicate of the original in-flight join.
+        composeRule.runOnIdle {
+            state = state.copy(
+                listenerState = ListenerLifecycleState.ERROR,
+                lastError = "Host refused the invite code",
+            )
+        }
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            state = state.copy(
+                listenerState = ListenerLifecycleState.SESSION_SELECTED,
+                lastError = null,
+            )
+        }
+        composeRule.onNodeWithTag("session-request-join").assertIsEnabled().performClick()
+        composeRule.onNodeWithTag("session-request-join").assertIsNotEnabled()
+        composeRule.runOnIdle { assertThat(joinCalls).isEqualTo(2) }
     }
 }

@@ -72,6 +72,20 @@ fun SessionJoinScreen(
     // route for a different discovered session must not expose its request
     // action as a retry or restore focus to the old session's code field.
     var editingInviteCode by rememberSaveable(session?.id) { mutableStateOf(false) }
+    // The actor/ViewModel may take time to leave SESSION_SELECTED after a join
+    // tap. Persist this local latch through Compose recreation so a double tap
+    // cannot submit two TCP join requests or two approval prompts.
+    var joinSubmissionInFlight by rememberSaveable(session?.id) { mutableStateOf(false) }
+    LaunchedEffect(uiState.listenerState, uiState.lastError) {
+        if (uiState.lastError != null || uiState.listenerState !in setOf(
+                ListenerLifecycleState.IDLE,
+                ListenerLifecycleState.SCANNING,
+                ListenerLifecycleState.SESSION_SELECTED,
+            )
+        ) {
+            joinSubmissionInFlight = false
+        }
+    }
     val inviteCodeBringIntoView = remember { BringIntoViewRequester() }
     val inviteCodeFocus = remember { FocusRequester() }
     LaunchedEffect(editingInviteCode) {
@@ -92,7 +106,10 @@ fun SessionJoinScreen(
             UserProblemAction.RECONNECT,
             UserProblemAction.RESYNCHRONIZE -> onRetry()
 
-            UserProblemAction.EDIT_CODE -> editingInviteCode = true
+            UserProblemAction.EDIT_CODE -> {
+                joinSubmissionInFlight = false
+                editingInviteCode = true
+            }
             UserProblemAction.RETURN_TO_SESSIONS -> onReturnToSessions()
             UserProblemAction.OPEN_SETTINGS -> onOpenSettings()
             UserProblemAction.SHARE_SUPPORT_REPORT -> onShareSupportReport()
@@ -239,17 +256,26 @@ fun SessionJoinScreen(
                 } else if (!requestStarted || editingInviteCode) {
                     Button(
                         onClick = {
-                            editingInviteCode = false
-                            onJoin()
+                            if (!joinSubmissionInFlight) {
+                                joinSubmissionInFlight = true
+                                editingInviteCode = false
+                                onJoin()
+                            }
                         },
-                        enabled = session != null &&
+                        enabled = !joinSubmissionInFlight && session != null &&
                             (!session.inviteCodeRequired || uiState.connectionProgress.inviteCode.isNotBlank()),
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = WorkflowTouchTarget.minimum)
                             .testTag("session-request-join"),
                     ) {
-                        Text(if (editingInviteCode) "Request again" else "Request to join")
+                        Text(
+                            when {
+                                joinSubmissionInFlight -> "Requesting access"
+                                editingInviteCode -> "Request again"
+                                else -> "Request to join"
+                            },
+                        )
                     }
                 }
                 if (problem?.primaryAction != UserProblemAction.RETURN_TO_SESSIONS) {
