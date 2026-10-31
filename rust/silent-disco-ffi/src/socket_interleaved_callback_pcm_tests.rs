@@ -100,11 +100,12 @@ fn assert_targeted_resync_preserves_callback(
     host: &mut dyn HostTransportNode,
     listener: &mut dyn ListenerTransportNode,
     session: &SessionId,
+    listener_id: &str,
     expected: &[ControlMessage],
     token: u64,
     tap: &CallbackCaptureTap,
 ) {
-    let device = DeviceId::new("pcm-regression-listener").expect("reconnecting identity");
+    let device = DeviceId::new(listener_id).expect("resynchronizing identity");
     let native = usize::try_from(token).expect("native token") as *const core::ffi::c_void;
     let callbacks_before = silent_disco_audio_callback_count(native);
     let captured_before = tap.counters();
@@ -360,6 +361,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                         host.as_mut(),
                         listener.as_mut(),
                         &session,
+                        "pcm-regression-listener",
                         &[start.clone(), boundary.clone(), pause.clone()],
                         token,
                         &tap,
@@ -389,6 +391,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                         host.as_mut(),
                         listener.as_mut(),
                         &session,
+                        "pcm-regression-listener",
                         &[resume, boundary.clone()],
                         token,
                         &tap,
@@ -472,6 +475,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
                             host.as_mut(),
                             listener.as_mut(),
                             &session,
+                            "pcm-regression-listener",
                             &[
                                 first_resume.as_ref().expect("first Resume").clone(),
                                 first_boundary.as_ref().expect("first boundary").clone(),
@@ -571,6 +575,7 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
         host.as_mut(),
         listener.as_mut(),
         &session,
+        "pcm-regression-listener",
         std::slice::from_ref(&stop),
         token,
         &tap,
@@ -601,6 +606,28 @@ fn live_callback_reads_between_socket_packets_keep_output_open_across_pause_and_
     assert!(recv_control(listener.as_mut()) == replay);
     assert!(recv_control(newcomer.as_deref_mut().expect("late listener")) == replay);
     assert!(recv_control(stopped_joiner.as_mut()) == replay);
+    // After Stop/replay, all three independently admitted TCP generations
+    // must recover ONLY the fresh Start. Retired boundaries/Pause/Stop must
+    // not leak into the replay snapshot, and targeted recovery cannot reopen
+    // the existing native output or disturb its callback capture.
+    for (peer, listener_id) in [
+        (listener.as_mut(), "pcm-regression-listener"),
+        (
+            newcomer.as_deref_mut().expect("late listener"),
+            "interleaved-pause-late",
+        ),
+        (stopped_joiner.as_mut(), "interleaved-stopped-late"),
+    ] {
+        assert_targeted_resync_preserves_callback(
+            host.as_mut(),
+            peer,
+            &session,
+            listener_id,
+            std::slice::from_ref(&replay),
+            token,
+            &tap,
+        );
+    }
     // A late Stop from the retired generation cannot terminate the replay,
     // even though it carries the same stream ID and listener identities.
     let controls_before_stale_stop = host.counters().control_frames_sent;
