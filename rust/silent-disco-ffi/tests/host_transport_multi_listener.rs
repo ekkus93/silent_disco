@@ -446,10 +446,7 @@ fn assert_late_join_recovery(
 
 /// Pause while the surviving listener is still attached, before the old
 /// listener's replacement is admitted. The host must retain paused state.
-fn pause_before_reconnect(
-    host: &FfiHostTransportHandle,
-    listener: &FfiListenerTransportHandle,
-) {
+fn pause_before_reconnect(host: &FfiHostTransportHandle, listener: &FfiListenerTransportHandle) {
     assert_eq!(
         host.broadcast_pause("ffi-fresh-stream".to_owned(), 2_015)
             .expect("pause before same-ID reconnect")
