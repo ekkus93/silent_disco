@@ -282,8 +282,14 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(!remaining.is_zero(), "timed out waiting for exact wire frame");
-            match listener.recv_event(remaining).expect("listener TCP/UDP event") {
+            assert!(
+                !remaining.is_zero(),
+                "timed out waiting for exact wire frame"
+            );
+            match listener
+                .recv_event(remaining)
+                .expect("listener TCP/UDP event")
+            {
                 TransportEvent::FrameReceived {
                     channel: actual_channel,
                     frame,
