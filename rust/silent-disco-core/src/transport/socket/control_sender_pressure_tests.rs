@@ -124,3 +124,49 @@ fn queued_control_ack_uses_remaining_budget_not_a_fresh_timeout() {
     // queued frame once when it eventually observes the original deadline.
     assert_eq!(counters.snapshot().delivery_failures, 0);
 }
+
+#[test]
+fn concurrent_authoritative_controls_cannot_overtake_a_waiting_sender() {
+    let (sender, receiver) = occupied_queue();
+    let counters = Arc::new(CounterState::default());
+    let control = Arc::new(ControlSender::new(
+        sender,
+        Duration::from_secs(2),
+        counters.clone(),
+    ));
+    let first_control = control.clone();
+    let first = thread::spawn(move || first_control.send(vec![2]));
+    await_backpressure(&counters);
+
+    // The first caller is already waiting for a slot. A later concurrent
+    // Stop must not race past it when the stalled writer finally drains.
+    let (entered_sender, entered_receiver) = sync_channel(0);
+    let second_control = control.clone();
+    let second = thread::spawn(move || {
+        entered_sender.send(()).expect("signal second sender");
+        second_control.send(vec![3])
+    });
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("second sender started");
+    assert_eq!(
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("initial queued frame")
+            .bytes,
+        vec![1]
+    );
+    let first_write = receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first waiting control");
+    assert_eq!(first_write.bytes, vec![2]);
+    first_write.result.send(Ok(1)).expect("ack first control");
+    let second_write = receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("later control");
+    assert_eq!(second_write.bytes, vec![3]);
+    second_write.result.send(Ok(1)).expect("ack later control");
+    assert_eq!(first.join().expect("first sender").expect("first ack"), 1);
+    assert_eq!(second.join().expect("second sender").expect("second ack"), 1);
+    assert_eq!(counters.snapshot().delivery_failures, 0);
+}
