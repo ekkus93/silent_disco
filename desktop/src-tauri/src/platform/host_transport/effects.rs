@@ -108,42 +108,15 @@ fn process_effect(
     if report.successful_peers > 0
         && let Some((listener_id, trusted_for_future, session_id)) = approved_listener
     {
-        if let Some((sync_port, audio_port, display_name, control_address)) =
-            processor.take_pending_listener(&listener_id)
-        {
-            match node.authorize_peer_ports(&listener_id, sync_port, audio_port) {
-                Ok(()) => {
-                    processor.mark_authorized_listener(listener_id.clone(), control_address);
-                    connected = Some(
-                        HostTransportEventProcessor::connected_listener(
-                            listener_id,
-                            display_name,
-                            trusted_for_future,
-                        )
-                        .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))?,
-                    );
-                }
-                Err(error) => {
-                    set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
-                    // TCP JoinApproval was written, but the listener has no
-                    // authorized UDP route. Notify it explicitly and report
-                    // FAILURE to Rust rather than committing ghost admission.
-                    let disconnect = ControlMessage::Disconnect(Disconnect {
-                        session_id,
-                        listener_id: listener_id.clone(),
-                        reason: "Listener audio route authorization failed".to_owned(),
-                    });
-                    if let Err(error) = node.send_pending_control(&listener_id, &disconnect) {
-                        set_last_error(status, format!("Admission rollback notification failed: {error}"))?;
-                    }
-                    report = failed_delivery_report();
-                }
-            }
-        } else {
-            set_last_error(
-                status,
-                "JoinApproval reached TCP but no matching pending listener route exists".to_owned(),
-            )?;
+        connected = finish_approved_listener(
+            node,
+            status,
+            processor,
+            listener_id,
+            trusted_for_future,
+            session_id,
+        )?;
+        if connected.is_none() {
             report = failed_delivery_report();
         }
     }
@@ -157,6 +130,55 @@ fn process_effect(
     }
 
     Ok(())
+}
+
+/// A TCP approval becomes a successful actor decision only when its
+/// reported UDP routes have also been authorized on the SAME host generation.
+/// A failure leaves the old listener route untouched and yields no new
+/// connected-listener projection.
+fn finish_approved_listener(
+    node: &dyn HostTransportNode,
+    status: &SharedStatus,
+    processor: &mut HostTransportEventProcessor,
+    listener_id: silent_disco_core::domain::DeviceId,
+    trusted_for_future: bool,
+    session_id: silent_disco_core::domain::SessionId,
+) -> Result<Option<silent_disco_core::runtime::ListenerSummary>, DesktopNetworkError> {
+    let Some((sync_port, audio_port, display_name, control_address)) =
+        processor.take_pending_listener(&listener_id)
+    else {
+        set_last_error(
+            status,
+            "JoinApproval reached TCP but no matching pending listener route exists".to_owned(),
+        )?;
+        return Ok(None);
+    };
+    if let Err(error) = node.authorize_peer_ports(&listener_id, sync_port, audio_port) {
+        set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
+        // TCP JoinApproval was written, but no UDP route is authorized.
+        // Notify the listener and fail the actor decision rather than
+        // creating a ghost connected listener.
+        let disconnect = ControlMessage::Disconnect(Disconnect {
+            session_id,
+            listener_id: listener_id.clone(),
+            reason: "Listener audio route authorization failed".to_owned(),
+        });
+        if let Err(error) = node.send_pending_control(&listener_id, &disconnect) {
+            set_last_error(
+                status,
+                format!("Admission rollback notification failed: {error}"),
+            )?;
+        }
+        return Ok(None);
+    }
+    processor.mark_authorized_listener(listener_id.clone(), control_address);
+    HostTransportEventProcessor::connected_listener(
+        listener_id,
+        display_name,
+        trusted_for_future,
+    )
+    .map(Some)
+    .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))
 }
 
 /// Refuse an unverified durable-trust request before any admission or route
