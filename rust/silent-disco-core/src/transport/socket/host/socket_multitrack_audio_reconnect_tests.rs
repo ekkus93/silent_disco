@@ -328,11 +328,91 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
         &replay_third,
     );
 
+    // A second Stop/Play with the *same* session and stream ID must retire
+    // the first replay's contiguous UDP generation for every existing peer.
+    // A fifth listener admitted while stopped must see no stale Start/PCM.
+    let ControlMessage::StreamStart(ref replay_start) = replay else {
+        panic!("replay Start fixture");
+    };
+    let second_stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: replay_start.stream_id.clone(),
+        host_stop_time_ms: MonotonicMillis::new(1_900),
+    });
+    assert_eq!(
+        host.broadcast_control(&second_stop)
+            .expect("second terminal Stop")
+            .report
+            .successful_peers,
+        4,
+    );
+    for listener in [
+        returning.as_mut(),
+        late.as_mut(),
+        stopped_join.as_mut(),
+        fresh_join.as_mut(),
+    ] {
+        received_control(listener, &second_stop);
+    }
+    assert_eq!(
+        host.broadcast_audio(&replay_third)
+            .expect("retire previous replay UDP")
+            .report
+            .intended_peers,
+        0,
+    );
+    let before_stopped_join = host.counters().control_frames_sent;
+    let mut final_late = join(&mut host, &clock, &session, "second-replay-late");
+    assert_eq!(
+        host.counters().control_frames_sent,
+        before_stopped_join,
+        "a listener joining after the second Stop must not inherit retired controls"
+    );
+    let mut restarted = replay_start.clone();
+    restarted.host_start_time_ms = MonotonicMillis::new(2_000);
+    let second_play = ControlMessage::StreamStart(restarted);
+    assert_eq!(
+        host.broadcast_control(&second_play)
+            .expect("second fresh Play")
+            .report
+            .successful_peers,
+        5,
+    );
+    for listener in [
+        returning.as_mut(),
+        late.as_mut(),
+        stopped_join.as_mut(),
+        fresh_join.as_mut(),
+        final_late.as_mut(),
+    ] {
+        received_control(listener, &second_play);
+    }
+    assert_eq!(
+        host.broadcast_audio(&packet(&session, 0, 2_005))
+            .expect("reject stale zero from first replay")
+            .report
+            .intended_peers,
+        0,
+    );
+    let second_play_first = packet(&session, 0, 2_000);
+    deliver_audio(
+        &host,
+        &mut [
+            returning.as_mut(),
+            late.as_mut(),
+            stopped_join.as_mut(),
+            fresh_join.as_mut(),
+            final_late.as_mut(),
+        ],
+        &second_play_first,
+    );
+
     for listener in [
         &mut returning,
         &mut late,
         &mut stopped_join,
         &mut fresh_join,
+        &mut final_late,
     ] {
         listener.shutdown().expect("close listener");
     }
