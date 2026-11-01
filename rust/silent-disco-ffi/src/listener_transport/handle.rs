@@ -378,6 +378,19 @@ impl FfiListenerTransportHandle {
 }
 
 impl FfiListenerTransportHandle {
+    /// Keep each native PCM submission inside the same attachment lock used
+    /// by detach/replace. Otherwise a poller can clone the old Arc, release
+    /// the lock, and submit after Stop has detached and stopped that runtime.
+    fn with_playback_lock<T>(
+        &self,
+        action: impl FnOnce(Option<&Arc<FfiListenerPlaybackHandle>>) -> T,
+    ) -> Result<T, FfiListenerTransportError> {
+        let guard = self.playback.lock().map_err(|_| {
+            FfiListenerTransportError::Closed("playback attachment lock was poisoned".to_owned())
+        })?;
+        Ok(action(guard.as_ref()))
+    }
+
     fn read(
         &self,
     ) -> Result<std::sync::RwLockReadGuard<'_, Option<Inner>>, FfiListenerTransportError> {
@@ -436,24 +449,25 @@ impl FfiListenerTransportHandle {
         if !is_audio {
             return Ok(Some(event));
         }
-        let attached = self.playback.lock().ok().and_then(|guard| guard.clone());
-        let Some(playback) = attached else {
-            return Ok(Some(event));
-        };
-        let TransportEvent::FrameReceived {
-            frame: ProtocolFrame::Audio(datagram),
-            ..
-        } = event
-        else {
-            unreachable!("checked to be an audio frame above")
-        };
-        playback.submit_core_datagram(datagram).map_err(|error| {
-            FfiListenerTransportError::Io(format!(
-                "attached listener playback failed while forwarding audio: {error}"
-            ))
-        })?;
-        self.forwarded_audio.fetch_add(1, Ordering::Relaxed);
-        Ok(None)
+        self.with_playback_lock(|attached| {
+            let Some(playback) = attached else {
+                return Ok(Some(event));
+            };
+            let TransportEvent::FrameReceived {
+                frame: ProtocolFrame::Audio(datagram),
+                ..
+            } = event
+            else {
+                unreachable!("checked to be an audio frame above")
+            };
+            playback.submit_core_datagram(datagram).map_err(|error| {
+                FfiListenerTransportError::Io(format!(
+                    "attached listener playback failed while forwarding audio: {error}"
+                ))
+            })?;
+            self.forwarded_audio.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
+        })?
     }
 }
 
@@ -722,6 +736,63 @@ mod audio_forwarding_tests {
                 .expect("forward succeeds")
                 .is_some(),
             "audio must surface when no runtime is attached"
+        );
+        assert_eq!(handle.forwarded_audio_count(), 0);
+    }
+
+    /// Stop must wait for a poller's in-flight submission to finish before
+    /// the attached runtime can be detached and stopped. The barrier is held
+    /// inside the *production* forwarding lock, not a simulated generation.
+    #[test]
+    fn detach_waits_for_in_flight_pcm_forwarding_before_runtime_shutdown() {
+        let _guard = registry_test_guard();
+        let handle = Arc::new(detached_handle());
+        let runtime = playback();
+        handle.attach_playback(Arc::clone(&runtime));
+        let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+        let forwarding_handle = Arc::clone(&handle);
+        let forwarding = std::thread::spawn(move || {
+            forwarding_handle
+                .with_playback_lock(|attached| {
+                    assert!(attached.is_some());
+                    entered_tx.send(()).expect("signal forwarding");
+                    release_rx.recv().expect("release forwarding");
+                })
+                .expect("forwarding attachment lock");
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("forwarding entered lock");
+        assert!(handle.playback.try_lock().is_err(), "forwarding holds attachment lock");
+
+        let (attempt_tx, attempt_rx) = std::sync::mpsc::sync_channel(1);
+        let (detached_tx, detached_rx) = std::sync::mpsc::sync_channel(1);
+        let detaching_handle = Arc::clone(&handle);
+        let detaching = std::thread::spawn(move || {
+            attempt_tx.send(()).expect("signal detach attempt");
+            detaching_handle.detach_playback();
+            detached_tx.send(()).expect("signal detach completion");
+        });
+        attempt_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("detach attempted");
+        assert!(
+            matches!(
+                detached_rx.recv_timeout(std::time::Duration::from_millis(50)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ),
+            "detach must not complete while a PCM submission owns the runtime"
+        );
+        release_tx.send(()).expect("finish forwarding");
+        forwarding.join().expect("forwarding completes");
+        detaching.join().expect("detach completes");
+        runtime.stop().expect("detached runtime can stop");
+        assert!(
+            handle
+                .forward_audio(audio_event(0))
+                .expect("unattached audio remains available")
+                .is_some()
         );
         assert_eq!(handle.forwarded_audio_count(), 0);
     }
