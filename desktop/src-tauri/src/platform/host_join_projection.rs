@@ -248,7 +248,10 @@ mod generation_tests {
 
             fn submit_transport_event(&self, event: TransportEvent) -> Result<(), CoreError> {
                 if let TransportEvent::JoinRequested(request) = event {
-                    self.received.lock().expect("recorded join").push(request.invite_code_valid);
+                    self.received
+                        .lock()
+                        .expect("recorded join")
+                        .push(request.invite_code_valid);
                 }
                 Ok(())
             }
@@ -262,14 +265,62 @@ mod generation_tests {
         let host = DeviceId::new("invite-host").expect("host");
         let address: SocketAddr = "127.0.0.1:43555".parse().expect("address");
         let cases = [
-            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, Some("2468"), Some("2468"), Some(true)),
-            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, Some("2468"), Some("bad"), Some(false)),
-            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, Some("2468"), None, Some(false)),
-            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, None, None, Some(false)),
-            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, Some(""), Some(""), Some(false)),
-            (ApprovalMode::Manual, ApprovalMode::Manual, None, None, Some(true)),
-            (ApprovalMode::Manual, ApprovalMode::InviteCode, Some("2468"), Some("2468"), None),
-            (ApprovalMode::InviteCode, ApprovalMode::Manual, None, None, None),
+            (
+                ApprovalMode::InviteCode,
+                ApprovalMode::InviteCode,
+                Some("2468"),
+                Some("2468"),
+                Some(true),
+            ),
+            (
+                ApprovalMode::InviteCode,
+                ApprovalMode::InviteCode,
+                Some("2468"),
+                Some("bad"),
+                Some(false),
+            ),
+            (
+                ApprovalMode::InviteCode,
+                ApprovalMode::InviteCode,
+                Some("2468"),
+                None,
+                Some(false),
+            ),
+            (
+                ApprovalMode::InviteCode,
+                ApprovalMode::InviteCode,
+                None,
+                None,
+                Some(false),
+            ),
+            (
+                ApprovalMode::InviteCode,
+                ApprovalMode::InviteCode,
+                Some(""),
+                Some(""),
+                Some(false),
+            ),
+            (
+                ApprovalMode::Manual,
+                ApprovalMode::Manual,
+                None,
+                None,
+                Some(true),
+            ),
+            (
+                ApprovalMode::Manual,
+                ApprovalMode::InviteCode,
+                Some("2468"),
+                Some("2468"),
+                None,
+            ),
+            (
+                ApprovalMode::InviteCode,
+                ApprovalMode::Manual,
+                None,
+                None,
+                None,
+            ),
         ];
         for (index, (advertised_mode, host_mode, expected, supplied, delivered)) in
             cases.into_iter().enumerate()
@@ -315,7 +366,10 @@ mod generation_tests {
                 None => {
                     assert!(result.is_err(), "case {index} must reject stale policy");
                     assert!(recorded.is_empty(), "case {index} must not reach actor");
-                    assert!(projection.requests.is_empty(), "case {index} retains no ports");
+                    assert!(
+                        projection.requests.is_empty(),
+                        "case {index} retains no ports"
+                    );
                 }
             }
         }
