@@ -508,7 +508,7 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
 
     let stop = ControlMessage::Stop(Stop {
         session_id: session.clone(),
-        stream_id: stream,
+        stream_id: stream.clone(),
         host_stop_time_ms: MonotonicMillis::new(300),
     });
     host.broadcast_control(&stop).expect("stop");
