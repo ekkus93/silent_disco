@@ -191,8 +191,17 @@ fn concurrent_pause_and_stop_keep_wire_order_during_real_tcp_backpressure() {
             .expect("Start delivered"),
         5
     );
-    assert_eq!(pause.join().expect("Pause sender").expect("Pause delivered"), 5);
-    assert_eq!(stop.join().expect("Stop sender").expect("Stop delivered"), 4);
+    assert_eq!(
+        pause
+            .join()
+            .expect("Pause sender")
+            .expect("Pause delivered"),
+        5
+    );
+    assert_eq!(
+        stop.join().expect("Stop sender").expect("Stop delivered"),
+        4
+    );
     let mut bytes = [0_u8; 14];
     server
         .read_exact(&mut bytes)
