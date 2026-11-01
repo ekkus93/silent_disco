@@ -97,6 +97,35 @@ fn process_effect(
         }
     };
 
+    finish_delivery(
+        node,
+        sink,
+        status,
+        processor,
+        operation_id,
+        delivery,
+        approved_listener,
+    )
+}
+
+/// Reports an actor success only after the native host authorized this
+/// listener's UDP routes. Non-approval effects retain their original result.
+fn finish_delivery(
+    node: &dyn HostTransportNode,
+    sink: &dyn DesktopHostTransportEventSink,
+    status: &SharedStatus,
+    processor: &mut HostTransportEventProcessor,
+    operation_id: silent_disco_core::domain::OperationId,
+    delivery: Result<
+        silent_disco_core::transport::TransportDelivery,
+        silent_disco_core::transport::TransportError,
+    >,
+    approved_listener: Option<(
+        silent_disco_core::domain::DeviceId,
+        bool,
+        silent_disco_core::domain::SessionId,
+    )>,
+) -> Result<(), DesktopNetworkError> {
     let mut report = match delivery {
         Ok(delivery) => delivery.report,
         Err(error) => {
