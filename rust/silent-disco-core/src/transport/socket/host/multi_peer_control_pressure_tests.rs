@@ -313,7 +313,7 @@ fn failed_authoritative_delivery_retires_only_the_affected_tcp_udp_route() {
     // boundary. The failed peer must not remain authorized for future UDP;
     // the healthy peer must still receive the authoritative terminal Stop.
     let peer = host.peer_for_device(&affected_id).expect("authorized peer");
-    host.retire_on_failed_playback_delivery(&peer, &stream_stop(&session, 1_200));
+    SocketHostTransport::retire_on_failed_playback_delivery(&peer, &stream_stop(&session, 1_200));
     assert!(!peer.active.load(Ordering::Acquire));
     assert_eq!(host.authorized_routes().expect("live routes").len(), 1);
     assert_eq!(

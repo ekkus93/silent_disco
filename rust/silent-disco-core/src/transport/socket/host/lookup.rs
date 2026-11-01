@@ -112,7 +112,6 @@ impl SocketHostTransport {
     /// Stop/Pause, and retrying a cached control is not safe once other peers
     /// have advanced. The reader's normal terminal event reports the loss.
     pub(super) fn retire_on_failed_playback_delivery(
-        &self,
         peer: &PeerState,
         message: &ControlMessage,
     ) {
