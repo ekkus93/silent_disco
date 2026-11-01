@@ -382,3 +382,180 @@ fn stalled_actor_refuses_tcp_peer_without_ghost_route_or_harming_live_peer() {
     first.shutdown().expect("first shutdown");
     host.shutdown().expect("host shutdown");
 }
+/// Exercise the actual host TCP admission reader when UDP telemetry occupies
+/// its only actor slot. A busy join must receive a bounded, visible refusal,
+/// never create a ghost UDP authorization, and a fresh TCP generation must be
+/// able to join without disturbing already-playing listeners.
+#[test]
+fn real_socket_busy_join_is_refused_then_retry_rejoins_live_pcm() {
+    let session = id_session("busy-join-retry-live-pcm");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut config = HostTransportConfig::loopback(session.clone());
+    config.event_queue_capacity = 1;
+    let mut host = SocketHostTransport::bind(config, clock.clone()).expect("bind real host");
+
+    let mut healthy = Vec::new();
+    for name in ["busy-healthy-a", "busy-healthy-b"] {
+        let device = id_device(name);
+        let listener = SocketTransportFactory
+            .connect_listener(
+                ListenerTransportConfig::loopback(
+                    session.clone(),
+                    device.clone(),
+                    host.endpoint(),
+                ),
+                clock.clone(),
+            )
+            .expect("connect healthy listener");
+        crate::transport::test_support::wait_for_host_event(&mut host, |event| {
+            matches!(event, TransportEvent::PeerAccepted { .. })
+        });
+        listener
+            .send_control(&join_request(&session, &device, name))
+            .expect("send healthy join");
+        wait_for_control_from(&mut host, &device, |message| {
+            matches!(message, ControlMessage::JoinRequest(_))
+        });
+        host.authorize_peer(&device, listener.local_routes())
+            .expect("authorize healthy peer");
+        wait_for_authorized(&mut host, &device);
+        healthy.push(listener);
+    }
+
+    let busy_id = id_device("busy-retry-peer");
+    let mut refused = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session.clone(),
+                busy_id.clone(),
+                host.endpoint(),
+            ),
+            clock.clone(),
+        )
+        .expect("connect pending peer");
+    crate::transport::test_support::wait_for_host_event(&mut host, |event| {
+        matches!(event, TransportEvent::PeerAccepted { .. })
+    });
+
+    // Stop consuming host events. The UDP receiver fills the single actor
+    // slot with lossy synchronization telemetry, while both existing routes
+    // remain authorized. The next TCP JoinRequest must be visibly refused.
+    for correlation_id in 0..300 {
+        healthy[0]
+            .send_sync_request(&SyncRequest {
+                session_id: session.clone(),
+                correlation_id,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(correlation_id),
+            })
+            .expect("send real UDP telemetry");
+    }
+    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
+    refused
+        .send_control(&join_request(&session, &busy_id, "Busy peer"))
+        .expect("send congested join");
+    wait_for_frame(refused.as_mut(), TransportChannel::Control, |frame| {
+        matches!(
+            frame,
+            ProtocolFrame::Control(ControlMessage::JoinRejection(rejection))
+                if rejection.listener_id == busy_id
+                    && rejection.reason.contains("Host busy")
+        )
+    });
+    crate::transport::test_support::wait_for_host_event(&mut host, |event| {
+        matches!(
+            event,
+            TransportEvent::PeerDisconnected { peer, .. }
+                if peer.device_id.as_ref() == Some(&busy_id)
+        )
+    });
+    assert!(host.counters().delivery_failures > 0);
+    assert_eq!(
+        host.authorize_peer(&busy_id, refused.local_routes())
+            .expect_err("busy refusal must retire the pending TCP generation")
+            .kind,
+        crate::transport::TransportErrorKind::PeerNotFound,
+    );
+    refused.shutdown().expect("close refused listener");
+
+    let ControlMessage::StreamStart(mut started) = stream_start(&session, 1_000) else {
+        panic!("start fixture");
+    };
+    started.samples_per_packet = 2;
+    let start = ControlMessage::StreamStart(started);
+    assert_eq!(
+        host.broadcast_control(&start)
+            .expect("broadcast live start")
+            .report
+            .successful_peers,
+        2,
+    );
+    for listener in &mut healthy {
+        wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
+            frame == &ProtocolFrame::Control(start.clone())
+        });
+    }
+    let first_pcm = crate::transport::test_support::audio_frame_at(&session, 0, 1_000);
+    assert_eq!(
+        host.broadcast_audio(&first_pcm)
+            .expect("send live PCM")
+            .report
+            .successful_peers,
+        2,
+    );
+    for listener in &mut healthy {
+        wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
+            frame == &first_pcm
+        });
+    }
+
+    // The previously rejected claimed ID may retry only on a new socket.
+    // Its admission must replay the current Start before subsequent PCM,
+    // while both healthy peers retain their original routes.
+    let mut replacement = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session.clone(),
+                busy_id.clone(),
+                host.endpoint(),
+            ),
+            clock,
+        )
+        .expect("connect fresh generation");
+    crate::transport::test_support::wait_for_host_event(&mut host, |event| {
+        matches!(event, TransportEvent::PeerAccepted { .. })
+    });
+    replacement
+        .send_control(&join_request(&session, &busy_id, "Retry"))
+        .expect("retry join");
+    wait_for_control_from(&mut host, &busy_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    host.authorize_peer(&busy_id, replacement.local_routes())
+        .expect("authorize new TCP generation");
+    wait_for_authorized(&mut host, &busy_id);
+    wait_for_frame(replacement.as_mut(), TransportChannel::Control, |frame| {
+        frame == &ProtocolFrame::Control(start.clone())
+    });
+    let second_pcm = crate::transport::test_support::audio_frame_at(&session, 1, 1_001);
+    assert_eq!(
+        host.broadcast_audio(&second_pcm)
+            .expect("send contiguous PCM after retry")
+            .report
+            .successful_peers,
+        3,
+    );
+    for listener in &mut healthy {
+        wait_for_frame(listener.as_mut(), TransportChannel::Audio, |frame| {
+            frame == &second_pcm
+        });
+    }
+    wait_for_frame(replacement.as_mut(), TransportChannel::Audio, |frame| {
+        frame == &second_pcm
+    });
+
+    replacement.shutdown().expect("close replacement");
+    for listener in &mut healthy {
+        listener.shutdown().expect("close healthy listener");
+    }
+    host.shutdown().expect("close host");
+}
