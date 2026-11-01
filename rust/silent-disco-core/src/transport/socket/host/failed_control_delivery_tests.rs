@@ -229,7 +229,8 @@ fn failed_admission_and_resync_writes_revoke_udp_and_allow_independent_reconnect
         let mut failed = join(&mut host, &clock, &session, &failed_name);
         let mut healthy = join(&mut host, &clock, &session, &healthy_name);
         let start = stream_start(&session, 1_000);
-        host.broadcast_control(&start).expect("start both listeners");
+        host.broadcast_control(&start)
+            .expect("start both listeners");
         for listener in [&mut failed, &mut healthy] {
             wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
                 frame == &ProtocolFrame::Control(start.clone())
