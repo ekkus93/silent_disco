@@ -20,6 +20,7 @@ const MAX_PENDING_JOIN_REQUESTS: usize = 128;
 /// is receive-only and never sends a datagram the host could observe a
 /// source address from).
 struct PendingJoinPorts {
+    request_id: RequestId,
     control_address: SocketAddr,
     sync_port: u16,
     audio_port: u16,
@@ -75,7 +76,7 @@ impl PendingJoinProjection {
             || request.invite_code.as_deref() == snapshot.host_draft.invite_code.as_deref();
         let display_name = request.device.display_name.clone();
         let summary = JoinRequestSummary::new(
-            request_id,
+            request_id.clone(),
             device_id.clone(),
             display_name.clone(),
             TrustState::SessionOnly,
@@ -95,6 +96,7 @@ impl PendingJoinProjection {
         self.requests.insert(
             device_id.clone(),
             PendingJoinPorts {
+                request_id,
                 control_address,
                 sync_port: request.sync_port,
                 audio_port: request.audio_port,
@@ -113,6 +115,18 @@ impl PendingJoinProjection {
             return Err(DesktopNetworkError::invalid_state(error.to_string()));
         }
         Ok(device_id)
+    }
+
+    /// Actor decisions must belong to the exact TCP join generation that
+    /// produced their request ID, not merely the claimed device ID.
+    pub(super) fn pending_request_matches(
+        &self,
+        device_id: &DeviceId,
+        request_id: &RequestId,
+    ) -> bool {
+        self.requests
+            .get(device_id)
+            .is_some_and(|pending| &pending.request_id == request_id)
     }
 
     pub(super) fn pending_from_another_peer(
@@ -185,7 +199,7 @@ impl PendingJoinProjection {
 #[cfg(test)]
 mod generation_tests {
     use super::{PendingJoinPorts, PendingJoinProjection};
-    use silent_disco_core::domain::DeviceId;
+    use silent_disco_core::domain::{DeviceId, RequestId};
     use std::net::SocketAddr;
 
     #[test]
@@ -384,6 +398,7 @@ mod generation_tests {
         projection.requests.insert(
             device.clone(),
             PendingJoinPorts {
+                request_id: RequestId::new("fixture-request").expect("request ID"),
                 control_address: new,
                 sync_port: 43000,
                 audio_port: 43001,
@@ -410,6 +425,7 @@ mod generation_tests {
         projection.requests.insert(
             device.clone(),
             PendingJoinPorts {
+                request_id: RequestId::new("fixture-request").expect("request ID"),
                 control_address: replacement,
                 sync_port: 43004,
                 audio_port: 43005,
@@ -433,6 +449,7 @@ mod generation_tests {
         projection.requests.insert(
             device.clone(),
             PendingJoinPorts {
+                request_id: RequestId::new("fixture-request").expect("request ID"),
                 control_address: replacement,
                 sync_port: 43006,
                 audio_port: 43007,
@@ -460,6 +477,7 @@ mod generation_tests {
         projection.requests.insert(
             device.clone(),
             PendingJoinPorts {
+                request_id: RequestId::new("fixture-request").expect("request ID"),
                 control_address: current,
                 sync_port: 43002,
                 audio_port: 43003,

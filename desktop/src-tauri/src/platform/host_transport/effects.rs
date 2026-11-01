@@ -34,11 +34,17 @@ fn process_effect(
     )> = None;
     let delivery = match effect.request {
         TransportEffectRequest::DeliverJoinApproval {
+            request_id,
             session_id,
             listener_id,
             trusted_for_future,
             ..
         } => {
+            if !processor.pending_request_matches(&listener_id, &request_id) {
+                set_last_error(status, "Stale join approval ignored: request generation no longer pending".to_owned())?;
+                submit_delivery(sink, operation_id, failed_delivery_report())?;
+                return Ok(());
+            }
             // Legacy v3 TCP is plaintext and has no listener key proof. A
             // claimed device ID must never become durable Trusted identity.
             // Refuse this effect before any JoinApproval or UDP authorization;
@@ -65,11 +71,17 @@ fn process_effect(
             )
         }
         TransportEffectRequest::DeliverJoinRejection {
+            request_id,
             session_id,
             listener_id,
             reason_code,
             ..
         } => {
+            if !processor.pending_request_matches(&listener_id, &request_id) {
+                set_last_error(status, "Stale join rejection ignored: request generation no longer pending".to_owned())?;
+                submit_delivery(sink, operation_id, failed_delivery_report())?;
+                return Ok(());
+            }
             processor.take_pending_ports(&listener_id);
             node.send_pending_control(
                 &listener_id.clone(),

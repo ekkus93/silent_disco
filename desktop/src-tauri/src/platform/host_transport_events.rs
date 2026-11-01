@@ -50,6 +50,14 @@ impl HostTransportEventProcessor {
         }
     }
 
+    pub(crate) fn pending_request_matches(
+        &self,
+        device_id: &DeviceId,
+        request_id: &silent_disco_core::domain::RequestId,
+    ) -> bool {
+        self.pending.pending_request_matches(device_id, request_id)
+    }
+
     /// Removes and returns one pending listener's reported sync/audio
     /// ports, for the caller to authorize datagram routing after a
     /// successful join approval.

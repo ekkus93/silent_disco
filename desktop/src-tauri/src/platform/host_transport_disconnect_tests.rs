@@ -116,7 +116,7 @@ fn join(
     endpoint: NetworkEndpoint,
     name: &str,
     receiver: &mpsc::Receiver<CoreTransportEvent>,
-) -> Box<dyn ListenerTransportNode> {
+) -> (Box<dyn ListenerTransportNode>, RequestId) {
     let id = DeviceId::new(name).expect("listener ID");
     let listener = production_transport_factory()
         .connect_listener(
@@ -141,13 +141,13 @@ fn join(
     wait_frame(listener.as_mut(), |frame| {
         matches!(frame, ProtocolFrame::Control(ControlMessage::Hello(_)))
     });
-    assert!(matches!(
-        wait_event(receiver, |event| {
-            matches!(event, CoreTransportEvent::JoinRequested(request) if request.device_id == id)
-        }),
-        CoreTransportEvent::JoinRequested(_)
-    ));
-    listener
+    let request_id = match wait_event(receiver, |event| {
+        matches!(event, CoreTransportEvent::JoinRequested(request) if request.device_id == id)
+    }) {
+        CoreTransportEvent::JoinRequested(request) => request.request_id,
+        _ => unreachable!("join event predicate already matched"),
+    };
+    (listener, request_id)
 }
 
 fn dispatch(
@@ -179,6 +179,7 @@ fn approve(
     runtime: &DesktopHostTransportRuntime,
     session: &SessionId,
     id: &DeviceId,
+    request_id: RequestId,
     listener: &mut dyn ListenerTransportNode,
     receiver: &mpsc::Receiver<CoreTransportEvent>,
     operation: &str,
@@ -186,7 +187,7 @@ fn approve(
     dispatch(
         runtime,
         TransportEffectRequest::DeliverJoinApproval {
-            request_id: RequestId::new(format!("{operation}-request")).expect("request"),
+            request_id,
             session_id: session.clone(),
             listener_id: id.clone(),
             trusted_for_future: false,
@@ -212,20 +213,22 @@ fn authorized_disconnect_effect_retires_udp_but_preserves_healthy_playback_and_r
     let (runtime, session, endpoint, receiver) = setup();
     let kicked_id = DeviceId::new("desktop-kicked-listener").expect("ID");
     let healthy_id = DeviceId::new("desktop-healthy-listener").expect("ID");
-    let mut kicked = join(&session, endpoint, kicked_id.as_str(), &receiver);
+    let (mut kicked, kicked_request) = join(&session, endpoint, kicked_id.as_str(), &receiver);
     approve(
         &runtime,
         &session,
         &kicked_id,
+        kicked_request,
         kicked.as_mut(),
         &receiver,
         "approve-kicked",
     );
-    let mut healthy = join(&session, endpoint, healthy_id.as_str(), &receiver);
+    let (mut healthy, healthy_request) = join(&session, endpoint, healthy_id.as_str(), &receiver);
     approve(
         &runtime,
         &session,
         &healthy_id,
+        healthy_request,
         healthy.as_mut(),
         &receiver,
         "approve-healthy",
@@ -282,11 +285,12 @@ fn authorized_disconnect_effect_retires_udp_but_preserves_healthy_playback_and_r
     );
     drop(kicked.shutdown());
 
-    let mut replacement = join(&session, endpoint, kicked_id.as_str(), &receiver);
+    let (mut replacement, replacement_request) = join(&session, endpoint, kicked_id.as_str(), &receiver);
     approve(
         &runtime,
         &session,
         &kicked_id,
+        replacement_request,
         replacement.as_mut(),
         &receiver,
         "approve-reconnect",
@@ -301,7 +305,7 @@ fn authorized_disconnect_effect_retires_udp_but_preserves_healthy_playback_and_r
 fn pending_disconnect_effect_still_delivers_terminal_control_without_udp_authorization() {
     let (runtime, session, endpoint, receiver) = setup();
     let id = DeviceId::new("desktop-pending-kick").expect("ID");
-    let mut pending = join(&session, endpoint, id.as_str(), &receiver);
+    let (mut pending, _) = join(&session, endpoint, id.as_str(), &receiver);
     dispatch(
         &runtime,
         TransportEffectRequest::DisconnectListener {
@@ -320,4 +324,75 @@ fn pending_disconnect_effect_still_delivers_terminal_control_without_udp_authori
     assert!(runtime.status().expect("host status").running);
     pending.shutdown().expect("pending shutdown");
     runtime.shutdown().expect("host shutdown");
+}
+
+/// A delayed actor decision from an old TCP join must never approve or
+/// reject a replacement that reused the same unverified legacy device ID.
+/// This exercises the production desktop worker and real TCP/UDP routes.
+#[test]
+fn stale_admission_effects_cannot_authorize_or_reject_reconnected_listener() {
+    let (runtime, session, endpoint, receiver) = setup();
+    let id = DeviceId::new("desktop-reused-join-id").expect("device");
+    let (mut old, old_request) = join(&session, endpoint, id.as_str(), &receiver);
+    old.shutdown().expect("retire pending TCP generation");
+    wait_event(&receiver, |event| {
+        matches!(event, CoreTransportEvent::ListenerDisconnected { device_id, .. } if device_id == &id)
+    });
+    let (mut replacement, fresh_request) = join(&session, endpoint, id.as_str(), &receiver);
+    assert_ne!(old_request, fresh_request, "each TCP join has its own actor request ID");
+
+    dispatch(
+        &runtime,
+        TransportEffectRequest::DeliverJoinApproval {
+            request_id: old_request.clone(),
+            session_id: session.clone(),
+            listener_id: id.clone(),
+            trusted_for_future: false,
+        },
+        "stale-approval",
+    );
+    assert!(matches!(
+        wait_event(&receiver, |event| matches!(event, CoreTransportEvent::DeliveryCompleted { .. })),
+        CoreTransportEvent::DeliveryCompleted { report, .. }
+            if report.successful_peers == 0 && report.failed_peers == 1
+    ));
+    dispatch(
+        &runtime,
+        TransportEffectRequest::DeliverJoinRejection {
+            request_id: old_request,
+            session_id: session.clone(),
+            listener_id: id.clone(),
+            reason_code: "retired_request".to_owned(),
+        },
+        "stale-rejection",
+    );
+    assert!(matches!(
+        wait_event(&receiver, |event| matches!(event, CoreTransportEvent::DeliveryCompleted { .. })),
+        CoreTransportEvent::DeliveryCompleted { report, .. }
+            if report.successful_peers == 0 && report.failed_peers == 1
+    ));
+
+    approve(
+        &runtime,
+        &session,
+        &id,
+        fresh_request,
+        replacement.as_mut(),
+        &receiver,
+        "fresh-approval",
+    );
+    let start = ProtocolFrame::Control(ControlMessage::StreamStart(StreamStart {
+        session_id: session.clone(),
+        stream_id: StreamId::new("fresh-admission-playback").expect("stream"),
+        host_start_time_ms: MonotonicMillis::new(1_000),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        current_entry_id: Some("fresh-track".to_owned()),
+        current_display_name: Some("Fresh track".to_owned()),
+    }));
+    runtime.broadcast_frame(start.clone()).expect("fresh authorized broadcast");
+    wait_frame(replacement.as_mut(), |frame| frame == &start);
+    replacement.shutdown().expect("close replacement");
+    runtime.shutdown().expect("close host");
 }
