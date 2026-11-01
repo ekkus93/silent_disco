@@ -759,10 +759,6 @@ fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tra
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "four real-socket tracks, three pause/resume cycles and two native outputs"
-)]
 fn repeated_boundary_pause_resume_preserves_exact_pcm_on_two_real_socket_outputs() {
     let _guard = registry_test_guard();
     let unique = SystemTime::now()
