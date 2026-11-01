@@ -2,6 +2,7 @@ package com.ekkus.silentdisco.core.rust
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -43,6 +44,34 @@ class BoundedTransportEventQueueTest {
         val received = backgroundScope.async { queue.events.take(2).toList() }
         runCurrent()
         assertThat(received.await()).containsExactly("approval", "audio-one").inOrder()
+        queue.close()
+    }
+
+    @Test
+    fun blockedStopReservesFreedCapacityAgainstContinuousAudio() = runTest {
+        val handle = Any()
+        val queue = BoundedTransportEventQueue<Any, String>({ handle }, capacity = 2)
+        queue.emit(handle, "join")
+        queue.emit(handle, "pause")
+        val pendingStop = backgroundScope.async { queue.emit(handle, "stop") }
+        runCurrent()
+        assertThat(pendingStop.isCompleted).isFalse()
+
+        // The collector frees one slot synchronously, but the suspended Stop
+        // has not yet resumed on the test dispatcher. PCM must not steal it.
+        val first = backgroundScope.async(start = CoroutineStart.UNDISPATCHED) {
+            queue.events.first()
+        }
+        assertThat(first.isCompleted).isTrue()
+        repeat(1_000) { queue.tryEmit(handle, "audio-$it") }
+        assertThat(queue.droppedBestEffort).isEqualTo(1_000)
+        runCurrent()
+        assertThat(pendingStop.isCompleted).isTrue()
+        assertThat(first.await()).isEqualTo("join")
+
+        val remaining = backgroundScope.async { queue.events.take(2).toList() }
+        runCurrent()
+        assertThat(remaining.await()).containsExactly("pause", "stop").inOrder()
         queue.close()
     }
 

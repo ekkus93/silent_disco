@@ -62,6 +62,11 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
     // producer. Replaced under enqueueGate after each dequeue; unlike a
     // conflated channel, multiple producers cannot miss a free slot.
     private var capacityAvailable = CompletableDeferred<Unit>()
+    // Reserve newly freed capacity for already-waiting authoritative events.
+    // Without this, a continuous PCM producer can steal each released slot
+    // before the suspended Stop/approval producer resumes on its dispatcher.
+    // All accesses are serialized by enqueueGate.
+    private var waitingCritical = 0
 
     // Decrement before emitting downstream, even when the generation is stale
     // or the collector is cancelled while processing a delivered event.
@@ -111,6 +116,10 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
         // after the new handle has been installed. Do not charge its bytes or
         // diagnostic quota to the replacement session.
         if (currentHandle() !== handle) return@synchronized
+        if (waitingCritical > 0) {
+            dropped.incrementAndGet()
+            return@synchronized
+        }
         val pending = queuedBestEffort.incrementAndGet()
         if (pending > bestEffortLimit) {
             queuedBestEffort.decrementAndGet()
@@ -140,18 +149,29 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
         // enqueue under the same gate as retirement. Await only a capacity
         // notification, never a channel send outside that gate.
         val entry = TransportQueueEntry(handle, event, bestEffort = false)
-        while (true) {
-            val wake = synchronized(enqueueGate) {
-                if (retirement !== epoch || currentHandle() !== handle) return
-                if (closed.isCompleted) error("Native transport event queue closed")
-                if (channel.trySend(entry).isSuccess) return
-                capacityAvailable
+        var waiting = false
+        try {
+            while (true) {
+                val wake = synchronized(enqueueGate) {
+                    if (retirement !== epoch || currentHandle() !== handle) return
+                    if (closed.isCompleted) error("Native transport event queue closed")
+                    if (channel.trySend(entry).isSuccess) return
+                    if (!waiting) {
+                        waitingCritical++
+                        waiting = true
+                    }
+                    capacityAvailable
+                }
+                select<Unit> {
+                    epoch.onAwait { }
+                    wake.onAwait { }
+                    closed.onAwait { error("Native transport event queue closed") }
+                }
             }
-            select<Unit> {
-                epoch.onAwait { }
-                wake.onAwait { }
-                closed.onAwait { error("Native transport event queue closed") }
-            }
+        } finally {
+            // Cancellation, retirement, closure and successful admission all
+            // release this reservation, including when no collector resumes.
+            if (waiting) synchronized(enqueueGate) { waitingCritical-- }
         }
     }
 
