@@ -141,9 +141,10 @@ fn join(
     wait_frame(listener.as_mut(), |frame| {
         matches!(frame, ProtocolFrame::Control(ControlMessage::Hello(_)))
     });
-    let request_id = match wait_event(receiver, |event| {
-        matches!(event, CoreTransportEvent::JoinRequested(request) if request.device_id == id)
-    }) {
+    let request_id = match wait_event(
+        receiver,
+        |event| matches!(event, CoreTransportEvent::JoinRequested(request) if request.device_id == id),
+    ) {
         CoreTransportEvent::JoinRequested(request) => request.request_id,
         _ => unreachable!("join event predicate already matched"),
     };
@@ -285,7 +286,8 @@ fn authorized_disconnect_effect_retires_udp_but_preserves_healthy_playback_and_r
     );
     drop(kicked.shutdown());
 
-    let (mut replacement, replacement_request) = join(&session, endpoint, kicked_id.as_str(), &receiver);
+    let (mut replacement, replacement_request) =
+        join(&session, endpoint, kicked_id.as_str(), &receiver);
     approve(
         &runtime,
         &session,
@@ -335,11 +337,15 @@ fn stale_admission_effects_cannot_authorize_or_reject_reconnected_listener() {
     let id = DeviceId::new("desktop-reused-join-id").expect("device");
     let (mut old, old_request) = join(&session, endpoint, id.as_str(), &receiver);
     old.shutdown().expect("retire pending TCP generation");
-    wait_event(&receiver, |event| {
-        matches!(event, CoreTransportEvent::ListenerDisconnected { device_id, .. } if device_id == &id)
-    });
+    wait_event(
+        &receiver,
+        |event| matches!(event, CoreTransportEvent::ListenerDisconnected { device_id, .. } if device_id == &id),
+    );
     let (mut replacement, fresh_request) = join(&session, endpoint, id.as_str(), &receiver);
-    assert_ne!(old_request, fresh_request, "each TCP join has its own actor request ID");
+    assert_ne!(
+        old_request, fresh_request,
+        "each TCP join has its own actor request ID"
+    );
 
     dispatch(
         &runtime,
@@ -391,7 +397,9 @@ fn stale_admission_effects_cannot_authorize_or_reject_reconnected_listener() {
         current_entry_id: Some("fresh-track".to_owned()),
         current_display_name: Some("Fresh track".to_owned()),
     }));
-    runtime.broadcast_frame(start.clone()).expect("fresh authorized broadcast");
+    runtime
+        .broadcast_frame(start.clone())
+        .expect("fresh authorized broadcast");
     wait_frame(replacement.as_mut(), |frame| frame == &start);
     replacement.shutdown().expect("close replacement");
     runtime.shutdown().expect("close host");
