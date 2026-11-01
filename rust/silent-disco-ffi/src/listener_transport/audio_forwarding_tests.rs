@@ -247,14 +247,52 @@ fn detaching_returns_audio_to_the_caller() {
 fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_runtime_reopen() {
     use super::Inner;
     use silent_disco_core::domain::DeviceId;
-    use silent_disco_core::protocol::{Pause, Stop, StreamStart, TrackBoundary};
-    use silent_disco_core::transport::test_support::{
-        id_device, join_request, wait_for_authorized, wait_for_control_from, wait_for_frame,
+    use silent_disco_core::protocol::{
+        DeviceIdentity, JoinRequest, Pause, Stop, StreamStart, TrackBoundary,
     };
     use silent_disco_core::transport::{
-        HostTransportConfig, ListenerTransportConfig, ManualTransportClock,
-        SocketTransportFactory, TransportClock, TransportFactory,
+        HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
+        ManualTransportClock, SocketTransportFactory, TransportClock, TransportEvent,
+        TransportFactory,
     };
+    use std::time::{Duration, Instant};
+
+    fn wait_for_join(host: &mut dyn HostTransportNode, device: &DeviceId) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "timed out waiting for real TCP join");
+            match host.recv_event(remaining).expect("host TCP event") {
+                TransportEvent::FrameReceived {
+                    channel: TransportChannel::Control,
+                    peer,
+                    frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
+                    ..
+                } if peer.device_id.as_ref() == Some(device) => return,
+                _ => {}
+            }
+        }
+    }
+
+    fn expect_wire(
+        listener: &mut dyn ListenerTransportNode,
+        channel: TransportChannel,
+        expected: &ProtocolFrame,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "timed out waiting for exact wire frame");
+            match listener.recv_event(remaining).expect("listener TCP/UDP event") {
+                TransportEvent::FrameReceived {
+                    channel: actual_channel,
+                    frame,
+                    ..
+                } if actual_channel == channel && &frame == expected => return,
+                _ => {}
+            }
+        }
+    }
 
     let _guard = registry_test_guard();
     let session = SessionId::new("session-forwarding").expect("session");
@@ -288,11 +326,8 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
     handle
         .send_join_request("FFI listener".to_owned(), None)
         .expect("real TCP join");
-    wait_for_control_from(host.as_mut(), &device, |control| {
-        matches!(control, ControlMessage::JoinRequest(_))
-    });
+    wait_for_join(host.as_mut(), &device);
     host.authorize_peer(&device, routes).expect("authorize UDP");
-    wait_for_authorized(host.as_mut(), &device);
 
     let runtime = playback();
     runtime
@@ -391,7 +426,7 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
     // Pause before sample 480 becomes audible at 10 ms, so the late
     // listener must still receive that upcoming boundary in its cache.
     clock.set(9);
-    let late_device = id_device("ffi-forwarding-late");
+    let late_device = DeviceId::new("ffi-forwarding-late").expect("late device");
     let mut late = SocketTransportFactory
         .connect_listener(
             ListenerTransportConfig::loopback(
@@ -402,18 +437,27 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
             clock.clone(),
         )
         .expect("late listener");
-    late.send_control(&join_request(&session, &late_device, "Late listener"))
-        .expect("late TCP join");
-    wait_for_control_from(host.as_mut(), &late_device, |control| {
-        matches!(control, ControlMessage::JoinRequest(_))
-    });
-    host.authorize_peer(&late_device, late.local_routes())
+    let late_routes = late.local_routes();
+    late.send_control(&ControlMessage::JoinRequest(JoinRequest {
+        session_id: session.clone(),
+        device: DeviceIdentity {
+            device_id: late_device.clone(),
+            display_name: "Late listener".to_owned(),
+        },
+        invite_code: None,
+        sync_port: late_routes.synchronization.port(),
+        audio_port: late_routes.audio.port(),
+    }))
+    .expect("late TCP join");
+    wait_for_join(host.as_mut(), &late_device);
+    host.authorize_peer(&late_device, late_routes)
         .expect("authorize late");
-    wait_for_authorized(host.as_mut(), &late_device);
     for control in [&start, &boundary, &pause] {
-        wait_for_frame(late.as_mut(), TransportChannel::Control, |frame| {
-            frame == &ProtocolFrame::Control(control.clone())
-        });
+        expect_wire(
+            late.as_mut(),
+            TransportChannel::Control,
+            &ProtocolFrame::Control(control.clone()),
+        );
     }
 
     let ControlMessage::StreamStart(mut resumed) = start.clone() else {
@@ -432,9 +476,11 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
             ..
         })
     ));
-    wait_for_frame(late.as_mut(), TransportChannel::Control, |frame| {
-        frame == &ProtocolFrame::Control(resume.clone())
-    });
+    expect_wire(
+        late.as_mut(),
+        TransportChannel::Control,
+        &ProtocolFrame::Control(resume.clone()),
+    );
     assert_eq!(runtime.engine_token(), original_token);
     let resumed_pcm = make_packet(2, 210);
     assert_eq!(
@@ -444,9 +490,7 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
             .successful_peers,
         2
     );
-    wait_for_frame(late.as_mut(), TransportChannel::Audio, |frame| {
-        frame == &resumed_pcm
-    });
+    expect_wire(late.as_mut(), TransportChannel::Audio, &resumed_pcm);
     assert!(
         handle
             .poll_event(300)
@@ -466,9 +510,11 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         handle.poll_event(1_000).expect("FFI Stop poll"),
         Some(super::FfiListenerTransportEvent::Stopped { .. })
     ));
-    wait_for_frame(late.as_mut(), TransportChannel::Control, |frame| {
-        frame == &ProtocolFrame::Control(stop.clone())
-    });
+    expect_wire(
+        late.as_mut(),
+        TransportChannel::Control,
+        &ProtocolFrame::Control(stop.clone()),
+    );
     handle.detach_playback();
     runtime.stop().expect("stop detached runtime");
     assert_eq!(
