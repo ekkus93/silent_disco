@@ -337,12 +337,23 @@ fn saturated_host_event_queue_rolls_back_real_socket_authorization() {
             .expect("congesting accept"),
         TransportEvent::PeerAccepted { .. }
     ));
-    assert!(matches!(
-        host.recv_event(Duration::from_secs(5))
-            .expect("candidate disconnect"),
-        TransportEvent::PeerDisconnected { peer, .. }
-            if peer.device_id.as_ref() == Some(&device)
-    ));
+    // Both TCP generations have the same short admission timeout. The
+    // unjoined spectator may disconnect first, producing another legitimate
+    // terminal event before the rejected candidate's terminal. Do not
+    // mistake the spectator's teardown for a missing candidate disconnect.
+    // Still require the candidate's authoritative terminal before deadline.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "candidate terminal event was lost");
+        if matches!(
+            host.recv_event(remaining).expect("pending terminal event"),
+            TransportEvent::PeerDisconnected { peer, .. }
+                if peer.device_id.as_ref() == Some(&device)
+        ) {
+            break;
+        }
+    }
     candidate.shutdown().expect("candidate cleanup");
     congesting.shutdown().expect("congesting cleanup");
     host.shutdown().expect("host cleanup");
