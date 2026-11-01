@@ -77,7 +77,7 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 
 - [ ] Extract tightly coupled Android ViewModel transport lifecycle, admission/trust projection and UI coordination into focused, testable adapters where doing so directly reduces F1/F4/F5 risk; retain Rust actor authority.
 - [ ] Add owner/generation invariants and race-focused tests for refactored orchestration. Do not introduce new duplicate playlist/business policy.
-- [ ] Create a concise current acceptance index and separate append-only evidence ledger for the historical 167 KB gapless TODO; preserve original checkboxes/history and working relative links.
+- [x] Create a concise current acceptance index and separate append-only evidence ledger for the historical 167 KB gapless TODO; preserve original checkboxes/history and working relative links. **Evidence:** [index](SILENT_DISCO_ACCEPTANCE_INDEX.md), [ledger](SILENT_DISCO_ACCEPTANCE_EVIDENCE_LEDGER.md), [exact-head hosted CI at `693cd90c`](https://github.com/ekkus93/silent_disco/actions/runs/41298699164).
 - [ ] Add bounded protocol parser fuzzing/property tests and negative fixtures for authenticated controls/replay, malformed packets, identities, oversized queues and cancellation.
 - [ ] Add automated pinned dependency/SBOM and vulnerability auditing with documented severity triage and secrets/credential hygiene; distinguish actual findings from scanner noise.
 

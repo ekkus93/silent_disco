@@ -1,6 +1,6 @@
 # Silent Disco — Current Acceptance Index
 
-**Snapshot:** 2026-11-01 UTC; source baseline `1be0318e8878c3a204aef822db298ad1537ce8d0` (not a release signoff).
+**Snapshot:** 2026-11-01 UTC; source baseline `29f58bc15bdec96afa255990fa459b38b44f4489` (not a release signoff).
 **Scope:** [original gapless checklist](SILENT_DISCO_GAPLESS_QUEUE_AND_WORKFLOW_REDESIGN_TODO_2026-10-15.md), [active security/correctness remediation checklist](SILENT_DISCO_CODE_REVIEW_REMEDIATION_TODO_2026-10-27.md), and [append-only evidence ledger](SILENT_DISCO_ACCEPTANCE_EVIDENCE_LEDGER.md).
 
 This index is a navigation and status snapshot, **not** a substitute for the two canonical checklists. The original 2026-10-15 TODO, including its historical test notes and checkboxes, is intentionally unchanged. Counts below are checklist-item counts, not engineering-completion percentages. A green build does not establish encrypted transport, measured physical gapless audio, pixel-golden approval, or hands-on accessibility.
@@ -21,9 +21,9 @@ This index is a navigation and status snapshot, **not** a substitute for the two
 | §9 [Qualification/closeout](SILENT_DISCO_GAPLESS_QUEUE_AND_WORKFLOW_REDESIGN_TODO_2026-10-15.md#9-qualification-and-closeout) | 6 | 5 | Four explicitly **deferred physical/device** gates; final exact-head evidence reconciliation |
 | **Total** | **58** | **14** | **10 non-deferred open + 4 deferred device items** |
 
-## Active code-review remediation — 3/60 accepted, 57 open
+## Active code-review remediation — 4/60 accepted, 56 open
 
-The [2026-10-27 remediation TODO](SILENT_DISCO_CODE_REVIEW_REMEDIATION_TODO_2026-10-27.md) supersedes earlier security assumptions, not the original playback acceptance record. The three accepted items are the LAN threat model/ADR, verified-enrollment design, and Android backup exclusion policy. **54 non-deferred remediation items remain open**, plus three explicitly deferred §10 hardware items. Do not sum the two TODOs: their requirements overlap.
+The [2026-10-27 remediation TODO](SILENT_DISCO_CODE_REVIEW_REMEDIATION_TODO_2026-10-27.md) supersedes earlier security assumptions, not the original playback acceptance record. The four accepted items are the LAN threat model/ADR, verified-enrollment design, Android backup exclusion policy, and the linked concise acceptance index/append-only ledger. **53 non-deferred remediation items remain open**, plus three explicitly deferred §10 hardware items. Do not sum the two TODOs: their requirements overlap.
 
 | Priority | Finding / acceptance dependency | Current evidence and remaining blocker |
 | --- | --- | --- |
