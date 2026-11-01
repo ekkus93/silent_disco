@@ -30,8 +30,7 @@ fn repeated_boundary_pauses_then_stop_and_late_join_replay_exact_pcm() {
     let mut tracks = Vec::new();
     for (index, value) in [3_000, 6_000, 9_000].into_iter().enumerate() {
         let path = root.join(format!("track-{index}.wav"));
-        fs::write(&path, source_wav_format(value, 48_000, 2, 480))
-            .expect("canonical WAV source");
+        fs::write(&path, source_wav_format(value, 48_000, 2, 480)).expect("canonical WAV source");
         tracks.push(source(&format!("track-{index}"), &path));
     }
     let session = SessionId::new("end-to-end-session").expect("session");
