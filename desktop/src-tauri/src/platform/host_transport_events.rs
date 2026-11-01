@@ -157,6 +157,11 @@ impl HostTransportEventProcessor {
                             .to_owned(),
                     ));
                 };
+                // UDP was received on a route authorized at read time, but
+                // a reconnect may have replaced that route before projection.
+                if !self.pending.owns_peer(&listener_id, peer.control_address) {
+                    return Ok(Some("Retired peer clock request ignored".to_owned()));
+                }
                 let response = ProtocolFrame::SyncResponse(SyncResponse {
                     session_id: request.session_id,
                     correlation_id: request.correlation_id,
@@ -174,16 +179,29 @@ impl HostTransportEventProcessor {
                 frame: ProtocolFrame::Control(ControlMessage::ResyncNotice(notice)),
                 peer,
                 ..
-            } => Ok(Self::replay_resync(
-                node,
-                &notice.listener_id,
-                peer.device_id.as_ref(),
-            )),
+            } => {
+                if !self.pending.owns_peer(&notice.listener_id, peer.control_address) {
+                    return Ok(Some("Retired peer recovery request ignored".to_owned()));
+                }
+                Ok(Self::replay_resync(
+                    node,
+                    &notice.listener_id,
+                    peer.device_id.as_ref(),
+                ))
+            },
             RuntimeTransportEvent::FrameReceived {
                 channel: TransportChannel::Control,
                 frame: ProtocolFrame::Control(ControlMessage::SynchronizationReport(report)),
+                peer,
                 ..
-            } => Self::forward_sync_report(report, sink),
+            } => {
+                if peer.device_id.as_ref() != Some(&report.listener_id)
+                    || !self.pending.owns_peer(&report.listener_id, peer.control_address)
+                {
+                    return Ok(Some("Retired peer synchronization report ignored".to_owned()));
+                }
+                Self::forward_sync_report(report, sink)
+            },
             RuntimeTransportEvent::PeerDisconnected { peer, error, .. } => {
                 let Some(device_id) = peer.device_id else {
                     return Ok(error.map(|error| error.to_string()));
@@ -332,5 +350,127 @@ impl DesktopHostTransportEventSink for TestTransportEventSink {
 
     fn submit_audio_event(&self, _event: AudioEvent) -> Result<(), CoreError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod generation_guard_tests {
+    use super::*;
+    use silent_disco_core::domain::{ApprovalMode, MonotonicMillis, SessionId, SyncConfidence};
+    use silent_disco_core::protocol::{
+        PROTOCOL_VERSION, ResyncNotice, SyncRequest, SynchronizationReport,
+    };
+    use silent_disco_core::transport::{
+        HostTransportConfig, ManualTransportClock, SocketTransportFactory, TransportFactory,
+        TransportPeer,
+    };
+    use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingSink(AtomicUsize);
+
+    impl DesktopHostTransportEventSink for CountingSink {
+        fn current_snapshot(&self) -> Result<CoreSnapshot, CoreError> {
+            Ok(CoreSnapshot::default())
+        }
+
+        fn submit_transport_event(&self, _: CoreTransportEvent) -> Result<(), CoreError> {
+            Ok(())
+        }
+
+        fn submit_audio_event(&self, _: AudioEvent) -> Result<(), CoreError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn retired_same_id_peer_cannot_resync_replacement_or_update_its_clock() {
+        let session = SessionId::new("desktop-retired-clock-generation").expect("session");
+        let device = DeviceId::new("reconnecting-listener").expect("device");
+        let host_id = DeviceId::new("clock-host").expect("host");
+        let advertisement = SessionAdvertisement::new(
+            session.clone(),
+            host_id,
+            "Clock generation test",
+            ApprovalMode::Manual,
+            PROTOCOL_VERSION,
+            None,
+        )
+        .expect("advertisement");
+        let clock = Arc::new(ManualTransportClock::new(0));
+        let mut node = SocketTransportFactory
+            .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+            .expect("production host");
+        let old_address: SocketAddr = "127.0.0.1:41001".parse().expect("old address");
+        let new_address: SocketAddr = "127.0.0.1:41002".parse().expect("new address");
+        let mut processor = HostTransportEventProcessor::new(clock);
+        processor.mark_authorized_listener(device.clone(), new_address);
+        let sink = CountingSink(AtomicUsize::new(0));
+        let old_peer = TransportPeer {
+            device_id: Some(device.clone()),
+            control_address: old_address,
+        };
+        let new_peer = TransportPeer {
+            device_id: Some(device.clone()),
+            control_address: new_address,
+        };
+        let report = ControlMessage::SynchronizationReport(SynchronizationReport {
+            session_id: session.clone(),
+            listener_id: device.clone(),
+            confidence: SyncConfidence::Good,
+            offset_ms: 1.0,
+            round_trip_ms: 5.0,
+            drift_ppm: 0.1,
+        });
+        let report_event = |peer| RuntimeTransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            frame: ProtocolFrame::Control(report.clone()),
+            peer,
+            received_at: MonotonicMillis::new(1),
+        };
+        let stale = processor
+            .process(report_event(old_peer.clone()), node.as_ref(), &advertisement, &sink)
+            .expect("stale report processed");
+        assert!(stale.as_deref().is_some_and(|message| message.contains("Retired")));
+        assert_eq!(sink.0.load(Ordering::SeqCst), 0, "old clock must not reach actor");
+        assert!(processor
+            .process(report_event(new_peer), node.as_ref(), &advertisement, &sink)
+            .expect("current report processed")
+            .is_none());
+        assert_eq!(sink.0.load(Ordering::SeqCst), 1, "current clock is forwarded");
+
+        let resync = RuntimeTransportEvent::FrameReceived {
+            channel: TransportChannel::Control,
+            frame: ProtocolFrame::Control(ControlMessage::ResyncNotice(ResyncNotice {
+                session_id: session.clone(),
+                listener_id: device,
+                reason: "old socket recovery".to_owned(),
+            })),
+            peer: old_peer.clone(),
+            received_at: MonotonicMillis::new(2),
+        };
+        assert!(processor
+            .process(resync, node.as_ref(), &advertisement, &sink)
+            .expect("stale recovery processed")
+            .as_deref()
+            .is_some_and(|message| message.contains("Retired")));
+
+        let sync = RuntimeTransportEvent::FrameReceived {
+            channel: TransportChannel::Synchronization,
+            frame: ProtocolFrame::SyncRequest(SyncRequest {
+                session_id: session,
+                correlation_id: 17,
+                t1_listener_send_elapsed_ms: MonotonicMillis::new(3),
+            }),
+            peer: old_peer,
+            received_at: MonotonicMillis::new(3),
+        };
+        assert!(processor
+            .process(sync, node.as_ref(), &advertisement, &sink)
+            .expect("stale UDP sync processed")
+            .as_deref()
+            .is_some_and(|message| message.contains("Retired")));
+        node.shutdown().expect("host shutdown");
     }
 }

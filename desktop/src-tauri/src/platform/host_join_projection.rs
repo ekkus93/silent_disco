@@ -129,6 +129,11 @@ impl PendingJoinProjection {
             .is_some_and(|pending| &pending.request_id == request_id)
     }
 
+    /// Reject delayed events from a retired same-ID TCP generation.
+    pub(super) fn owns_peer(&self, device: &DeviceId, address: SocketAddr) -> bool {
+        self.current_peers.get(device) == Some(&address)
+    }
+
     pub(super) fn pending_from_another_peer(
         &self,
         device_id: &DeviceId,
