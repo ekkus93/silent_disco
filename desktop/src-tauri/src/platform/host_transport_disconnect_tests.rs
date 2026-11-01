@@ -17,7 +17,7 @@ use silent_disco_core::runtime::{
 };
 use silent_disco_core::transport::{
     HostTransportConfig, ListenerTransportConfig, ListenerTransportNode, SystemTransportClock,
-    TransportChannel, TransportErrorKind, TransportEvent, TransportFactory,
+    TransportErrorKind, TransportEvent, TransportFactory,
     production_transport_factory,
 };
 use std::sync::{Arc, mpsc};
