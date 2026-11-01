@@ -100,6 +100,10 @@ impl HostTransportEventProcessor {
         )
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one transport event dispatcher enforces generation ownership for all channels"
+    )]
     pub(super) fn process(
         &mut self,
         event: RuntimeTransportEvent,
