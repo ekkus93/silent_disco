@@ -381,15 +381,17 @@ impl PlaybackControls {
         // distinguish it from the new Play: require the first packet to be
         // anchored to the newly advertised StreamStart, not a stale timeline.
         if self.awaiting_replay_first_packet
-            && self.stream_start.as_ref().is_some_and(|start| {
-                packet.host_presentation_time_ms != start.host_start_time_ms
-            })
+            && self
+                .stream_start
+                .as_ref()
+                .is_some_and(|start| packet.host_presentation_time_ms != start.host_start_time_ms)
         {
             return false;
         }
-        if self.replay_last_presentation_ms.is_some_and(|previous| {
-            packet.host_presentation_time_ms.get() < previous
-        }) {
+        if self
+            .replay_last_presentation_ms
+            .is_some_and(|previous| packet.host_presentation_time_ms.get() < previous)
+        {
             return false;
         }
         if self.replay_next_packet.is_some_and(|(sequence, sample)| {
