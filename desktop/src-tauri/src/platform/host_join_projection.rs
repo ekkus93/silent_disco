@@ -101,7 +101,8 @@ impl PendingJoinProjection {
                 display_name,
             },
         );
-        if let Err(error) = sink.submit_transport_event(CoreTransportEvent::JoinRequested(summary)) {
+        if let Err(error) = sink.submit_transport_event(CoreTransportEvent::JoinRequested(summary))
+        {
             // The actor did not accept this join. A retry must not inherit
             // ghost pending ports, and a failed replacement must not evict
             // the existing authorized TCP owner.
@@ -322,15 +323,17 @@ mod generation_tests {
             .insert(request.device.device_id.clone(), old);
 
         for _ in 0..128 {
-            assert!(projection
-                .register(
-                    &request,
-                    replacement,
-                    MonotonicMillis::new(100),
-                    &advertisement,
-                    &RefusingActor,
-                )
-                .is_err());
+            assert!(
+                projection
+                    .register(
+                        &request,
+                        replacement,
+                        MonotonicMillis::new(100),
+                        &advertisement,
+                        &RefusingActor,
+                    )
+                    .is_err()
+            );
             assert!(projection.requests.is_empty(), "no ghost approval ports");
             assert_eq!(
                 projection.current_peers.get(&request.device.device_id),
@@ -341,15 +344,17 @@ mod generation_tests {
 
         // A first-time listener has no prior TCP owner to preserve.
         projection.current_peers.clear();
-        assert!(projection
-            .register(
-                &request,
-                replacement,
-                MonotonicMillis::new(101),
-                &advertisement,
-                &RefusingActor,
-            )
-            .is_err());
+        assert!(
+            projection
+                .register(
+                    &request,
+                    replacement,
+                    MonotonicMillis::new(101),
+                    &advertisement,
+                    &RefusingActor,
+                )
+                .is_err()
+        );
         assert!(projection.requests.is_empty());
         assert!(projection.current_peers.is_empty());
         // A healthy actor can now accept the same identity without hitting
