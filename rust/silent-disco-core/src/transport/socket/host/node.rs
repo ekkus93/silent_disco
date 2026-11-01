@@ -210,6 +210,7 @@ impl HostTransportNode for SocketHostTransport {
             }
             Err(error) => {
                 self.counters.delivery_failure();
+                self.retire_on_failed_playback_delivery(&peer, message);
                 Err(error)
             }
         }
@@ -349,6 +350,7 @@ impl HostTransportNode for SocketHostTransport {
                 Err(_) => {
                     failed = failed.saturating_add(1);
                     self.counters.delivery_failure();
+                    self.retire_on_failed_playback_delivery(&peer, message);
                 }
             }
         }

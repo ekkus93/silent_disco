@@ -280,3 +280,68 @@ fn two_peer_resync_notices_survive_real_udp_telemetry_saturation_and_stop() {
     second.shutdown().expect("second listener shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn failed_authoritative_delivery_retires_only_the_affected_tcp_udp_route() {
+    use std::sync::atomic::Ordering;
+
+    let session = id_session("failed-playback-control-route-retirement");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind production host");
+    let mut affected = join(&mut host, &clock, &session, "failed-control-peer", 16);
+    let mut healthy = join(&mut host, &clock, &session, "healthy-control-peer", 16);
+    let affected_id = id_device("failed-control-peer");
+    let start = stream_start(&session, 1_000);
+    assert_eq!(
+        host.broadcast_control(&start)
+            .expect("broadcast start")
+            .report
+            .successful_peers,
+        2,
+    );
+    for listener in [&mut affected, &mut healthy] {
+        wait_for_frame(listener.as_mut(), TransportChannel::Control, |frame| {
+            frame == &ProtocolFrame::Control(start.clone())
+        });
+    }
+
+    // Model the failed TCP writer's error branch at the shared retirement
+    // boundary. The failed peer must not remain authorized for future UDP;
+    // the healthy peer must still receive the authoritative terminal Stop.
+    let peer = host.peer_for_device(&affected_id).expect("authorized peer");
+    host.retire_on_failed_playback_delivery(&peer, &stream_stop(&session, 1_200));
+    assert!(!peer.active.load(Ordering::Acquire));
+    assert_eq!(host.authorized_routes().expect("live routes").len(), 1);
+    assert_eq!(
+        host.broadcast_control(&stream_stop(&session, 1_200))
+            .expect("healthy peer receives Stop")
+            .report
+            .successful_peers,
+        1,
+    );
+    wait_for_frame(healthy.as_mut(), TransportChannel::Control, |frame| {
+        frame == &ProtocolFrame::Control(stream_stop(&session, 1_200))
+    });
+    assert_eq!(
+        host.broadcast_audio(&audio_frame(&session, 0))
+            .expect("no post-Stop UDP")
+            .report
+            .intended_peers,
+        0,
+    );
+
+    // Retirement is scoped to the old native socket generation. Rejoining
+    // with the same claimed ID must create a distinct route, never revive
+    // the failed peer or inherit the retired playback snapshot.
+    affected.shutdown().expect("close affected listener");
+    let mut replacement = join(&mut host, &clock, &session, "failed-control-peer", 16);
+    assert!(!peer.active.load(Ordering::Acquire));
+    assert_eq!(host.authorized_routes().expect("replacement routes").len(), 2);
+    replacement.shutdown().expect("close replacement");
+    healthy.shutdown().expect("close healthy");
+    host.shutdown().expect("close host");
+}

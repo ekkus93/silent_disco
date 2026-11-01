@@ -106,6 +106,27 @@ impl SocketHostTransport {
             .collect())
     }
 
+    /// A failed authoritative playback write leaves this listener without the
+    /// host's current timeline. Retire its TCP and UDP routes immediately:
+    /// keeping it authorized would allow audio to continue after a missed
+    /// Stop/Pause, and retrying a cached control is not safe once other peers
+    /// have advanced. The reader's normal terminal event reports the loss.
+    pub(super) fn retire_on_failed_playback_delivery(
+        &self,
+        peer: &PeerState,
+        message: &ControlMessage,
+    ) {
+        if matches!(
+            message,
+            ControlMessage::StreamStart(_)
+                | ControlMessage::TrackBoundary(_)
+                | ControlMessage::Pause(_)
+                | ControlMessage::Stop(_)
+        ) {
+            drop(peer.close());
+        }
+    }
+
     /// Arms or disarms a peer's silence clock according to a control
     /// message just delivered to it -- see [`super::peer::PeerState::silence_armed`].
     pub(super) fn update_silence_clock(&self, peer: &PeerState, message: &ControlMessage) {
