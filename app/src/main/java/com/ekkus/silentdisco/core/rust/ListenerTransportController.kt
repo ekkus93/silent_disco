@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 private const val POLL_TIMEOUT_MS: ULong = 500uL
 
@@ -55,6 +57,9 @@ interface ListenerTransport : AutoCloseable {
  */
 class ListenerTransportController : ListenerTransport {
     private val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
+    // A delayed IO bind must not resurrect a socket after Leave, or replace a newer join.
+    private val connectionGeneration = AtomicLong()
+    private val closed = AtomicBoolean(false)
     private var eventLoop: Job? = null
     // A delayed collector must never see an approval/Stop from a retired socket.
     private val eventQueue = BoundedTransportEventQueue<FfiListenerTransportHandle, FfiListenerTransportEvent>(
@@ -71,8 +76,13 @@ class ListenerTransportController : ListenerTransport {
         localDeviceId: String,
         localAddress: String,
     ) {
-        withContext(Dispatchers.IO) {
-            handleGate.replace(
+        check(!closed.get()) { "Listener transport controller is closed" }
+        val requestedGeneration = connectionGeneration.incrementAndGet()
+        val bound = withContext(Dispatchers.IO) {
+            handleGate.replaceIf(
+                shouldReplace = {
+                    !closed.get() && connectionGeneration.get() == requestedGeneration
+                },
                 retire = { retireHandle(it, reason = null) },
                 open = {
                     FfiListenerTransportHandle.connect(
@@ -85,6 +95,7 @@ class ListenerTransportController : ListenerTransport {
                 },
             )
         }
+        check(bound) { "Listener connection superseded by Leave or a newer join" }
     }
 
     override suspend fun sendJoinRequest(displayName: String, inviteCode: String?) {
@@ -131,11 +142,16 @@ class ListenerTransportController : ListenerTransport {
     }
 
     override suspend fun disconnect(reason: String) {
-        // A cancelled listener effect must still retire its native socket and
-        // poller. Otherwise a late approval/Stop can arrive from a connection
-        // the Rust actor already considers disconnected. Do not block Main.
+        // Invalidate queued binds *before* dispatching native teardown. A new
+        // join that starts after Leave must not be closed by this old Leave.
+        val leavingGeneration = connectionGeneration.incrementAndGet()
+        // Cancellation cannot strand the native socket, even if IO is delayed.
         retireListenerTransportOffMain {
-            handleGate.close { handle ->
+            handleGate.closeIf(
+                shouldClose = {
+                    !closed.get() && connectionGeneration.get() == leavingGeneration
+                },
+            ) { handle ->
                 try {
                     retireHandle(handle, reason)
                 } finally {
@@ -146,6 +162,8 @@ class ListenerTransportController : ListenerTransport {
     }
 
     override fun close() {
+        closed.set(true)
+        connectionGeneration.incrementAndGet()
         try {
             handleGate.close { handle ->
                 try {

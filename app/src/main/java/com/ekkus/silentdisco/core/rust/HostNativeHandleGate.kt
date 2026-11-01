@@ -164,6 +164,13 @@ internal class HostNativeHandleGate<T : Any> {
     fun close(retire: (T?) -> Unit) = synchronized(monitor) {
         retire(current.getAndSet(null))
     }
+
+    /** A delayed Leave may retire only the connection generation it owns. */
+    fun closeIf(shouldClose: () -> Boolean, retire: (T?) -> Unit): Boolean = synchronized(monitor) {
+        if (!shouldClose()) return@synchronized false
+        retire(current.getAndSet(null))
+        true
+    }
 }
 
 /**
