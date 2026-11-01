@@ -236,6 +236,18 @@ impl HostTransportNode for SocketHostTransport {
                 "outbound control message belongs to a different session",
             ));
         }
+        // Legacy v3 has no verified peer identity. No host-facing send API
+        // may turn a claimed listener ID into durable trusted identity.
+        if matches!(
+            message,
+            ControlMessage::JoinApproval(approval) if approval.trusted_for_future
+        ) {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "legacy v3 cannot grant durable trust without verified cryptographic identity",
+            ));
+        }
         // Select the authorized route only after acquiring the replay/delivery
         // guard. A concurrent disconnect may retire the route while a targeted
         // send is waiting here; using an earlier selection could send to a
@@ -303,6 +315,18 @@ impl HostTransportNode for SocketHostTransport {
                 TransportErrorKind::Unauthorized,
                 TransportChannel::Control,
                 "outbound control message belongs to a different session",
+            ));
+        }
+        // Legacy v3 has no verified peer identity. No host-facing send API
+        // may turn a claimed listener ID into durable trusted identity.
+        if matches!(
+            message,
+            ControlMessage::JoinApproval(approval) if approval.trusted_for_future
+        ) {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "legacy v3 cannot grant durable trust without verified cryptographic identity",
             ));
         }
         // Serialize with late-join authorization and its cached replay. Without
