@@ -336,4 +336,51 @@ class BoundedTransportEventQueueTest {
         queue.close()
     }
 
+
+    @Test
+    fun multipleBlockedCriticalProducersWakeWithoutLeakingAcrossRebind() = runTest {
+        var current = Any()
+        val queue = BoundedTransportEventQueue<Any, String>({ current }, capacity = 2)
+        repeat(128) { generation ->
+            val retired = current
+            queue.emit(retired, "old-join-$generation")
+            queue.emit(retired, "old-pause-$generation")
+            val blocked = (0 until 4).map { index ->
+                backgroundScope.async { queue.emit(retired, "stale-$generation-$index") }
+            }
+            runCurrent()
+            assertThat(blocked.all { !it.isCompleted }).isTrue()
+
+            current = Any()
+            queue.discardRetiredEvents()
+            runCurrent()
+            assertThat(blocked.all { it.isCompleted }).isTrue()
+            queue.emit(current, "fresh-join-$generation")
+            queue.emit(current, "fresh-stop-$generation")
+            val received = backgroundScope.async { queue.events.take(2).toList() }
+            runCurrent()
+            assertThat(received.await())
+                .containsExactly("fresh-join-$generation", "fresh-stop-$generation").inOrder()
+        }
+        queue.close()
+    }
+
+    @Test
+    fun capacityNotificationWakesAllWaitingControlsWithoutACollectorSpinLoop() = runTest {
+        val handle = Any()
+        val queue = BoundedTransportEventQueue<Any, String>({ handle }, capacity = 1)
+        queue.emit(handle, "first")
+        val blocked = (0 until 4).map { index ->
+            backgroundScope.async { queue.emit(handle, "control-$index") }
+        }
+        // A full queue must suspend, not busy-spin on the IO dispatcher.
+        runCurrent()
+        assertThat(blocked.all { !it.isCompleted }).isTrue()
+        val received = backgroundScope.async { queue.events.take(5).toList() }
+        runCurrent()
+        assertThat(received.await())
+            .containsExactly("first", "control-0", "control-1", "control-2", "control-3")
+        assertThat(blocked.all { it.isCompleted }).isTrue()
+        queue.close()
+    }
 }

@@ -58,12 +58,19 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
     // enqueue after rebind's drain and occupy the new session's control slots.
     // Protected by enqueueGate; each pending send captures its own epoch.
     private var retirement = CompletableDeferred<Unit>()
+    // Shared, one-shot capacity notification wakes every blocked critical
+    // producer. Replaced under enqueueGate after each dequeue; unlike a
+    // conflated channel, multiple producers cannot miss a free slot.
+    private var capacityAvailable = CompletableDeferred<Unit>()
 
     // Decrement before emitting downstream, even when the generation is stale
     // or the collector is cancelled while processing a delivered event.
     val eventsWithGeneration: Flow<TransportGenerationEvent<Handle, Event>> = flow {
         for (queued in channel) {
-            if (queued.bestEffort) queuedBestEffort.decrementAndGet()
+            synchronized(enqueueGate) {
+                if (queued.bestEffort) queuedBestEffort.decrementAndGet()
+                signalCapacityAvailable()
+            }
             if (currentHandle() === queued.handle) {
                 emit(TransportGenerationEvent(queued.handle, queued.event))
             }
@@ -95,6 +102,7 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
             val retired = channel.tryReceive().getOrNull() ?: break
             if (retired.bestEffort) queuedBestEffort.decrementAndGet()
         }
+        signalCapacityAvailable()
     }
 
     /** Only use for explicitly lossy telemetry or PCM. */
@@ -126,15 +134,32 @@ internal class BoundedTransportEventQueue<Handle : Any, Event : Any>(
             if (currentHandle() !== handle) return
             retirement
         }
-        // Kotlin select prioritizes the first ready clause. When rebind
-        // retires this epoch while a sender waits for space, the sender
-        // exits instead of injecting a stale critical event into the fresh
-        // generation's bounded queue. The rebind drains any earlier send.
-        select<Unit> {
-            epoch.onAwait { }
-            channel.onSend(TransportQueueEntry(handle, event, bestEffort = false)) { }
-            closed.onAwait { error("Native transport event queue closed") }
+        // Channel.onSend is not atomic with discardRetiredEvents(): a send
+        // selected just before rebind could publish AFTER the drain, filling
+        // fresh-session slots with stale control events. Perform the actual
+        // enqueue under the same gate as retirement. Await only a capacity
+        // notification, never a channel send outside that gate.
+        val entry = TransportQueueEntry(handle, event, bestEffort = false)
+        while (true) {
+            val wake = synchronized(enqueueGate) {
+                if (retirement !== epoch || currentHandle() !== handle) return
+                if (closed.isCompleted) error("Native transport event queue closed")
+                if (channel.trySend(entry).isSuccess) return
+                capacityAvailable
+            }
+            select<Unit> {
+                epoch.onAwait { }
+                wake.onAwait { }
+                closed.onAwait { error("Native transport event queue closed") }
+            }
         }
+    }
+
+    /** Must be called under enqueueGate after a slot is released. */
+    private fun signalCapacityAvailable() {
+        val waiting = capacityAvailable
+        capacityAvailable = CompletableDeferred()
+        waiting.complete(Unit)
     }
 
     override fun close() {
