@@ -117,6 +117,10 @@ impl HostTransportNode for SocketHostTransport {
             Ok(written) => written,
             Err(error) => {
                 self.counters.delivery_failure();
+                // A failed kick cannot leave a listener authorized for UDP
+                // playback. Retire this exact TCP generation even if its
+                // Disconnect frame was never acknowledged by the writer.
+                drop(peer.close());
                 return Err(error);
             }
         };
@@ -210,7 +214,11 @@ impl HostTransportNode for SocketHostTransport {
             }
             Err(error) => {
                 self.counters.delivery_failure();
-                Self::retire_on_failed_playback_delivery(&peer, message);
+                // An unacknowledged approval, rejection or Hello cannot be
+                // retried on this unverified TCP generation. Require a new
+                // join rather than permitting a later stale authorization.
+                peer.admission_denied.store(true, Ordering::Release);
+                drop(peer.close());
                 Err(error)
             }
         }
@@ -251,6 +259,10 @@ impl HostTransportNode for SocketHostTransport {
             }
             Err(error) => {
                 self.counters.delivery_failure();
+                // Targeted Stop/Pause/Start has the same authority as a
+                // broadcast. A missed targeted control must revoke this
+                // listener's UDP eligibility, not just report an error.
+                Self::retire_on_failed_playback_delivery(&peer, message);
                 Err(error)
             }
         }

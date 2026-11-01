@@ -175,6 +175,12 @@ impl SocketHostTransport {
                 .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
             let result = peer.sender.send(bytes);
             self.record_peer_result(peer, &result);
+            if result.is_err() {
+                // Recovery may replay Start, boundaries, Pause or terminal
+                // Stop. A partial replay is not an authorized timeline:
+                // fail closed before the peer can receive further UDP PCM.
+                Self::retire_on_failed_playback_delivery(peer, &message);
+            }
             let written = result?;
             // The TCP writer already increments control_frames_sent and byte
             // counters when the frame is written. Do not double-count replay.

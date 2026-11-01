@@ -30,6 +30,8 @@ mod clock_reconnect_pcm_tests;
 #[cfg(test)]
 mod duplicate_join_tests;
 #[cfg(test)]
+mod failed_control_delivery_tests;
+#[cfg(test)]
 mod host_only_control_injection_tests;
 #[cfg(test)]
 mod legacy_trust_tests;
