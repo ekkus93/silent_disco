@@ -79,7 +79,9 @@ fn legacy_socket_cannot_issue_durable_join_approval_even_through_core_transport(
         host.broadcast_control(&approval(true)),
     ] {
         assert_eq!(
-            result.expect_err("durable approval cannot bypass pending gate").kind,
+            result
+                .expect_err("durable approval cannot bypass pending gate")
+                .kind,
             TransportErrorKind::Unauthorized
         );
     }
@@ -93,12 +95,17 @@ fn legacy_socket_cannot_issue_durable_join_approval_even_through_core_transport(
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(!remaining.is_zero(), "missing targeted session-only approval");
+        assert!(
+            !remaining.is_zero(),
+            "missing targeted session-only approval"
+        );
         if let TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
             frame: ProtocolFrame::Control(ControlMessage::JoinApproval(received)),
             ..
-        } = listener.recv_event(remaining).expect("receive targeted approval")
+        } = listener
+            .recv_event(remaining)
+            .expect("receive targeted approval")
         {
             assert_eq!(received.listener_id, device);
             assert!(!received.trusted_for_future);
