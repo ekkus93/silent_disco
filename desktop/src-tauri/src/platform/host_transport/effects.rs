@@ -86,14 +86,23 @@ fn process_effect(
             reason_code,
         } => {
             processor.take_pending_ports(&listener_id);
-            node.send_pending_control(
-                &listener_id.clone(),
-                &ControlMessage::Disconnect(Disconnect {
-                    session_id,
-                    listener_id,
-                    reason: reason_code,
-                }),
-            )
+            let message = ControlMessage::Disconnect(Disconnect {
+                session_id,
+                listener_id: listener_id.clone(),
+                reason: reason_code,
+            });
+            // A host kick can target either an admitted listener or a
+            // not-yet-authorized TCP peer. The pending-only API cannot find
+            // admitted listeners and would leave their UDP route alive.
+            // Retire the authorized route atomically with TCP delivery;
+            // fall back to the pending control path only when no such route
+            // exists, as the Android FFI host already does.
+            match node.send_disconnect(&listener_id, &message) {
+                Err(error) if error.kind == TransportErrorKind::PeerNotFound => {
+                    node.send_pending_control(&listener_id, &message)
+                }
+                result => result,
+            }
         }
     };
 
