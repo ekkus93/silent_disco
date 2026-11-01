@@ -253,6 +253,68 @@ impl HostTransportNode for SocketHostTransport {
         }
     }
 
+    fn reject_pending_peer_at(
+        &self,
+        control_address: SocketAddr,
+        device_id: &DeviceId,
+        message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        if !matches!(message, ControlMessage::JoinRejection(_))
+            || message.session_id() != &self.session_id
+        {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "pending refusal requires a same-session JoinRejection",
+            ));
+        }
+        check_control_recipient(device_id, message)?;
+        // The ID-only lookup is deliberately ambiguous when two unverified
+        // sockets claim the same device. Target the actual incoming TCP peer.
+        let _delivery_guard = self.control_delivery.lock().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::WorkerPanicked,
+                TransportChannel::Runtime,
+                "control delivery ordering lock is poisoned",
+            )
+        })?;
+        let peer = self
+            .peers
+            .lock()
+            .map_err(|_| {
+                TransportError::new(
+                    TransportErrorKind::WorkerPanicked,
+                    TransportChannel::Runtime,
+                    "peer registry is poisoned",
+                )
+            })?
+            .values()
+            .find(|peer| {
+                peer.remote == control_address
+                    && peer.active.load(Ordering::Acquire)
+                    && !peer.authorized.load(Ordering::Acquire)
+                    && peer.device_id().as_ref() == Some(device_id)
+            })
+            .cloned()
+            .ok_or_else(|| {
+                TransportError::new(
+                    TransportErrorKind::PeerNotFound,
+                    TransportChannel::Control,
+                    "matching pending TCP generation is not connected",
+                )
+            })?;
+        let bytes = encode_frame(&ProtocolFrame::Control(message.clone()))
+            .map_err(|error| TransportError::protocol(TransportChannel::Control, &error))?;
+        let result = peer.sender.send(bytes);
+        self.record_peer_result(&peer, &result);
+        // Even if the refusal write fails, this generation must never be
+        // eligible for a delayed approval or another pending send.
+        peer.admission_denied.store(true, Ordering::Release);
+        drop(peer.close());
+        let written = result?;
+        TransportDelivery::new(1, 1, 0, u64::try_from(written).unwrap_or(u64::MAX))
+    }
+
     fn send_control(
         &self,
         device_id: &DeviceId,

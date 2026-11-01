@@ -1,4 +1,5 @@
 #![allow(clippy::missing_errors_doc)]
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,6 +54,20 @@ pub trait HostTransportNode: Send {
         device_id: &DeviceId,
         message: &ControlMessage,
     ) -> Result<TransportDelivery, TransportError>;
+    /// Refuse only the pending TCP generation that submitted the join.
+    /// Duplicate claimed IDs must not redirect a rejection to an innocent peer.
+    fn reject_pending_peer_at(
+        &self,
+        _control_address: SocketAddr,
+        _device_id: &DeviceId,
+        _message: &ControlMessage,
+    ) -> Result<TransportDelivery, TransportError> {
+        Err(TransportError::new(
+            TransportErrorKind::Unauthorized,
+            TransportChannel::Control,
+            "address-bound pending refusal is unavailable on this transport",
+        ))
+    }
     fn send_control(
         &self,
         device_id: &DeviceId,

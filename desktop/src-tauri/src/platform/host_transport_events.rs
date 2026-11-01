@@ -129,6 +129,7 @@ impl HostTransportEventProcessor {
                         node,
                         advertisement,
                         &request.device.device_id,
+                        peer.control_address,
                     )));
                 }
                 // Actor mailbox failure or pending-capacity exhaustion must
@@ -145,6 +146,7 @@ impl HostTransportEventProcessor {
                         node,
                         advertisement,
                         &request.device.device_id,
+                        peer.control_address,
                     )));
                 };
                 Ok(send_pending_hello(node, &device_id, advertisement))
@@ -292,13 +294,14 @@ impl HostTransportEventProcessor {
         node: &dyn HostTransportNode,
         advertisement: &SessionAdvertisement,
         device_id: &DeviceId,
+        control_address: std::net::SocketAddr,
     ) -> String {
         let rejection = ControlMessage::JoinRejection(JoinRejection {
             session_id: advertisement.session_id.clone(),
             listener_id: device_id.clone(),
             reason: "host_busy".to_owned(),
         });
-        match node.send_pending_control(device_id, &rejection) {
+        match node.reject_pending_peer_at(control_address, device_id, &rejection) {
             Ok(delivery) if delivery.report.successful_peers > 0 => {
                 "Desktop join refused before actor admission (host busy)".to_owned()
             }
@@ -313,6 +316,7 @@ impl HostTransportEventProcessor {
         node: &dyn HostTransportNode,
         advertisement: &SessionAdvertisement,
         device_id: &silent_disco_core::domain::DeviceId,
+        control_address: std::net::SocketAddr,
     ) -> String {
         let rejection = ControlMessage::JoinRejection(JoinRejection {
             session_id: advertisement.session_id.clone(),
@@ -320,7 +324,7 @@ impl HostTransportEventProcessor {
             reason: "Another connection with this listener ID is awaiting approval".to_owned(),
         });
         let delivery_error = node
-            .send_pending_control(device_id, &rejection)
+            .reject_pending_peer_at(control_address, device_id, &rejection)
             .err()
             .map(|error| format!("; rejection delivery failed: {error}"))
             .unwrap_or_default();

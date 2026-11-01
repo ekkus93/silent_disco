@@ -7,9 +7,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::domain::{MonotonicMillis, SampleIndex};
-use crate::protocol::{ControlMessage, Hello, Pause, ProtocolFrame, Stop, TrackBoundary};
+use crate::protocol::{ControlMessage, Hello, JoinRejection, Pause, ProtocolFrame, Stop, TrackBoundary};
 use crate::transport::test_support::{
     id_device, id_session, join_request, wait_for_authorized, wait_for_control_from,
+    wait_for_frame, wait_for_host_event,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
@@ -372,5 +373,95 @@ fn same_id_join_arriving_while_authorization_waits_cannot_steal_approval() {
         second.shutdown().expect("close replacement generation");
         host
     });
+    host.shutdown().expect("close host");
+}
+
+#[test]
+fn duplicate_pending_refusal_is_bound_to_the_conflicting_tcp_socket() {
+    let session = id_session("address-bound-duplicate");
+    let device = id_device("same-pending-id");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketHostTransport::bind(
+        HostTransportConfig::loopback(session.clone()),
+        clock.clone(),
+    )
+    .expect("bind host");
+    let factory = SocketTransportFactory;
+    let mut first = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
+            clock.clone(),
+        )
+        .expect("first TCP peer");
+    first
+        .send_control(&join_request(&session, &device, "Original"))
+        .expect("original join");
+    let first_address = match wait_for_control_from(&mut host, &device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    }) {
+        TransportEvent::FrameReceived { peer, .. } => peer.control_address,
+        _ => unreachable!("join event"),
+    };
+    let mut duplicate = factory
+        .connect_listener(
+            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
+            clock,
+        )
+        .expect("duplicate TCP peer");
+    duplicate
+        .send_control(&join_request(&session, &device, "Duplicate"))
+        .expect("duplicate join");
+    let duplicate_address = match wait_for_control_from(&mut host, &device, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    }) {
+        TransportEvent::FrameReceived { peer, .. } => peer.control_address,
+        _ => unreachable!("join event"),
+    };
+    assert_ne!(first_address, duplicate_address);
+    let rejection = ControlMessage::JoinRejection(JoinRejection {
+        session_id: session.clone(),
+        listener_id: device.clone(),
+        reason: "duplicate pending identity".to_owned(),
+    });
+    assert_eq!(
+        host.send_pending_control(&device, &rejection)
+            .expect_err("ambiguous ID-only delivery is forbidden")
+            .kind,
+        TransportErrorKind::Unauthorized
+    );
+    assert_eq!(
+        host.reject_pending_peer_at("127.0.0.1:1".parse().expect("address"), &device, &rejection)
+            .expect_err("unrelated address must not be targeted")
+            .kind,
+        TransportErrorKind::PeerNotFound
+    );
+    host.reject_pending_peer_at(duplicate_address, &device, &rejection)
+        .expect("exact duplicate rejected");
+    drop(wait_for_frame(duplicate.as_mut(), TransportChannel::Control, |frame| {
+        matches!(frame, ProtocolFrame::Control(ControlMessage::JoinRejection(value))
+            if value.listener_id == device)
+    }));
+    drop(wait_for_host_event(&mut host, |event| {
+        matches!(event, TransportEvent::PeerDisconnected { peer, .. }
+            if peer.control_address == duplicate_address)
+    }));
+    // Original peer must not see the duplicate's rejection or lose admission.
+    let hello = ControlMessage::Hello(Hello {
+        session_id: session,
+        session_name: "Original pending session".to_owned(),
+        host_name: "Host".to_owned(),
+        approval_required: true,
+    });
+    host.send_pending_control(&device, &hello)
+        .expect("original remains pending");
+    drop(wait_for_frame(first.as_mut(), TransportChannel::Control, |frame| {
+        matches!(frame, ProtocolFrame::Control(ControlMessage::Hello(value))
+            if value.session_name == "Original pending session")
+    }));
+    host.authorize_peer(&device, first.local_routes())
+        .expect("original still approvable");
+    wait_for_authorized(&mut host, &device);
+    first.shutdown().expect("close original");
+    duplicate.shutdown().expect("close duplicate");
     host.shutdown().expect("close host");
 }
