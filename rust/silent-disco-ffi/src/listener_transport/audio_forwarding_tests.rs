@@ -510,6 +510,59 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
     assert_eq!(handle.forwarded_audio_count(), 3);
     assert_eq!(runtime.engine_token(), original_token);
 
+    // A late listener must be able to leave and reconnect on a fresh TCP/UDP
+    // generation while the original listener keeps the same native playback
+    // runtime. Replaying the current StreamStart is authoritative; no new
+    // engine token or foreign per-packet forwarding path may be introduced.
+    late.shutdown().expect("retire late listener transport");
+    let mut late = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session.clone(),
+                late_device.clone(),
+                host.endpoint(),
+            ),
+            clock.clone(),
+        )
+        .expect("reconnect late listener");
+    let replacement_routes = late.local_routes();
+    late.send_control(&ControlMessage::JoinRequest(JoinRequest {
+        session_id: session.clone(),
+        device: DeviceIdentity {
+            device_id: late_device.clone(),
+            display_name: "Reconnected listener".to_owned(),
+        },
+        invite_code: None,
+        sync_port: replacement_routes.synchronization.port(),
+        audio_port: replacement_routes.audio.port(),
+    }))
+    .expect("replacement TCP join");
+    wait_for_join(host.as_mut(), &late_device);
+    host.authorize_peer(&late_device, replacement_routes)
+        .expect("authorize replacement generation");
+    expect_wire(
+        late.as_mut(),
+        TransportChannel::Control,
+        &ProtocolFrame::Control(resume.clone()),
+    );
+    let reconnect_pcm = make_packet(3, 215);
+    assert_eq!(
+        host.broadcast_audio(&reconnect_pcm)
+            .expect("UDP after reconnect")
+            .report
+            .successful_peers,
+        2
+    );
+    expect_wire(late.as_mut(), TransportChannel::Audio, &reconnect_pcm);
+    assert!(
+        handle
+            .poll_event(300)
+            .expect("forward PCM while peer reconnects")
+            .is_none()
+    );
+    assert_eq!(handle.forwarded_audio_count(), 4);
+    assert_eq!(runtime.engine_token(), original_token);
+
     let stop = ControlMessage::Stop(Stop {
         session_id: session.clone(),
         stream_id: stream.clone(),
@@ -528,13 +581,13 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
     handle.detach_playback();
     runtime.stop().expect("stop detached runtime");
     assert_eq!(
-        host.broadcast_audio(&make_packet(3, 305))
+        host.broadcast_audio(&make_packet(4, 305))
             .expect("stopped PCM suppressed")
             .report
             .intended_peers,
         0
     );
-    assert_eq!(handle.forwarded_audio_count(), 3);
+    assert_eq!(handle.forwarded_audio_count(), 4);
     handle.shutdown().expect("shutdown FFI listener");
     late.shutdown().expect("shutdown late listener");
     host.shutdown().expect("shutdown host");
