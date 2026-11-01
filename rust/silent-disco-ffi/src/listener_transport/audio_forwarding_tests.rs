@@ -239,7 +239,6 @@ fn detaching_returns_audio_to_the_caller() {
     assert_eq!(handle.forwarded_audio_count(), 1);
 }
 
-
 /// Actual TCP/UDP ingress through the production listener FFI poller must
 /// submit PCM directly to the SAME runtime across Pause/Resume and a
 /// midqueue boundary. A second listener verifies independent wire delivery.
@@ -262,7 +261,10 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
     let stream = StreamId::new("stream-forwarding").expect("stream");
     let clock = Arc::new(ManualTransportClock::new(0));
     let mut host = SocketTransportFactory
-        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .bind_host(
+            HostTransportConfig::loopback(session.clone()),
+            clock.clone(),
+        )
         .expect("production host sockets");
     let device = DeviceId::new("ffi-forwarding-listener").expect("device");
     let listener = SocketTransportFactory
@@ -359,7 +361,12 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
             1
         );
     }
-    assert!(handle.poll_event(300).expect("drain forwarded PCM").is_none());
+    assert!(
+        handle
+            .poll_event(300)
+            .expect("drain forwarded PCM")
+            .is_none()
+    );
     assert_eq!(handle.forwarded_audio_count(), 2);
     assert_eq!(runtime.engine_token(), original_token);
 
@@ -387,7 +394,11 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
     let late_device = id_device("ffi-forwarding-late");
     let mut late = SocketTransportFactory
         .connect_listener(
-            ListenerTransportConfig::loopback(session.clone(), late_device.clone(), host.endpoint()),
+            ListenerTransportConfig::loopback(
+                session.clone(),
+                late_device.clone(),
+                host.endpoint(),
+            ),
             clock.clone(),
         )
         .expect("late listener");
@@ -436,7 +447,12 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
     wait_for_frame(late.as_mut(), TransportChannel::Audio, |frame| {
         frame == &resumed_pcm
     });
-    assert!(handle.poll_event(300).expect("forward resumed PCM").is_none());
+    assert!(
+        handle
+            .poll_event(300)
+            .expect("forward resumed PCM")
+            .is_none()
+    );
     assert_eq!(handle.forwarded_audio_count(), 3);
     assert_eq!(runtime.engine_token(), original_token);
 
