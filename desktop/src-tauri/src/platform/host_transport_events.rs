@@ -443,7 +443,9 @@ mod generation_guard_tests {
                 .process(event, node.as_ref(), &advertisement, &sink)
                 .expect("stale event handled");
             assert!(
-                warning.as_deref().is_some_and(|message| message.contains("Retired")),
+                warning
+                    .as_deref()
+                    .is_some_and(|message| message.contains("Retired")),
                 "retired TCP owner must not affect the replacement"
             );
         }
