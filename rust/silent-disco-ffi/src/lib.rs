@@ -42,6 +42,8 @@ mod socket_pause_resume_pcm_tests;
 #[cfg(test)]
 mod socket_queue_end_replay_pcm_tests;
 #[cfg(test)]
+mod socket_repeated_pause_pcm_tests;
+#[cfg(test)]
 mod socket_same_identity_pcm_tests;
 #[cfg(test)]
 mod socket_secondary_pcm_output_tests;
