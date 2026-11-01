@@ -140,7 +140,10 @@ fn invalid_udp_route_after_tcp_approval_reports_failure_and_disconnects_listener
     let listener_id = DeviceId::new("invalid-udp-listener").expect("listener");
     let clock = Arc::new(SystemTransportClock::default());
     let node = factory
-        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .bind_host(
+            HostTransportConfig::loopback(session.clone()),
+            clock.clone(),
+        )
         .expect("bind host TCP/UDP");
     let endpoint = node.endpoint();
     let (sender, receiver) = mpsc::channel();
@@ -165,7 +168,9 @@ fn invalid_udp_route_after_tcp_approval_reports_failure_and_disconnects_listener
             audio_port: routes.audio.port(),
         }))
         .expect("send real TCP join with invalid sync route");
-    wait_for_control(listener.as_mut(), |control| matches!(control, ControlMessage::Hello(_)));
+    wait_for_control(listener.as_mut(), |control| {
+        matches!(control, ControlMessage::Hello(_))
+    });
     assert!(matches!(
         receiver.recv_timeout(TEST_TIMEOUT).expect("actor join"),
         CoreTransportEvent::JoinRequested(request) if request.device_id == listener_id
