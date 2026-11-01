@@ -119,7 +119,9 @@ fn transiently_full_writer_queue_delivers_ordered_authoritative_tcp_frames() {
         6
     );
     let mut bytes = [0_u8; 11];
-    server.read_exact(&mut bytes).expect("both ordered controls");
+    server
+        .read_exact(&mut bytes)
+        .expect("both ordered controls");
     assert_eq!(&bytes, b"firstsecond");
     assert_eq!(counters.snapshot().control_frames_sent, 2);
     assert_eq!(counters.snapshot().delivery_failures, 0);
