@@ -78,17 +78,20 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
     wait_for_control(&mut *listener, |message| {
         matches!(message, ControlMessage::Hello(_))
     });
-    assert!(matches!(
-        receiver.recv_timeout(TEST_TIMEOUT).expect("actor received join"),
-        CoreTransportEvent::JoinRequested(request) if request.device_id == listener_id
-    ));
+    let CoreTransportEvent::JoinRequested(request) =
+        receiver.recv_timeout(TEST_TIMEOUT).expect("actor received join")
+    else {
+        panic!("expected join request");
+    };
+    assert_eq!(request.device_id, listener_id);
+    let request_id = request.request_id;
 
     runtime
         .dispatch(
             TransportEffect::new(
                 OperationId::new("approve-effect").expect("operation"),
                 TransportEffectRequest::DeliverJoinApproval {
-                    request_id: RequestId::new("request-1").expect("request"),
+                    request_id: request_id,
                     session_id: session_id.clone(),
                     listener_id: listener_id.clone(),
                     trusted_for_future: false,
@@ -171,16 +174,19 @@ fn invalid_udp_route_after_tcp_approval_reports_failure_and_disconnects_listener
     wait_for_control(listener.as_mut(), |control| {
         matches!(control, ControlMessage::Hello(_))
     });
-    assert!(matches!(
-        receiver.recv_timeout(TEST_TIMEOUT).expect("actor join"),
-        CoreTransportEvent::JoinRequested(request) if request.device_id == listener_id
-    ));
+    let CoreTransportEvent::JoinRequested(request) =
+        receiver.recv_timeout(TEST_TIMEOUT).expect("actor join")
+    else {
+        panic!("expected join request");
+    };
+    assert_eq!(request.device_id, listener_id);
+    let request_id = request.request_id;
     runtime
         .dispatch(
             TransportEffect::new(
                 OperationId::new("invalid-route-approval").expect("operation"),
                 TransportEffectRequest::DeliverJoinApproval {
-                    request_id: RequestId::new("invalid-route-request").expect("request"),
+                    request_id: request_id,
                     session_id: session.clone(),
                     listener_id: listener_id.clone(),
                     trusted_for_future: false,
@@ -252,17 +258,20 @@ fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
     wait_for_control(listener.as_mut(), |message| {
         matches!(message, ControlMessage::Hello(_))
     });
-    assert!(matches!(
-        receiver.recv_timeout(TEST_TIMEOUT).expect("actor received join"),
-        CoreTransportEvent::JoinRequested(request) if request.device_id == listener_id
-    ));
+    let CoreTransportEvent::JoinRequested(request) =
+        receiver.recv_timeout(TEST_TIMEOUT).expect("actor received join")
+    else {
+        panic!("expected join request");
+    };
+    assert_eq!(request.device_id, listener_id);
+    let request_id = request.request_id;
 
     runtime
         .dispatch(
             TransportEffect::new(
                 OperationId::new("unverified-durable-approval").expect("operation"),
                 TransportEffectRequest::DeliverJoinApproval {
-                    request_id: RequestId::new("unverified-request").expect("request"),
+                    request_id: request_id,
                     session_id: session,
                     listener_id: listener_id.clone(),
                     trusted_for_future: true,
@@ -332,18 +341,18 @@ fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
     wait_for_control(&mut *first, |message| {
         matches!(message, ControlMessage::Hello(_))
     });
-    assert!(matches!(
-        receiver
-            .recv_timeout(TEST_TIMEOUT)
-            .expect("first join event"),
-        CoreTransportEvent::JoinRequested(_)
-    ));
+    let CoreTransportEvent::JoinRequested(request) =
+        receiver.recv_timeout(TEST_TIMEOUT).expect("first join event")
+    else {
+        panic!("expected first join request");
+    };
+    let first_request_id = request.request_id;
     runtime
         .dispatch(
             TransportEffect::new(
                 OperationId::new("reconnect-approval-first").expect("operation"),
                 TransportEffectRequest::DeliverJoinApproval {
-                    request_id: RequestId::new("reconnect-request-first").expect("request"),
+                    request_id: first_request_id,
                     session_id: session_id.clone(),
                     listener_id: listener_id.clone(),
                     trusted_for_future: false,
@@ -369,18 +378,18 @@ fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
     wait_for_control(&mut *replacement, |message| {
         matches!(message, ControlMessage::Hello(_))
     });
-    assert!(matches!(
-        receiver
-            .recv_timeout(TEST_TIMEOUT)
-            .expect("replacement join event"),
-        CoreTransportEvent::JoinRequested(_)
-    ));
+    let CoreTransportEvent::JoinRequested(request) =
+        receiver.recv_timeout(TEST_TIMEOUT).expect("replacement join event")
+    else {
+        panic!("expected replacement join request");
+    };
+    let replacement_request_id = request.request_id;
     runtime
         .dispatch(
             TransportEffect::new(
                 OperationId::new("reconnect-approval-second").expect("operation"),
                 TransportEffectRequest::DeliverJoinApproval {
-                    request_id: RequestId::new("reconnect-request-second").expect("request"),
+                    request_id: replacement_request_id,
                     session_id,
                     listener_id: listener_id.clone(),
                     trusted_for_future: false,
