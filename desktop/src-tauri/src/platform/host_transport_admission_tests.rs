@@ -92,7 +92,7 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
             TransportEffect::new(
                 OperationId::new("approve-effect").expect("operation"),
                 TransportEffectRequest::DeliverJoinApproval {
-                    request_id: request_id,
+                    request_id,
                     session_id: session_id.clone(),
                     listener_id: listener_id.clone(),
                     trusted_for_future: false,
@@ -187,7 +187,7 @@ fn invalid_udp_route_after_tcp_approval_reports_failure_and_disconnects_listener
             TransportEffect::new(
                 OperationId::new("invalid-route-approval").expect("operation"),
                 TransportEffectRequest::DeliverJoinApproval {
-                    request_id: request_id,
+                    request_id,
                     session_id: session.clone(),
                     listener_id: listener_id.clone(),
                     trusted_for_future: false,
@@ -273,7 +273,7 @@ fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
             TransportEffect::new(
                 OperationId::new("unverified-durable-approval").expect("operation"),
                 TransportEffectRequest::DeliverJoinApproval {
-                    request_id: request_id,
+                    request_id,
                     session_id: session,
                     listener_id: listener_id.clone(),
                     trusted_for_future: true,
