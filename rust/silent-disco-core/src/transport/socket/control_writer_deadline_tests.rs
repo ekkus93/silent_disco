@@ -76,13 +76,15 @@ fn transiently_full_writer_queue_delivers_ordered_authoritative_tcp_frames() {
     // control attempts to enter a genuinely full bounded queue.
     let (sender, receiver) = sync_channel(1);
     let (first_ack, first_result) = sync_channel(1);
-    assert!(sender
-        .send(ControlWrite {
-            bytes: b"first".to_vec(),
-            result: first_ack,
-            deadline: None,
-        })
-        .is_ok());
+    assert!(
+        sender
+            .send(ControlWrite {
+                bytes: b"first".to_vec(),
+                result: first_ack,
+                deadline: None,
+            })
+            .is_ok()
+    );
     let counters = Arc::new(CounterState::default());
     let control = ControlSender::new(sender, Duration::from_secs(2), counters.clone());
     let producer = thread::spawn(move || control.send(b"second".to_vec()));
