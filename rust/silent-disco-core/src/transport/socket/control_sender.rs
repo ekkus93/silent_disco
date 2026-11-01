@@ -1,8 +1,8 @@
 //! Bounded, deadline-aware authoritative TCP control sender.
 use super::{ControlWrite, CounterState};
 use crate::transport::{TransportChannel, TransportError, TransportErrorKind};
-use std::sync::{Arc, Mutex, TryLockError};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::thread;
 use std::time::{Duration, Instant};
 

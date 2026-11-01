@@ -167,6 +167,9 @@ fn concurrent_authoritative_controls_cannot_overtake_a_waiting_sender() {
     assert_eq!(second_write.bytes, vec![3]);
     second_write.result.send(Ok(1)).expect("ack later control");
     assert_eq!(first.join().expect("first sender").expect("first ack"), 1);
-    assert_eq!(second.join().expect("second sender").expect("second ack"), 1);
+    assert_eq!(
+        second.join().expect("second sender").expect("second ack"),
+        1
+    );
     assert_eq!(counters.snapshot().delivery_failures, 0);
 }
