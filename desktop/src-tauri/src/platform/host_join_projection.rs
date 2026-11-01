@@ -222,6 +222,7 @@ mod generation_tests {
     use std::net::SocketAddr;
 
     #[test]
+    #[allow(clippy::too_many_lines, reason = "table exercises all invite and stale-mode admission outcomes")]
     fn invite_admission_fails_closed_for_missing_code_and_stale_advertisement() {
         use crate::platform::host_transport_events::DesktopHostTransportEventSink;
         use silent_disco_core::domain::{ApprovalMode, MonotonicMillis, SessionId};
@@ -358,19 +359,16 @@ mod generation_tests {
                 &sink,
             );
             let recorded = sink.received.lock().expect("recorded join");
-            match delivered {
-                Some(expected_valid) => {
-                    assert!(result.is_ok(), "case {index} must reach actor");
-                    assert_eq!(recorded.as_slice(), &[expected_valid], "case {index}");
-                }
-                None => {
-                    assert!(result.is_err(), "case {index} must reject stale policy");
-                    assert!(recorded.is_empty(), "case {index} must not reach actor");
-                    assert!(
-                        projection.requests.is_empty(),
-                        "case {index} retains no ports"
-                    );
-                }
+            if let Some(expected_valid) = delivered {
+                assert!(result.is_ok(), "case {index} must reach actor");
+                assert_eq!(recorded.as_slice(), &[expected_valid], "case {index}");
+            } else {
+                assert!(result.is_err(), "case {index} must reject stale policy");
+                assert!(recorded.is_empty(), "case {index} must not reach actor");
+                assert!(
+                    projection.requests.is_empty(),
+                    "case {index} retains no ports"
+                );
             }
         }
     }
