@@ -92,13 +92,21 @@ fn failed_targeted_stop_retires_only_that_peer_and_preserves_other_pcm_route() {
     // The unaffected listener continues to receive controls and UDP.
     let pcm = audio_frame_at(&session, 0, 1_000);
     assert_eq!(
-        host.broadcast_audio(&pcm).expect("healthy UDP").report.successful_peers,
+        host.broadcast_audio(&pcm)
+            .expect("healthy UDP")
+            .report
+            .successful_peers,
         1
     );
-    wait_for_frame(healthy.as_mut(), TransportChannel::Audio, |frame| frame == &pcm);
+    wait_for_frame(healthy.as_mut(), TransportChannel::Audio, |frame| {
+        frame == &pcm
+    });
     let stop = stream_stop(&session, 1_200);
     assert_eq!(
-        host.broadcast_control(&stop).expect("healthy Stop").report.successful_peers,
+        host.broadcast_control(&stop)
+            .expect("healthy Stop")
+            .report
+            .successful_peers,
         1
     );
     wait_for_frame(healthy.as_mut(), TransportChannel::Control, |frame| {
