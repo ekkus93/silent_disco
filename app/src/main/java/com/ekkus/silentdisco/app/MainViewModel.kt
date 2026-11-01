@@ -127,7 +127,7 @@ class MainViewModel @JvmOverloads constructor(
     )
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
 
-    internal var currentSessionId: SessionId? = null
+    @Volatile internal var currentSessionId: SessionId? = null
     internal var currentStreamId: StreamId? = null
     internal var listenerStreamHostStartTimeMs: Long? = null
     internal val pendingListenerTrackBoundaries = linkedMapOf<Long, PendingListenerTrackBoundary>()
@@ -179,7 +179,7 @@ class MainViewModel @JvmOverloads constructor(
     internal var pendingSyncCorrelationId: Long? = null
     /** Monotonic probe ids for the runtime-owned estimator. */
     internal var nextSyncCorrelationId: Long = 1
-    internal var hostCoreController: HostCoreController? = null
+    @Volatile internal var hostCoreController: HostCoreController? = null
     internal var listenerCoreController: ListenerCoreController? = null
     internal var pendingEstablishNetworkOperationId: String? = null
     internal var listenerTransportConnected: Boolean = false
@@ -193,7 +193,9 @@ class MainViewModel @JvmOverloads constructor(
     internal var listenerTransportRidesWifiDirect: Boolean = false
     internal val listenerHasPendingWifiDirectJoin: Boolean
         get() = listenerTransportRidesWifiDirect || pendingEstablishNetworkOperationId != null
-    internal var pendingStartAdvertisingOperationId: String? = null
+    @Volatile internal var pendingStartAdvertisingOperationId: String? = null
+    /** Suppress duplicate Wi-Fi callbacks for the same in-flight bind operation. */
+    internal var bindingStartAdvertisingOperationId: String? = null
     internal var hostTransportEventLoopStarted: Boolean = false
     internal var listenerTransportEventLoopStarted: Boolean = false
     internal val localListenerDeviceId: String by lazy { DeviceIdentityStore.get(application) }

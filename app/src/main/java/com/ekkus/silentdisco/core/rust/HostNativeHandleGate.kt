@@ -127,7 +127,23 @@ internal class HostNativeHandleGate<T : Any> {
         retire: (T?) -> Unit,
         open: () -> T,
         start: (T) -> Unit,
-    ) = synchronized(monitor) {
+    ) {
+        replaceIf(shouldReplace = { true }, retire = retire, open = open, start = start)
+    }
+
+    /**
+     * A delayed host bind must not resurrect an advertising session after Stop
+     * or replace a newer host. Check the caller's session/operation token under
+     * the SAME lock that serializes native close, bind and in-flight sends.
+     * A rejected request neither retires the current handle nor opens a socket.
+     */
+    fun replaceIf(
+        shouldReplace: () -> Boolean,
+        retire: (T?) -> Unit,
+        open: () -> T,
+        start: (T) -> Unit,
+    ): Boolean = synchronized(monitor) {
+        if (!shouldReplace()) return@synchronized false
         retire(current.getAndSet(null))
         val next = open()
         current.set(next)
@@ -142,6 +158,7 @@ internal class HostNativeHandleGate<T : Any> {
             }
             throw error
         }
+        true
     }
 
     fun close(retire: (T?) -> Unit) = synchronized(monitor) {

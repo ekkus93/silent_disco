@@ -103,42 +103,65 @@ internal suspend fun MainViewModel.completeRustHostAdvertising(snapshot: Transpo
     val address = snapshot.hostAddressHint ?: return
     val controller = hostCoreController ?: return
     val sessionId = currentSessionId?.value ?: return
-    pendingStartAdvertisingOperationId = null
-    val ports = TransportPorts()
-    var lastError: Throwable? = null
-    for (attempt in 1..HOST_BIND_RETRY_ATTEMPTS) {
-        val result = runCatching {
-            hostTransportController.bind(
-                scope = viewModelScope,
-                localAddress = address,
-                controlPort = ports.control,
-                syncPort = ports.sync,
-                audioPort = ports.audio,
-                sessionId = sessionId,
+    // Wi-Fi Direct can report the same group address more than once while
+    // the native bind is suspended. Never launch duplicate binds for one op.
+    if (bindingStartAdvertisingOperationId == operationId) return
+    bindingStartAdvertisingOperationId = operationId
+    val stillRequested = {
+        pendingStartAdvertisingOperationId == operationId &&
+            currentSessionId?.value == sessionId &&
+            hostCoreController === controller
+    }
+    try {
+        val ports = TransportPorts()
+        var lastError: Throwable? = null
+        for (attempt in 1..HOST_BIND_RETRY_ATTEMPTS) {
+            if (!stillRequested()) return
+            val result = runCatching {
+                hostTransportController.bindIfRequested(
+                    scope = viewModelScope,
+                    localAddress = address,
+                    controlPort = ports.control,
+                    syncPort = ports.sync,
+                    audioPort = ports.audio,
+                    sessionId = sessionId,
+                    stillRequested = stillRequested,
+                )
+            }
+            // Stop or a replacement session can arrive while the IO bind is
+            // queued. Never acknowledge the retired operation to the actor.
+            if (!stillRequested()) return
+            result.onSuccess { bound ->
+                if (!bound) return
+                pendingStartAdvertisingOperationId = null
+                pendingListenerDatagramPorts.clear()
+                controller.transportStateChanged(FfiTransportState.ADVERTISING)
+                controller.platformOperationSucceeded(operationId, FfiPlatformCompletion.AdvertisingStarted)
+                return
+            }
+            lastError = result.exceptionOrNull()
+            if (lastError is kotlinx.coroutines.CancellationException) throw lastError
+            logger.w(
+                "rust.host",
+                "Host transport bind attempt $attempt/$HOST_BIND_RETRY_ATTEMPTS at $address failed: ${lastError?.message}",
+            )
+            if (attempt < HOST_BIND_RETRY_ATTEMPTS && stillRequested()) {
+                delay(HOST_BIND_RETRY_DELAY_MS)
+            }
+        }
+        if (stillRequested()) {
+            pendingStartAdvertisingOperationId = null
+            controller.platformOperationFailed(
+                operationId,
+                lastError?.message ?: "Failed to bind host transport",
+                true,
             )
         }
-        result.onSuccess {
-            // A successful new native bind retires all route claims from the
-            // previous session; actor effects must not borrow their ports.
-            pendingListenerDatagramPorts.clear()
-            controller.transportStateChanged(FfiTransportState.ADVERTISING)
-            controller.platformOperationSucceeded(operationId, FfiPlatformCompletion.AdvertisingStarted)
-            return
-        }
-        lastError = result.exceptionOrNull()
-        logger.w(
-            "rust.host",
-            "Host transport bind attempt $attempt/$HOST_BIND_RETRY_ATTEMPTS at $address failed: ${lastError?.message}",
-        )
-        if (attempt < HOST_BIND_RETRY_ATTEMPTS) {
-            delay(HOST_BIND_RETRY_DELAY_MS)
+    } finally {
+        if (bindingStartAdvertisingOperationId == operationId) {
+            bindingStartAdvertisingOperationId = null
         }
     }
-    controller.platformOperationFailed(
-        operationId,
-        lastError?.message ?: "Failed to bind host transport",
-        true,
-    )
 }
 
 internal fun MainViewModel.createRustHostSession() {
@@ -449,13 +472,14 @@ private suspend fun MainViewModel.stopAdvertisingForRust(
     controller: HostCoreController,
     effect: FfiPlatformEffect.StopAdvertising,
 ) {
+    // Invalidate queued native binds before any suspending teardown work.
+    pendingStartAdvertisingOperationId = null
     hostStreamJob?.cancel()
     playbackJob?.cancel()
     resyncJob?.cancel()
     stopHostMonitorPlayback()
     bleService.stop()
     wifiDirectService.stop()
-    pendingStartAdvertisingOperationId = null
     pendingListenerDatagramPorts.clear()
     // Native shutdown waits for in-flight UniFFI operations and the poller.
     // Never hold the Compose/main dispatcher while waiting for those threads.

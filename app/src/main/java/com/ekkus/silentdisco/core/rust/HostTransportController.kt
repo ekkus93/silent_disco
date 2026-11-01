@@ -73,25 +73,41 @@ class HostTransportController(
         audioPort: Int,
         sessionId: String,
     ) {
-        withContext(callDispatcher) {
-            handleGate.replace(
-                retire = ::retireHandle,
-                open = {
-                    bindHandle(
-                        localAddress,
-                        controlPort.toUShort(),
-                        syncPort.toUShort(),
-                        audioPort.toUShort(),
-                        sessionId,
-                    )
-                },
-                start = { handle ->
-                    // Old-session events must not occupy the new session's bounded queue.
-                    eventQueue.discardRetiredEvents()
-                    startEventLoop(scope, handle)
-                },
-            )
-        }
+        bindIfRequested(scope, localAddress, controlPort, syncPort, audioPort, sessionId) { true }
+    }
+
+    /**
+     * Bind only if the original advertising operation still owns this session.
+     * The predicate is checked inside the native generation gate, not just
+     * before IO dispatch, so Stop/rebind can invalidate a queued bind safely.
+     */
+    internal suspend fun bindIfRequested(
+        scope: CoroutineScope,
+        localAddress: String,
+        controlPort: Int,
+        syncPort: Int,
+        audioPort: Int,
+        sessionId: String,
+        stillRequested: () -> Boolean,
+    ): Boolean = withContext(callDispatcher) {
+        handleGate.replaceIf(
+            shouldReplace = stillRequested,
+            retire = ::retireHandle,
+            open = {
+                bindHandle(
+                    localAddress,
+                    controlPort.toUShort(),
+                    syncPort.toUShort(),
+                    audioPort.toUShort(),
+                    sessionId,
+                )
+            },
+            start = { handle ->
+                // Old-session events must not occupy the new session's bounded queue.
+                eventQueue.discardRetiredEvents()
+                startEventLoop(scope, handle)
+            },
+        )
     }
 
     suspend fun sendJoinApproval(listenerId: String, trustedForFuture: Boolean): FfiHostTransportDelivery? {
