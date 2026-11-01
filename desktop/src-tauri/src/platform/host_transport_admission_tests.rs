@@ -78,8 +78,9 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
     wait_for_control(&mut *listener, |message| {
         matches!(message, ControlMessage::Hello(_))
     });
-    let CoreTransportEvent::JoinRequested(request) =
-        receiver.recv_timeout(TEST_TIMEOUT).expect("actor received join")
+    let CoreTransportEvent::JoinRequested(request) = receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("actor received join")
     else {
         panic!("expected join request");
     };
@@ -258,8 +259,9 @@ fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
     wait_for_control(listener.as_mut(), |message| {
         matches!(message, ControlMessage::Hello(_))
     });
-    let CoreTransportEvent::JoinRequested(request) =
-        receiver.recv_timeout(TEST_TIMEOUT).expect("actor received join")
+    let CoreTransportEvent::JoinRequested(request) = receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("actor received join")
     else {
         panic!("expected join request");
     };
@@ -341,8 +343,9 @@ fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
     wait_for_control(&mut *first, |message| {
         matches!(message, ControlMessage::Hello(_))
     });
-    let CoreTransportEvent::JoinRequested(request) =
-        receiver.recv_timeout(TEST_TIMEOUT).expect("first join event")
+    let CoreTransportEvent::JoinRequested(request) = receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("first join event")
     else {
         panic!("expected first join request");
     };
@@ -378,8 +381,9 @@ fn real_socket_same_id_reconnect_does_not_project_retired_peer_disconnect() {
     wait_for_control(&mut *replacement, |message| {
         matches!(message, ControlMessage::Hello(_))
     });
-    let CoreTransportEvent::JoinRequested(request) =
-        receiver.recv_timeout(TEST_TIMEOUT).expect("replacement join event")
+    let CoreTransportEvent::JoinRequested(request) = receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("replacement join event")
     else {
         panic!("expected replacement join request");
     };
