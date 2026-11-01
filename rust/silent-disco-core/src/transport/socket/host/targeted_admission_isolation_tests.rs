@@ -2,6 +2,7 @@
 //! another claimed listener or broadcast. Legacy v3 is not authenticated.
 use std::sync::Arc;
 
+use super::SocketHostTransport;
 use crate::protocol::{
     ControlMessage, Disconnect, JoinApproval, JoinRejection, ProtocolFrame, ResyncNotice,
 };
@@ -14,8 +15,6 @@ use crate::transport::{
     ManualTransportClock, SocketTransportFactory, TransportChannel, TransportErrorKind,
     TransportFactory,
 };
-use super::SocketHostTransport;
-
 fn join(
     host: &mut SocketHostTransport,
     clock: &Arc<ManualTransportClock>,
