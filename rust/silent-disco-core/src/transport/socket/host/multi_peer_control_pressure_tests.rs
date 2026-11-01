@@ -340,7 +340,10 @@ fn failed_authoritative_delivery_retires_only_the_affected_tcp_udp_route() {
     affected.shutdown().expect("close affected listener");
     let mut replacement = join(&mut host, &clock, &session, "failed-control-peer", 16);
     assert!(!peer.active.load(Ordering::Acquire));
-    assert_eq!(host.authorized_routes().expect("replacement routes").len(), 2);
+    assert_eq!(
+        host.authorized_routes().expect("replacement routes").len(),
+        2
+    );
     replacement.shutdown().expect("close replacement");
     healthy.shutdown().expect("close healthy");
     host.shutdown().expect("close host");
