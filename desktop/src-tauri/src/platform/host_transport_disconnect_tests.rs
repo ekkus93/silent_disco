@@ -64,7 +64,10 @@ fn setup() -> (
     .expect("advertisement");
     let clock = Arc::new(SystemTransportClock::default());
     let node = production_transport_factory()
-        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .bind_host(
+            HostTransportConfig::loopback(session.clone()),
+            clock.clone(),
+        )
         .expect("real host TCP/UDP");
     let endpoint = node.endpoint();
     let (sender, receiver) = mpsc::channel();
@@ -212,11 +215,21 @@ fn authorized_disconnect_effect_retires_udp_but_preserves_healthy_playback_and_r
     let healthy_id = DeviceId::new("desktop-healthy-listener").expect("ID");
     let mut kicked = join(&session, endpoint, kicked_id.as_str(), &receiver);
     approve(
-        &runtime, &session, &kicked_id, kicked.as_mut(), &receiver, "approve-kicked",
+        &runtime,
+        &session,
+        &kicked_id,
+        kicked.as_mut(),
+        &receiver,
+        "approve-kicked",
     );
     let mut healthy = join(&session, endpoint, healthy_id.as_str(), &receiver);
     approve(
-        &runtime, &session, &healthy_id, healthy.as_mut(), &receiver, "approve-healthy",
+        &runtime,
+        &session,
+        &healthy_id,
+        healthy.as_mut(),
+        &receiver,
+        "approve-healthy",
     );
 
     dispatch(
@@ -245,7 +258,9 @@ fn authorized_disconnect_effect_retires_udp_but_preserves_healthy_playback_and_r
         current_entry_id: Some("still-playing".to_owned()),
         current_display_name: Some("Still playing".to_owned()),
     }));
-    runtime.broadcast_frame(start.clone()).expect("broadcast Start");
+    runtime
+        .broadcast_frame(start.clone())
+        .expect("broadcast Start");
     wait_frame(healthy.as_mut(), |frame| frame == &start);
     let pcm = ProtocolFrame::Audio(AudioDatagram {
         session_id: session.clone(),
@@ -270,7 +285,12 @@ fn authorized_disconnect_effect_retires_udp_but_preserves_healthy_playback_and_r
 
     let mut replacement = join(&session, endpoint, kicked_id.as_str(), &receiver);
     approve(
-        &runtime, &session, &kicked_id, replacement.as_mut(), &receiver, "approve-reconnect",
+        &runtime,
+        &session,
+        &kicked_id,
+        replacement.as_mut(),
+        &receiver,
+        "approve-reconnect",
     );
     wait_frame(replacement.as_mut(), |frame| frame == &start);
     replacement.shutdown().expect("replacement shutdown");
