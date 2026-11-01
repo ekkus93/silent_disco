@@ -222,7 +222,10 @@ mod generation_tests {
     use std::net::SocketAddr;
 
     #[test]
-    #[allow(clippy::too_many_lines, reason = "table exercises all invite and stale-mode admission outcomes")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "table exercises all invite and stale-mode admission outcomes"
+    )]
     fn invite_admission_fails_closed_for_missing_code_and_stale_advertisement() {
         use crate::platform::host_transport_events::DesktopHostTransportEventSink;
         use silent_disco_core::domain::{ApprovalMode, MonotonicMillis, SessionId};
