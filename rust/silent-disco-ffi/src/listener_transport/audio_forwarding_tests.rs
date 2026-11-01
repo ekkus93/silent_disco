@@ -244,6 +244,10 @@ fn detaching_returns_audio_to_the_caller() {
 /// midqueue boundary. A second listener verifies independent wire delivery.
 /// This is a software-native runtime identity check, not an Oboe/DAC claim.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one end-to-end TCP/UDP playback scenario must preserve its event and PCM ordering"
+)]
 fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_runtime_reopen() {
     use super::Inner;
     use silent_disco_core::domain::DeviceId;
