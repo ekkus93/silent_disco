@@ -176,7 +176,10 @@ fn detach_waits_for_in_flight_pcm_forwarding_before_runtime_shutdown() {
     entered_rx
         .recv_timeout(std::time::Duration::from_secs(5))
         .expect("forwarding entered lock");
-    assert!(handle.playback.try_lock().is_err(), "forwarding holds attachment lock");
+    assert!(
+        handle.playback.try_lock().is_err(),
+        "forwarding holds attachment lock"
+    );
 
     let (attempt_tx, attempt_rx) = std::sync::mpsc::sync_channel(1);
     let (detached_tx, detached_rx) = std::sync::mpsc::sync_channel(1);
