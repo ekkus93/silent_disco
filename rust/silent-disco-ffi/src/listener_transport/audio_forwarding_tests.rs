@@ -252,7 +252,7 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         id_device, join_request, wait_for_authorized, wait_for_control_from, wait_for_frame,
     };
     use silent_disco_core::transport::{
-        HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
+        HostTransportConfig, ListenerTransportConfig, ManualTransportClock,
         SocketTransportFactory, TransportClock, TransportFactory,
     };
 
