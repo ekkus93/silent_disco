@@ -24,21 +24,16 @@ fn repeated_boundary_pause_resume_preserves_exact_pcm_on_two_real_socket_outputs
     let mut sources = Vec::new();
     for (index, value) in [3_000, 6_000, 9_000, 12_000].into_iter().enumerate() {
         let path = root.join(format!("track-{index}.wav"));
-        fs::write(&path, source_wav_format(value, 48_000, 2, 480))
-            .expect("canonical WAV source");
+        fs::write(&path, source_wav_format(value, 48_000, 2, 480)).expect("canonical WAV source");
         sources.push(source(&format!("track-{index}"), &path));
     }
     let session = SessionId::new("end-to-end-session").expect("session");
     let stream = StreamId::new("repeated-pause-stream").expect("stream");
     let (mut host, mut listener) = authorized_pcm_socket_pair();
     let mut second = authorized_late_joiner(host.as_mut(), "repeated-pause-second");
-    let playlist = FfiHostPlaylistStreamer::open(
-        session.to_string(),
-        stream.to_string(),
-        1_000,
-        sources,
-    )
-    .expect("four-track production producer");
+    let playlist =
+        FfiHostPlaylistStreamer::open(session.to_string(), stream.to_string(), 1_000, sources)
+            .expect("four-track production producer");
 
     // Three distinct TCP Pause/Resume pairs, one at every successor boundary.
     // Both authorized UDP routes feed separate scheduler/native callback
@@ -56,8 +51,14 @@ fn repeated_boundary_pause_resume_preserves_exact_pcm_on_two_real_socket_outputs
         false,
         true,
     );
-    assert!(playback.failure.is_none(), "four tracks must finish naturally");
-    assert_eq!(playback.packets, 8, "all PCM packet indices remain contiguous");
+    assert!(
+        playback.failure.is_none(),
+        "four tracks must finish naturally"
+    );
+    assert_eq!(
+        playback.packets, 8,
+        "all PCM packet indices remain contiguous"
+    );
     assert_eq!(playback.boundaries, [480, 960, 1_440]);
     assert_eq!(
         playback.pcm,
