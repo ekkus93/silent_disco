@@ -74,7 +74,9 @@ impl ControlSender {
         match result_receiver.recv_timeout(remaining) {
             Ok(result) => result,
             Err(RecvTimeoutError::Timeout) => {
-                self.counters.delivery_failure();
+                // The writer owns expired-queued-frame failure accounting.
+                // Counting the caller's wait here as well would double-count
+                // one frame when the writer eventually retires its deadline.
                 Err(TransportError::new(
                     TransportErrorKind::Timeout,
                     TransportChannel::Control,

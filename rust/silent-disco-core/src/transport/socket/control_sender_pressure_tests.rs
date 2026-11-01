@@ -120,5 +120,7 @@ fn queued_control_ack_uses_remaining_budget_not_a_fresh_timeout() {
         .expect("control sender")
         .expect_err("deadline expired");
     assert_eq!(error.kind, TransportErrorKind::Timeout);
-    assert_eq!(counters.snapshot().delivery_failures, 1);
+    // This fixture deliberately has no writer. The writer counts an expired
+    // queued frame once when it eventually observes the original deadline.
+    assert_eq!(counters.snapshot().delivery_failures, 0);
 }
