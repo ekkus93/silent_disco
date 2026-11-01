@@ -203,6 +203,20 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
             .intended_peers,
         0,
     );
+    // A retired same-stream producer can also carry sequence zero and sample
+    // zero with a different future/past presentation anchor. Reject both
+    // before they can seize the new generation's first-packet slot.
+    for stale_time in [1_499, 1_505] {
+        let stale_zero = packet(&session, 0, stale_time);
+        assert_eq!(
+            host.broadcast_audio(&stale_zero)
+                .expect("reject old-generation packet zero")
+                .report
+                .intended_peers,
+            0,
+            "replay must require the new StreamStart anchor even for packet zero"
+        );
+    }
     // A malformed packet-zero attempt must fail wire validation without
     // consuming the replay handshake or poisoning the fresh producer.
     let mut malformed_first = packet(&session, 0, 1_500);
@@ -260,6 +274,17 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
             .intended_peers,
         0,
     );
+    // Sequence/sample continuity is necessary but not sufficient: an old
+    // producer can reuse the expected successor index with a rewound clock.
+    // Refusal must leave the correct successor eligible for delivery.
+    let rewound_second = packet(&session, 1, 1_499);
+    assert_eq!(
+        host.broadcast_audio(&rewound_second)
+            .expect("reject replay clock regression")
+            .report
+            .intended_peers,
+        0,
+    );
     let mut fresh_join = join(&mut host, &clock, &session, "replay-queue-listener");
     received_control(fresh_join.as_mut(), &replay);
     // Invalid successor geometry also must not advance the contiguous
@@ -280,6 +305,27 @@ fn paused_multitrack_reconnect_and_late_join_keep_udp_contiguous_until_stop_repl
             fresh_join.as_mut(),
         ],
         &replay_second,
+    );
+    // Keep all four real UDP peers in sync after another invalid successor.
+    // The rejection must not consume sequence two or force a new output.
+    let rewound_third = packet(&session, 2, 1_500);
+    assert_eq!(
+        host.broadcast_audio(&rewound_third)
+            .expect("reject second replay clock regression")
+            .report
+            .intended_peers,
+        0,
+    );
+    let replay_third = packet(&session, 2, 1_502);
+    deliver_audio(
+        &host,
+        &mut [
+            returning.as_mut(),
+            late.as_mut(),
+            stopped_join.as_mut(),
+            fresh_join.as_mut(),
+        ],
+        &replay_third,
     );
 
     for listener in [

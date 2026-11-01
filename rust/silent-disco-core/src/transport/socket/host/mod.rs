@@ -92,6 +92,9 @@ pub(super) struct PlaybackControls {
     // entire replay generation, not just its first packet. This rejects
     // delayed duplicate and out-of-order UDP from a retired same-ID sender.
     replay_next_packet: Option<(u64, u64)>,
+    // A replayed packet must never rewind its presentation clock even when
+    // the packet sequence and sample index happen to match the next slot.
+    replay_last_presentation_ms: Option<u64>,
     // A Pause/Resume keeps the stream ID and packet sequence, but moves the
     // presentation anchor. Retired pre-pause UDP must not leak after Resume.
     resume_anchor_floor: Option<u64>,
@@ -226,6 +229,7 @@ impl PlaybackControls {
                     if self.last_stopped_control.is_some() {
                         self.awaiting_replay_first_packet = true;
                         self.replay_next_packet = None;
+                        self.replay_last_presentation_ms = None;
                     }
                 }
                 self.stream_start = Some(current_start);
@@ -306,6 +310,7 @@ impl PlaybackControls {
                 self.resume_anchor_floor = None;
                 self.awaiting_replay_first_packet = true;
                 self.replay_next_packet = None;
+                self.replay_last_presentation_ms = None;
                 true
             }
             // Explicit Stop must disarm idle listener liveness even when the
@@ -323,6 +328,7 @@ impl PlaybackControls {
                     self.last_stop = Some(stop.clone());
                     self.awaiting_replay_first_packet = true;
                     self.replay_next_packet = None;
+                    self.replay_last_presentation_ms = None;
                     true
                 }
             }
@@ -370,6 +376,22 @@ impl PlaybackControls {
         {
             return false;
         }
+        // A retired same-stream producer may still have packet zero queued
+        // with a *future* timestamp. Sequence/sample reset alone cannot
+        // distinguish it from the new Play: require the first packet to be
+        // anchored to the newly advertised StreamStart, not a stale timeline.
+        if self.awaiting_replay_first_packet
+            && self.stream_start.as_ref().is_some_and(|start| {
+                packet.host_presentation_time_ms != start.host_start_time_ms
+            })
+        {
+            return false;
+        }
+        if self.replay_last_presentation_ms.is_some_and(|previous| {
+            packet.host_presentation_time_ms.get() < previous
+        }) {
+            return false;
+        }
         if self.replay_next_packet.is_some_and(|(sequence, sample)| {
             packet.sequence.get() != sequence || packet.first_sample_index.get() != sample
         }) {
@@ -388,6 +410,7 @@ impl PlaybackControls {
             };
             self.awaiting_replay_first_packet = false;
             self.replay_next_packet = Some((sequence, sample));
+            self.replay_last_presentation_ms = Some(packet.host_presentation_time_ms.get());
         }
         true
     }
