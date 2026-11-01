@@ -72,8 +72,22 @@ impl PendingJoinProjection {
         let request_id = RequestId::new(format!("desktop-join-{}", self.next_sequence))
             .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))?;
         self.next_sequence = self.next_sequence.saturating_add(1);
-        let invite_code_valid = advertisement.approval_mode != ApprovalMode::InviteCode
-            || request.invite_code.as_deref() == snapshot.host_draft.invite_code.as_deref();
+        // The actor evaluates the authoritative draft, not the last advertised
+        // mode. A stale advertisement must not bypass a newly enabled invite
+        // requirement (or present a misleading admission policy).
+        if advertisement.approval_mode != snapshot.host_draft.approval_mode {
+            return Err(DesktopNetworkError::invalid_state(
+                "advertised approval mode differs from authoritative host policy",
+            ));
+        }
+        let invite_code_valid = snapshot.host_draft.approval_mode != ApprovalMode::InviteCode
+            || matches!(
+                (
+                    snapshot.host_draft.invite_code.as_deref(),
+                    request.invite_code.as_deref()
+                ),
+                (Some(expected), Some(provided)) if !expected.is_empty() && expected == provided
+            );
         let display_name = request.device.display_name.clone();
         let summary = JoinRequestSummary::new(
             request_id.clone(),
@@ -206,6 +220,106 @@ mod generation_tests {
     use super::{PendingJoinPorts, PendingJoinProjection};
     use silent_disco_core::domain::{DeviceId, RequestId};
     use std::net::SocketAddr;
+
+    #[test]
+    fn invite_admission_fails_closed_for_missing_code_and_stale_advertisement() {
+        use crate::platform::host_transport_events::DesktopHostTransportEventSink;
+        use silent_disco_core::domain::{ApprovalMode, MonotonicMillis, SessionId};
+        use silent_disco_core::error::CoreError;
+        use silent_disco_core::protocol::{DeviceIdentity, JoinRequest, PROTOCOL_VERSION};
+        use silent_disco_core::runtime::{
+            AudioEvent, CoreSnapshot, SessionAdvertisement, TransportEvent,
+        };
+        use std::sync::Mutex;
+
+        struct RecordingSink {
+            mode: ApprovalMode,
+            expected_code: Option<&'static str>,
+            received: Mutex<Vec<bool>>,
+        }
+
+        impl DesktopHostTransportEventSink for RecordingSink {
+            fn current_snapshot(&self) -> Result<CoreSnapshot, CoreError> {
+                let mut snapshot = CoreSnapshot::default();
+                snapshot.host_draft.approval_mode = self.mode;
+                snapshot.host_draft.invite_code = self.expected_code.map(str::to_owned);
+                Ok(snapshot)
+            }
+
+            fn submit_transport_event(&self, event: TransportEvent) -> Result<(), CoreError> {
+                if let TransportEvent::JoinRequested(request) = event {
+                    self.received.lock().expect("recorded join").push(request.invite_code_valid);
+                }
+                Ok(())
+            }
+
+            fn submit_audio_event(&self, _event: AudioEvent) -> Result<(), CoreError> {
+                Ok(())
+            }
+        }
+
+        let session = SessionId::new("invite-admission-session").expect("session");
+        let host = DeviceId::new("invite-host").expect("host");
+        let address: SocketAddr = "127.0.0.1:43555".parse().expect("address");
+        let cases = [
+            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, Some("2468"), Some("2468"), Some(true)),
+            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, Some("2468"), Some("bad"), Some(false)),
+            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, Some("2468"), None, Some(false)),
+            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, None, None, Some(false)),
+            (ApprovalMode::InviteCode, ApprovalMode::InviteCode, Some(""), Some(""), Some(false)),
+            (ApprovalMode::Manual, ApprovalMode::Manual, None, None, Some(true)),
+            (ApprovalMode::Manual, ApprovalMode::InviteCode, Some("2468"), Some("2468"), None),
+            (ApprovalMode::InviteCode, ApprovalMode::Manual, None, None, None),
+        ];
+        for (index, (advertised_mode, host_mode, expected, supplied, delivered)) in
+            cases.into_iter().enumerate()
+        {
+            let advertisement = SessionAdvertisement::new(
+                session.clone(),
+                host.clone(),
+                "Invite host",
+                advertised_mode,
+                PROTOCOL_VERSION,
+                None,
+            )
+            .expect("advertisement");
+            let request = JoinRequest {
+                session_id: session.clone(),
+                device: DeviceIdentity {
+                    device_id: DeviceId::new(format!("invite-listener-{index}")).expect("device"),
+                    display_name: "Invite listener".to_owned(),
+                },
+                invite_code: supplied.map(str::to_owned),
+                sync_port: 42000,
+                audio_port: 42001,
+            };
+            let sink = RecordingSink {
+                mode: host_mode,
+                expected_code: expected,
+                received: Mutex::new(Vec::new()),
+            };
+            let mut projection = PendingJoinProjection::new();
+            let result = projection.register(
+                &request,
+                address,
+                MonotonicMillis::new(100),
+                &advertisement,
+                &sink,
+            );
+            let recorded = sink.received.lock().expect("recorded join");
+            match delivered {
+                Some(expected_valid) => {
+                    assert!(result.is_ok(), "case {index} must reach actor");
+                    assert_eq!(recorded.as_slice(), &[expected_valid], "case {index}");
+                }
+                None => {
+                    assert!(result.is_err(), "case {index} must reject stale policy");
+                    assert!(recorded.is_empty(), "case {index} must not reach actor");
+                    assert!(projection.requests.is_empty(), "case {index} retains no ports");
+                }
+            }
+        }
+    }
 
     #[test]
     fn pending_join_capacity_refuses_new_ids_without_displacing_existing_approvals() {
