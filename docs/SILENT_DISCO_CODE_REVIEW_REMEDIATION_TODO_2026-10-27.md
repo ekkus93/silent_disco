@@ -4,6 +4,7 @@
 **Status:** Open — prioritize security and correctness; software-only execution
 **Specification:** [Code Review Remediation Spec](SILENT_DISCO_CODE_REVIEW_REMEDIATION_SPEC_2026-10-27.md)
 **Current progress handoff:** [Remediation handoff (2026-10-28)](SILENT_DISCO_CODE_REVIEW_REMEDIATION_HANDOFF_2026-10-28.md)
+**Current acceptance navigation:** [Concise acceptance index](SILENT_DISCO_ACCEPTANCE_INDEX.md) · [Append-only evidence ledger](SILENT_DISCO_ACCEPTANCE_EVIDENCE_LEDGER.md)
 **Existing acceptance:** [Gapless Queue and Workflow Redesign TODO](SILENT_DISCO_GAPLESS_QUEUE_AND_WORKFLOW_REDESIGN_TODO_2026-10-15.md)
 **Reviewed baseline:** 5c187acafc9df0ae07816b814ddae38e1c4a2a54
 **Branch policy:** direct master, Ralph Bridge exclusively, exact-head CAS commits, no per-task branches/PRs
