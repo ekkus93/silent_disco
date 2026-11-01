@@ -126,6 +126,44 @@ if [[ "$1" == "--inside" ]]; then
   fi
   sleep 2
   capture_pixels "${output%.png}-settings.png" "settings default"
+
+  # The packaged WebKit tablist must also reach the Storage inspection screen
+  # with keyboard-only navigation. It is the tab immediately left of Settings
+  # in the production build, and renders actual Rust-backed storage metadata.
+  # Capture this read-only view at both sizes without a frontend/DOM mock.
+  xdotool key --clearmodifiers Left
+  sleep 2
+  storage_default="${output%.png}-storage.png"
+  capture_pixels "$storage_default" "storage default"
+  set +e
+  storage_difference="$(compare -metric AE "${output%.png}-settings.png" "$storage_default" null: 2>&1)"
+  storage_compare_status=$?
+  set -e
+  storage_difference="${storage_difference%% *}"
+  if (( storage_compare_status > 1 )) || [[ ! "$storage_difference" =~ ^[0-9]+$ ]] || (( storage_difference < 1000 * 700 / 100 )); then
+    echo "Packaged WebKit keyboard navigation did not visibly reach Storage: $storage_difference changed pixels." >&2
+    exit 1
+  fi
+  echo "Packaged WebKit Settings-to-Storage navigation changed $storage_difference pixels."
+
+  xdotool windowsize "$window" 760 560
+  storage_resized=false
+  for attempt in $(seq 1 40); do
+    geometry="$(xdotool getwindowgeometry --shell "$window" 2>/dev/null || true)"
+    width="$(printf "%s\\n" "$geometry" | awk -F= '/^WIDTH=/{print $2}')"
+    height="$(printf "%s\\n" "$geometry" | awk -F= '/^HEIGHT=/{print $2}')"
+    if [[ "${width:-0}" == "760" && "${height:-0}" == "560" ]]; then
+      storage_resized=true
+      break
+    fi
+    sleep 0.25
+  done
+  if [[ "$storage_resized" != true ]]; then
+    echo "Packaged Storage WebKit did not resize to 760x560; observed ${width:-0}x${height:-0}." >&2
+    exit 1
+  fi
+  sleep 2
+  capture_pixels "${output%.png}-storage-compact.png" "storage compact"
   exit 0
 fi
 
@@ -164,7 +202,7 @@ done
 # The two captures must contain identical pixels at BOTH window sizes. This
 # is a reproducibility gate, not an approved golden or cross-platform parity
 # assertion. Compare decoded pixels (not PNG metadata/compression bytes).
-for label in default compact settings settings-compact; do
+for label in default compact settings settings-compact storage storage-compact; do
   original="$output"
   repeated="${output%.png}-repeat.png"
   if [[ "$label" == compact ]]; then
@@ -177,6 +215,12 @@ for label in default compact settings settings-compact; do
   elif [[ "$label" == settings-compact ]]; then
     original="${output%.png}-settings-compact.png"
     repeated="${output%.png}-repeat-settings-compact.png"
+  elif [[ "$label" == storage ]]; then
+    original="${output%.png}-storage.png"
+    repeated="${output%.png}-repeat-storage.png"
+  elif [[ "$label" == storage-compact ]]; then
+    original="${output%.png}-storage-compact.png"
+    repeated="${output%.png}-repeat-storage-compact.png"
   fi
   dimensions="$(identify -format '%wx%h' "$original")"
   if [[ "$dimensions" != "$(identify -format '%wx%h' "$repeated")" ]]; then
