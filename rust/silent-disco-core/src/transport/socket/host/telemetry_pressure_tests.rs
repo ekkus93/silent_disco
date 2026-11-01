@@ -399,11 +399,7 @@ fn real_socket_busy_join_is_refused_then_retry_rejoins_live_pcm() {
         let device = id_device(name);
         let listener = SocketTransportFactory
             .connect_listener(
-                ListenerTransportConfig::loopback(
-                    session.clone(),
-                    device.clone(),
-                    host.endpoint(),
-                ),
+                ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
                 clock.clone(),
             )
             .expect("connect healthy listener");
@@ -425,11 +421,7 @@ fn real_socket_busy_join_is_refused_then_retry_rejoins_live_pcm() {
     let busy_id = id_device("busy-retry-peer");
     let mut refused = SocketTransportFactory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                busy_id.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), busy_id.clone(), host.endpoint()),
             clock.clone(),
         )
         .expect("connect pending peer");
@@ -449,7 +441,9 @@ fn real_socket_busy_join_is_refused_then_retry_rejoins_live_pcm() {
             })
             .expect("send real UDP telemetry");
     }
-    wait_until(Duration::from_secs(5), || host.counters().queue_overflows > 0);
+    wait_until(Duration::from_secs(5), || {
+        host.counters().queue_overflows > 0
+    });
     refused
         .send_control(&join_request(&session, &busy_id, "Busy peer"))
         .expect("send congested join");
@@ -513,11 +507,7 @@ fn real_socket_busy_join_is_refused_then_retry_rejoins_live_pcm() {
     // while both healthy peers retain their original routes.
     let mut replacement = SocketTransportFactory
         .connect_listener(
-            ListenerTransportConfig::loopback(
-                session.clone(),
-                busy_id.clone(),
-                host.endpoint(),
-            ),
+            ListenerTransportConfig::loopback(session.clone(), busy_id.clone(), host.endpoint()),
             clock,
         )
         .expect("connect fresh generation");
