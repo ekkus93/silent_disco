@@ -1,8 +1,10 @@
 //! Focused Block 26 transport-queue failure regression coverage.
 
 use super::host_transport::DesktopHostTransportRuntime;
-use silent_disco_core::domain::{ApprovalMode, DeviceId, MonotonicMillis, StreamId};
-use silent_disco_core::protocol::{ControlMessage, ProtocolFrame, Stop};
+use silent_disco_core::domain::{
+    ApprovalMode, DeviceId, MonotonicMillis, PacketSequence, SampleIndex, StreamId,
+};
+use silent_disco_core::protocol::{AudioCodec, AudioDatagram, ProtocolFrame};
 use silent_disco_core::runtime::{CoreActorConfig, CoreActorRuntime, SessionAdvertisement};
 use silent_disco_core::transport::{
     HostTransportConfig, SystemTransportClock, TransportFactory, production_transport_factory,
@@ -47,11 +49,21 @@ fn a_full_broadcast_queue_is_a_visible_resource_limit_failure() {
         Arc::new(SystemTransportClock::default()),
     )
     .expect("start desktop transport worker");
-    let frame = ProtocolFrame::Control(ControlMessage::Stop(Stop {
+    // Audio is deliberately lossy/nonblocking under congestion. Critical
+    // controls now have a bounded retry window, so flooding Stop frames
+    // cannot be used to prove immediate queue overflow.
+    let frame = ProtocolFrame::Audio(AudioDatagram {
         session_id: advertisement.session_id,
         stream_id: StreamId::new("stream-broadcast-full").expect("stream ID"),
-        host_stop_time_ms: MonotonicMillis::new(0),
-    }));
+        sequence: PacketSequence::new(0),
+        codec: AudioCodec::PcmS16Le,
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: 240,
+        first_sample_index: SampleIndex::new(0),
+        host_presentation_time_ms: MonotonicMillis::new(0),
+        payload: vec![0; 960],
+    });
 
     let mut failure = None;
     for _ in 0..10_000 {
@@ -62,7 +74,7 @@ fn a_full_broadcast_queue_is_a_visible_resource_limit_failure() {
     }
     let error = failure.expect("a bounded broadcast queue must eventually report saturation");
     assert!(
-        error.to_string().contains("broadcast queue is full"),
+        error.to_string().contains("broadcast queue full"),
         "unexpected saturation error: {error}"
     );
     assert!(
