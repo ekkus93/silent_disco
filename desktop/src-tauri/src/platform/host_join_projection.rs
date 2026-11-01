@@ -83,11 +83,12 @@ impl PendingJoinProjection {
             received_at,
         )
         .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))?;
-        sink.submit_transport_event(CoreTransportEvent::JoinRequested(summary))
-            .map_err(|error| DesktopNetworkError::invalid_state(error.to_string()))?;
-        // A reconnect may be pending while the previous authorized socket
-        // remains live. Do not transfer ownership until approval consumes
-        // the replacement's pending ports.
+        // Publish the ports before enqueueing JoinRequested: the actor may
+        // consume the event and approve immediately on another thread. An
+        // approval must never race ahead of the UDP route it needs.
+        // A replacement may be pending while the previous authorized socket
+        // remains live; do not transfer ownership until authorization succeeds.
+        let inserted_owner = !self.current_peers.contains_key(&device_id);
         self.current_peers
             .entry(device_id.clone())
             .or_insert(control_address);
@@ -100,6 +101,16 @@ impl PendingJoinProjection {
                 display_name,
             },
         );
+        if let Err(error) = sink.submit_transport_event(CoreTransportEvent::JoinRequested(summary)) {
+            // The actor did not accept this join. A retry must not inherit
+            // ghost pending ports, and a failed replacement must not evict
+            // the existing authorized TCP owner.
+            self.requests.remove(&device_id);
+            if inserted_owner {
+                self.current_peers.remove(&device_id);
+            }
+            return Err(DesktopNetworkError::invalid_state(error.to_string()));
+        }
         Ok(device_id)
     }
 
@@ -249,6 +260,113 @@ mod generation_tests {
             )
             .expect("released capacity admits another request");
         assert_eq!(projection.requests.len(), MAX_PENDING_JOIN_REQUESTS);
+    }
+
+    #[test]
+    fn failed_actor_submission_rolls_back_ports_without_eviction_or_ghost_admission() {
+        use crate::platform::host_transport_events::DesktopHostTransportEventSink;
+        use silent_disco_core::domain::{ApprovalMode, MonotonicMillis, SessionId};
+        use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
+        use silent_disco_core::protocol::{DeviceIdentity, JoinRequest, PROTOCOL_VERSION};
+        use silent_disco_core::runtime::{
+            AudioEvent, CoreSnapshot, SessionAdvertisement, TransportEvent,
+        };
+
+        struct RefusingActor;
+        impl DesktopHostTransportEventSink for RefusingActor {
+            fn current_snapshot(&self) -> Result<CoreSnapshot, CoreError> {
+                Ok(CoreSnapshot::default())
+            }
+
+            fn submit_transport_event(&self, _event: TransportEvent) -> Result<(), CoreError> {
+                Err(CoreError::new(
+                    CoreErrorCode::WorkerStopped,
+                    "actor mailbox closed",
+                    ErrorSeverity::Error,
+                    true,
+                    None,
+                )
+                .expect("valid failure"))
+            }
+
+            fn submit_audio_event(&self, _event: AudioEvent) -> Result<(), CoreError> {
+                Ok(())
+            }
+        }
+
+        let session = SessionId::new("desktop-actor-refusal").expect("session");
+        let advertisement = SessionAdvertisement::new(
+            session.clone(),
+            DeviceId::new("host-actor-refusal").expect("host"),
+            "Host",
+            ApprovalMode::Manual,
+            PROTOCOL_VERSION,
+            None,
+        )
+        .expect("advertisement");
+        let request = JoinRequest {
+            session_id: session,
+            device: DeviceIdentity {
+                device_id: DeviceId::new("returning-listener").expect("device"),
+                display_name: "Returning listener".to_owned(),
+            },
+            invite_code: None,
+            sync_port: 42011,
+            audio_port: 42012,
+        };
+        let old: SocketAddr = "127.0.0.1:43111".parse().expect("old");
+        let replacement: SocketAddr = "127.0.0.1:43112".parse().expect("replacement");
+        let mut projection = PendingJoinProjection::new();
+        projection
+            .current_peers
+            .insert(request.device.device_id.clone(), old);
+
+        for _ in 0..128 {
+            assert!(projection
+                .register(
+                    &request,
+                    replacement,
+                    MonotonicMillis::new(100),
+                    &advertisement,
+                    &RefusingActor,
+                )
+                .is_err());
+            assert!(projection.requests.is_empty(), "no ghost approval ports");
+            assert_eq!(
+                projection.current_peers.get(&request.device.device_id),
+                Some(&old),
+                "failed replacement cannot retire the authorized route"
+            );
+        }
+
+        // A first-time listener has no prior TCP owner to preserve.
+        projection.current_peers.clear();
+        assert!(projection
+            .register(
+                &request,
+                replacement,
+                MonotonicMillis::new(101),
+                &advertisement,
+                &RefusingActor,
+            )
+            .is_err());
+        assert!(projection.requests.is_empty());
+        assert!(projection.current_peers.is_empty());
+        // A healthy actor can now accept the same identity without hitting
+        // the pending capacity or inheriting ports from a failed generation.
+        projection
+            .register(
+                &request,
+                replacement,
+                MonotonicMillis::new(102),
+                &advertisement,
+                &crate::platform::host_transport_events::TestTransportEventSink,
+            )
+            .expect("retry after actor recovery");
+        assert_eq!(
+            projection.take_pending_listener(&request.device.device_id),
+            Some((42011, 42012, "Returning listener".to_owned(), replacement))
+        );
     }
 
     #[test]
