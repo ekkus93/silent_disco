@@ -366,7 +366,7 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
     let pause = ControlMessage::Pause(Pause {
         session_id: session.clone(),
         stream_id: stream.clone(),
-        host_pause_time_ms: MonotonicMillis::new(100),
+        host_pause_time_ms: MonotonicMillis::new(8),
     });
     host.broadcast_control(&pause).expect("pause");
     assert!(matches!(
@@ -381,7 +381,9 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         0
     );
 
-    clock.set(110);
+    // Pause before sample 480 becomes audible at 10 ms, so the late
+    // listener must still receive that upcoming boundary in its cache.
+    clock.set(9);
     let late_device = id_device("ffi-forwarding-late");
     let mut late = SocketTransportFactory
         .connect_listener(
