@@ -2,6 +2,7 @@ package com.ekkus.silentdisco.core.rust
 
 import com.google.common.truth.Truth.assertThat
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -36,6 +37,38 @@ class BoundedCoreNotificationQueueTest {
             assertThat(queue.droppedDiagnostics).isEqualTo(1_000)
             val delivered = runBlocking { queue.events.take(2).toList() }
             assertThat(delivered).containsExactly("join", "diagnostic").inOrder()
+        } finally {
+            queue.close()
+        }
+    }
+
+    @Test
+    fun waitingStopCannotBeStarvedByDiagnosticsWhenCollectorResumes() {
+        val queue = BoundedCoreNotificationQueue<String>(capacity = 2, criticalTimeoutMs = 2_000)
+        try {
+            queue.publishCritical("join")
+            queue.publishCritical("pause")
+            val entered = CountDownLatch(1)
+            val pendingStop = CompletableFuture.runAsync {
+                entered.countDown()
+                queue.publishCritical("stop")
+            }
+            assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue()
+            Thread.sleep(40)
+            assertThat(pendingStop.isDone).isFalse()
+
+            val first = CompletableFuture.supplyAsync {
+                runBlocking { queue.events.take(1).toList() }
+            }
+            assertThat(first.get(2, TimeUnit.SECONDS)).containsExactly("join")
+            // Even if the diagnostic producer wins CPU time after the
+            // dequeue, it cannot steal the slot reserved for pending Stop.
+            repeat(1_000) { queue.publishBestEffort("diagnostic-$it") }
+            pendingStop.get(2, TimeUnit.SECONDS)
+            assertThat(queue.droppedDiagnostics).isEqualTo(1_000)
+            val remaining = runBlocking { queue.events.take(2).toList() }
+            assertThat(remaining).containsExactly("pause", "stop").inOrder()
+            assertThat(queue.criticalTimeouts).isEqualTo(0)
         } finally {
             queue.close()
         }

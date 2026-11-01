@@ -39,6 +39,11 @@ internal class BoundedCoreNotificationQueue<Event : Any>(
     private val timedOut = AtomicLong()
     private val bestEffortLimit = if (capacity == 1) 0 else (capacity / 4).coerceIn(1, capacity - 1)
     private val queuedBestEffort = AtomicInteger()
+    // A suspended Stop/approval owns priority over diagnostic bursts when a
+    // collector frees capacity. Never let a lossy producer repeatedly win
+    // the slot before the Rust observer's pending onSend can resume.
+    private val admissionGate = Any()
+    private var waitingCritical = 0
 
     val events: Flow<Event> = flow {
         for (entry in channel) {
@@ -49,12 +54,16 @@ internal class BoundedCoreNotificationQueue<Event : Any>(
     val droppedDiagnostics: Long get() = dropped.get()
     val criticalTimeouts: Long get() = timedOut.get()
 
-    fun publishBestEffort(event: Event) {
+    fun publishBestEffort(event: Event) = synchronized(admissionGate) {
+        if (waitingCritical > 0) {
+            dropped.incrementAndGet()
+            return@synchronized
+        }
         val pending = queuedBestEffort.incrementAndGet()
         if (pending > bestEffortLimit) {
             queuedBestEffort.decrementAndGet()
             dropped.incrementAndGet()
-            return
+            return@synchronized
         }
         if (channel.trySend(CoreNotificationEntry(event, bestEffort = true)).isFailure) {
             queuedBestEffort.decrementAndGet()
@@ -64,15 +73,27 @@ internal class BoundedCoreNotificationQueue<Event : Any>(
 
     fun publishCritical(event: Event) {
         val entry = CoreNotificationEntry(event, bestEffort = false)
-        if (channel.trySend(entry).isSuccess) return
-        val delivered = runBlocking {
-            withTimeoutOrNull(criticalTimeoutMs) {
-                select<Boolean> {
-                    channel.onSend(entry) { true }
-                    closed.onAwait { error("Rust host critical notification queue closed") }
-                }
+        val mustWait = synchronized(admissionGate) {
+            if (channel.trySend(entry).isSuccess) false else {
+                waitingCritical++
+                true
             }
-        } == true
+        }
+        if (!mustWait) return
+        val delivered = try {
+            runBlocking {
+                withTimeoutOrNull(criticalTimeoutMs) {
+                    select<Boolean> {
+                        channel.onSend(entry) { true }
+                        closed.onAwait { error("Rust host critical notification queue closed") }
+                    }
+                }
+            } == true
+        } finally {
+            // Timeout, shutdown and observer cancellation must not leave a
+            // permanent reservation that suppresses future diagnostics.
+            synchronized(admissionGate) { waitingCritical-- }
+        }
         if (!delivered) {
             timedOut.incrementAndGet()
             error("Rust host critical notification queue saturated for ${criticalTimeoutMs}ms")
