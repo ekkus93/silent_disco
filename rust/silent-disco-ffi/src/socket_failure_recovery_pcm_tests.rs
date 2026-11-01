@@ -49,12 +49,10 @@ pub(super) struct CallbackPass {
     pub(super) startup_ramp_frames: usize,
 }
 
-/// One production playback generation, with optional second authorized socket.
-/// The native output token stays unchanged across every packet and boundary.
+/// Keep the single-boundary Pause behavior for existing acceptance callers.
 #[expect(
     clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "one real-socket / production scheduler / callback playback generation"
+    reason = "shared socket/scheduler/native callback test harness"
 )]
 pub(super) fn playback_generation(
     host: &mut dyn HostTransportNode,
@@ -67,6 +65,41 @@ pub(super) fn playback_generation(
     chunks: &[u32],
     pause_at_boundary: bool,
     stop_at_boundary: bool,
+) -> CallbackPass {
+    playback_generation_with_pause_repeats(
+        host,
+        listener,
+        second,
+        playlist,
+        session,
+        stream,
+        start_ms,
+        chunks,
+        pause_at_boundary,
+        stop_at_boundary,
+        false,
+    )
+}
+
+/// One production playback generation, with optional second authorized socket.
+/// The native output token stays unchanged across every packet and boundary.
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "one real-socket / production scheduler / callback playback generation"
+)]
+pub(super) fn playback_generation_with_pause_repeats(
+    host: &mut dyn HostTransportNode,
+    listener: &mut dyn ListenerTransportNode,
+    second: Option<&mut dyn ListenerTransportNode>,
+    playlist: &FfiHostPlaylistStreamer,
+    session: &SessionId,
+    stream: &StreamId,
+    start_ms: u64,
+    chunks: &[u32],
+    pause_at_boundary: bool,
+    stop_at_boundary: bool,
+    pause_every_boundary: bool,
 ) -> CallbackPass {
     let metadata = playlist.stream_start();
     let start = ControlMessage::StreamStart(StreamStart {
@@ -145,6 +178,7 @@ pub(super) fn playback_generation(
     let mut failure = None;
     let mut completed = false;
     let mut paused_boundary = false;
+    let mut pause_count = 0_u64;
     let mut stopped = false;
     let mut presentation_shift_ms = 0_u64;
     for _ in 0..64 {
@@ -257,7 +291,7 @@ pub(super) fn playback_generation(
                     assert!(recv_control(peer) == control);
                 }
                 boundaries.push(first_sample_index);
-                if pause_at_boundary && !paused_boundary {
+                if pause_at_boundary && (!paused_boundary || pause_every_boundary) {
                     // Pause only at the first boundary. Subsequent boundaries
                     // must remain contiguous after Resume in a longer queue.
                     // A producer may have decoded successor PCM, but the paused
@@ -265,7 +299,9 @@ pub(super) fn playback_generation(
                     let pause = ControlMessage::Pause(Pause {
                         session_id: session.clone(),
                         stream_id: stream.clone(),
-                        host_pause_time_ms: MonotonicMillis::new(start_ms + 10),
+                        host_pause_time_ms: MonotonicMillis::new(
+                            start_ms + presentation_shift_ms + sample * 1_000 / 48_000,
+                        ),
                     });
                     assert_eq!(
                         host.broadcast_control(&pause)
@@ -304,7 +340,8 @@ pub(super) fn playback_generation(
                     let ControlMessage::StreamStart(mut reanchored) = start.clone() else {
                         panic!("initial stream start");
                     };
-                    reanchored.host_start_time_ms = MonotonicMillis::new(start_ms + 200);
+                    let next_shift_ms = presentation_shift_ms + 200;
+                    reanchored.host_start_time_ms = MonotonicMillis::new(start_ms + next_shift_ms);
                     let resume = ControlMessage::StreamStart(reanchored);
                     assert_eq!(
                         host.broadcast_control(&resume)
@@ -317,11 +354,13 @@ pub(super) fn playback_generation(
                     if let Some(peer) = second.as_deref_mut() {
                         assert!(recv_control(peer) == resume);
                     }
-                    pump.scheduler_mut().set_host_start_time_ms(start_ms + 200);
+                    pump.scheduler_mut()
+                        .set_host_start_time_ms(start_ms + next_shift_ms);
                     if let Some(output) = second_output.as_mut() {
-                        output.reanchor(start_ms + 200);
+                        output.reanchor(start_ms + next_shift_ms);
                     }
-                    presentation_shift_ms = 200;
+                    presentation_shift_ms = next_shift_ms;
+                    pause_count += 1;
                     paused_boundary = true;
                 }
             }
@@ -343,6 +382,15 @@ pub(super) fn playback_generation(
     assert_eq!(
         paused_boundary, pause_at_boundary,
         "expected pause/boundary coverage"
+    );
+    assert_eq!(
+        pause_count,
+        if pause_every_boundary {
+            boundaries.len() as u64
+        } else {
+            u64::from(pause_at_boundary)
+        },
+        "every requested Pause/Resume must complete on both TCP sockets"
     );
     assert_eq!(
         chunks.iter().copied().map(u64::from).sum::<u64>(),
@@ -708,4 +756,68 @@ fn failure_after_audible_successor_stops_without_skipping_then_retries_three_tra
     listener.shutdown().expect("original listener shutdown");
     host.shutdown().expect("host shutdown");
     fs::remove_dir_all(root).expect("remove fixture directory");
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "four real-socket tracks, three pause/resume cycles and two native outputs"
+)]
+fn repeated_boundary_pause_resume_preserves_exact_pcm_on_two_real_socket_outputs() {
+    let _guard = registry_test_guard();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("sd-socket-repeated-pause-{unique}"));
+    fs::create_dir_all(&root).expect("fixture directory");
+    let mut sources = Vec::new();
+    for (index, value) in [3_000, 6_000, 9_000, 12_000].into_iter().enumerate() {
+        let path = root.join(format!("track-{index}.wav"));
+        fs::write(&path, source_wav_format(value, 48_000, 2, 480))
+            .expect("canonical WAV source");
+        sources.push(source(&format!("track-{index}"), &path));
+    }
+    let session = SessionId::new("end-to-end-session").expect("session");
+    let stream = StreamId::new("repeated-pause-stream").expect("stream");
+    let (mut host, mut listener) = authorized_pcm_socket_pair();
+    let mut second = authorized_late_joiner(host.as_mut(), "repeated-pause-second");
+    let playlist = FfiHostPlaylistStreamer::open(
+        session.to_string(),
+        stream.to_string(),
+        1_000,
+        sources,
+    )
+    .expect("four-track production producer");
+
+    // Three distinct TCP Pause/Resume pairs, one at every successor boundary.
+    // Both authorized UDP routes feed separate scheduler/native callback
+    // outputs; neither output is replaced across any of the six controls.
+    let playback = playback_generation_with_pause_repeats(
+        host.as_mut(),
+        listener.as_mut(),
+        Some(second.as_mut()),
+        &playlist,
+        &session,
+        &stream,
+        1_000,
+        &[241, 337, 382, 480, 480],
+        true,
+        false,
+        true,
+    );
+    assert!(playback.failure.is_none(), "four tracks must finish naturally");
+    assert_eq!(playback.packets, 8, "all PCM packet indices remain contiguous");
+    assert_eq!(playback.boundaries, [480, 960, 1_440]);
+    assert_eq!(
+        playback.pcm,
+        expected_pcm(&[3_000, 6_000, 9_000, 12_000], playback.startup_ramp_frames),
+        "repeated Resume must not insert silence, duplicate samples or restart the ramp"
+    );
+
+    playlist.cancel().expect("cancel producer");
+    second.shutdown().expect("second socket shutdown");
+    listener.shutdown().expect("first socket shutdown");
+    host.shutdown().expect("host shutdown");
+    fs::remove_dir_all(root).expect("remove fixtures");
 }
