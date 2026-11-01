@@ -7,7 +7,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::domain::{MonotonicMillis, SampleIndex};
-use crate::protocol::{ControlMessage, Hello, JoinRejection, Pause, ProtocolFrame, Stop, TrackBoundary};
+use crate::protocol::{
+    ControlMessage, Hello, JoinRejection, Pause, ProtocolFrame, Stop, TrackBoundary,
+};
 use crate::transport::test_support::{
     id_device, id_session, join_request, wait_for_authorized, wait_for_control_from,
     wait_for_frame, wait_for_host_event,
@@ -437,10 +439,14 @@ fn duplicate_pending_refusal_is_bound_to_the_conflicting_tcp_socket() {
     );
     host.reject_pending_peer_at(duplicate_address, &device, &rejection)
         .expect("exact duplicate rejected");
-    drop(wait_for_frame(duplicate.as_mut(), TransportChannel::Control, |frame| {
-        matches!(frame, ProtocolFrame::Control(ControlMessage::JoinRejection(value))
+    drop(wait_for_frame(
+        duplicate.as_mut(),
+        TransportChannel::Control,
+        |frame| {
+            matches!(frame, ProtocolFrame::Control(ControlMessage::JoinRejection(value))
             if value.listener_id == device)
-    }));
+        },
+    ));
     drop(wait_for_host_event(&mut host, |event| {
         matches!(event, TransportEvent::PeerDisconnected { peer, .. }
             if peer.control_address == duplicate_address)
@@ -454,10 +460,14 @@ fn duplicate_pending_refusal_is_bound_to_the_conflicting_tcp_socket() {
     });
     host.send_pending_control(&device, &hello)
         .expect("original remains pending");
-    drop(wait_for_frame(first.as_mut(), TransportChannel::Control, |frame| {
-        matches!(frame, ProtocolFrame::Control(ControlMessage::Hello(value))
+    drop(wait_for_frame(
+        first.as_mut(),
+        TransportChannel::Control,
+        |frame| {
+            matches!(frame, ProtocolFrame::Control(ControlMessage::Hello(value))
             if value.session_name == "Original pending session")
-    }));
+        },
+    ));
     host.authorize_peer(&device, first.local_routes())
         .expect("original still approvable");
     wait_for_authorized(&mut host, &device);
