@@ -49,6 +49,8 @@ mod resync_replay_tests;
 #[cfg(test)]
 mod socket_multitrack_audio_reconnect_tests;
 #[cfg(test)]
+mod targeted_admission_isolation_tests;
+#[cfg(test)]
 mod targeted_sync_tests;
 #[cfg(test)]
 mod telemetry_pressure_tests;

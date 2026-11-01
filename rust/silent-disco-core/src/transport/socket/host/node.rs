@@ -16,6 +16,33 @@ use super::super::shared::{join_workers, recv_event};
 use super::SocketHostTransport;
 use super::peer::PeerState;
 
+// These controls carry one intended listener ID. A misrouted admission or
+// terminal control must not affect another TCP generation. Legacy v3 still
+// lacks cryptographic authentication; this only enforces routing integrity.
+fn addressed_listener(message: &ControlMessage) -> Option<&DeviceId> {
+    match message {
+        ControlMessage::JoinApproval(value) => Some(&value.listener_id),
+        ControlMessage::JoinRejection(value) => Some(&value.listener_id),
+        ControlMessage::Disconnect(value) => Some(&value.listener_id),
+        ControlMessage::ResyncNotice(value) => Some(&value.listener_id),
+        _ => None,
+    }
+}
+
+fn check_control_recipient(
+    device_id: &DeviceId,
+    message: &ControlMessage,
+) -> Result<(), TransportError> {
+    if addressed_listener(message).is_some_and(|recipient| recipient != device_id) {
+        return Err(TransportError::new(
+            TransportErrorKind::Unauthorized,
+            TransportChannel::Control,
+            "listener-specific control is addressed to a different device",
+        ));
+    }
+    Ok(())
+}
+
 impl HostTransportNode for SocketHostTransport {
     fn endpoint(&self) -> NetworkEndpoint {
         self.endpoint
@@ -98,6 +125,7 @@ impl HostTransportNode for SocketHostTransport {
                 "targeted disconnect must belong to this session",
             ));
         }
+        check_control_recipient(device_id, message)?;
         // Keep the TCP Disconnect and UDP route retirement in the same
         // critical section as cached replay, broadcasts and authorization.
         // A concurrent same-identity reconnect cannot inherit the old kick.
@@ -153,6 +181,7 @@ impl HostTransportNode for SocketHostTransport {
                 "outbound pending control message belongs to a different session",
             ));
         }
+        check_control_recipient(device_id, message)?;
         // A pending peer has not passed admission. Restrict this low-level
         // send path to admission and terminal controls so a mistaken caller
         // cannot bypass authorization and leak playback or queue metadata.
@@ -236,6 +265,7 @@ impl HostTransportNode for SocketHostTransport {
                 "outbound control message belongs to a different session",
             ));
         }
+        check_control_recipient(device_id, message)?;
         // Legacy v3 has no verified peer identity. No host-facing send API
         // may turn a claimed listener ID into durable trusted identity.
         if matches!(
@@ -327,6 +357,15 @@ impl HostTransportNode for SocketHostTransport {
                 TransportErrorKind::Unauthorized,
                 TransportChannel::Control,
                 "legacy v3 cannot grant durable trust without verified cryptographic identity",
+            ));
+        }
+        // Admission decisions and targeted terminal controls have exactly one
+        // recipient. Broadcasting one leaks a different listener's decision.
+        if addressed_listener(message).is_some() {
+            return Err(TransportError::new(
+                TransportErrorKind::Unauthorized,
+                TransportChannel::Control,
+                "listener-specific control requires a targeted TCP route",
             ));
         }
         // Serialize with late-join authorization and its cached replay. Without
