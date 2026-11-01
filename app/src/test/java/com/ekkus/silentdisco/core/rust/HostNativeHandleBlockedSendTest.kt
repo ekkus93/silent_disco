@@ -50,7 +50,7 @@ class HostNativeHandleBlockedSendTest {
             rebind.get(5, TimeUnit.SECONDS)
             assertThat(retired.get()).isEqualTo(1)
             assertThat(gate.currentHandle()).isSameInstanceAs(replacement)
-            assertThat(gate.withExpected(old) { error("stale send reached replacement") }).isNull()
+            assertThat(gate.withExpected(old) { "unexpected stale send reached replacement" }).isNull()
             assertThat(gate.withExpected(replacement) { "fresh" }).isEqualTo("fresh")
             gate.close { if (it != null) retired.incrementAndGet() }
             assertThat(retired.get()).isEqualTo(2)
@@ -96,7 +96,7 @@ class HostNativeHandleBlockedSendTest {
                     send.get(5, TimeUnit.SECONDS)
                     rebind.get(5, TimeUnit.SECONDS)
                     assertThat(gate.withExpected(old) {
-                        error("delayed old-generation send must be rejected")
+                        "unexpected delayed old-generation send"
                     }).isNull()
                     assertThat(gate.currentHandle()).isSameInstanceAs(next)
                     assertThat(retired.get()).isEqualTo(index + 1)
@@ -131,7 +131,7 @@ class HostNativeHandleBlockedSendTest {
             start = {},
         )
         assertThat(retired).containsExactly(old)
-        assertThat(gate.withExpected(old) { error("stale send") }).isNull()
+        assertThat(gate.withExpected(old) { "unexpected stale send" }).isNull()
         assertThat(gate.withExpected(next) { "new-session-send" }).isEqualTo("new-session-send")
         gate.close { if (it != null) retired.add(it) }
         assertThat(retired).containsExactly(old, next).inOrder()
