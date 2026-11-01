@@ -27,7 +27,11 @@ fn process_effect(
     processor: &mut HostTransportEventProcessor,
 ) -> Result<(), DesktopNetworkError> {
     let operation_id = effect.operation_id;
-    let mut approved_listener: Option<(silent_disco_core::domain::DeviceId, bool)> = None;
+    let mut approved_listener: Option<(
+        silent_disco_core::domain::DeviceId,
+        bool,
+        silent_disco_core::domain::SessionId,
+    )> = None;
     let delivery = match effect.request {
         TransportEffectRequest::DeliverJoinApproval {
             session_id,
@@ -46,7 +50,7 @@ fn process_effect(
                 )?;
                 return Ok(());
             }
-            approved_listener = Some((listener_id.clone(), false));
+            approved_listener = Some((listener_id.clone(), false, session_id.clone()));
             eprintln!(
                 "join_approval_send_started operation_id={operation_id} send_started_unix_ms={}",
                 unix_time_ms()
@@ -93,31 +97,61 @@ fn process_effect(
         }
     };
 
-    let report = match delivery {
+    let mut report = match delivery {
         Ok(delivery) => delivery.report,
         Err(error) => {
             set_last_error(status, error.to_string())?;
             failed_delivery_report()
         }
     };
-    submit_delivery(sink, operation_id, report)?;
-
+    let mut connected = None;
     if report.successful_peers > 0
-        && let Some((listener_id, trusted_for_future)) = approved_listener
-        && let Some((sync_port, audio_port, display_name, control_address)) =
-            processor.take_pending_listener(&listener_id)
+        && let Some((listener_id, trusted_for_future, session_id)) = approved_listener
     {
-        if let Err(error) = node.authorize_peer_ports(&listener_id, sync_port, audio_port) {
-            set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
-            return Ok(());
+        if let Some((sync_port, audio_port, display_name, control_address)) =
+            processor.take_pending_listener(&listener_id)
+        {
+            match node.authorize_peer_ports(&listener_id, sync_port, audio_port) {
+                Ok(()) => {
+                    processor.mark_authorized_listener(listener_id.clone(), control_address);
+                    connected = Some(
+                        HostTransportEventProcessor::connected_listener(
+                            listener_id,
+                            display_name,
+                            trusted_for_future,
+                        )
+                        .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))?,
+                    );
+                }
+                Err(error) => {
+                    set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
+                    // TCP JoinApproval was written, but the listener has no
+                    // authorized UDP route. Notify it explicitly and report
+                    // FAILURE to Rust rather than committing ghost admission.
+                    let disconnect = ControlMessage::Disconnect(Disconnect {
+                        session_id,
+                        listener_id: listener_id.clone(),
+                        reason: "Listener audio route authorization failed".to_owned(),
+                    });
+                    if let Err(error) = node.send_pending_control(&listener_id, &disconnect) {
+                        set_last_error(status, format!("Admission rollback notification failed: {error}"))?;
+                    }
+                    report = failed_delivery_report();
+                }
+            }
+        } else {
+            set_last_error(
+                status,
+                "JoinApproval reached TCP but no matching pending listener route exists".to_owned(),
+            )?;
+            report = failed_delivery_report();
         }
-        processor.mark_authorized_listener(listener_id.clone(), control_address);
-        let listener = HostTransportEventProcessor::connected_listener(
-            listener_id,
-            display_name,
-            trusted_for_future,
-        )
-        .map_err(|error| DesktopNetworkError::invalid_argument(error.to_string()))?;
+    }
+    // Commit the actor's decision only AFTER native route authorization.
+    // Keep this event before ListenerConnected, as required by Rust's
+    // admission lifecycle. An unsuccessful route never counts as delivery.
+    submit_delivery(sink, operation_id, report)?;
+    if let Some(listener) = connected {
         sink.submit_transport_event(CoreTransportEvent::ListenerConnected(listener))
             .map_err(|error| DesktopNetworkError::invalid_state(error.to_string()))?;
     }

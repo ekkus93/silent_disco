@@ -133,6 +133,94 @@ fn approval_effect_delivers_to_pending_peer_and_reports_success() {
 }
 
 #[test]
+fn invalid_udp_route_after_tcp_approval_reports_failure_and_disconnects_listener() {
+    let factory = production_transport_factory();
+    let session = SessionId::new("desktop-invalid-udp-admission").expect("session");
+    let host_id = DeviceId::new("invalid-udp-host").expect("host");
+    let listener_id = DeviceId::new("invalid-udp-listener").expect("listener");
+    let clock = Arc::new(SystemTransportClock::default());
+    let node = factory
+        .bind_host(HostTransportConfig::loopback(session.clone()), clock.clone())
+        .expect("bind host TCP/UDP");
+    let endpoint = node.endpoint();
+    let (sender, receiver) = mpsc::channel();
+    let sink = Arc::new(RecordingSink {
+        snapshot: Mutex::new(CoreSnapshot::default()),
+        sender,
+    });
+    let runtime =
+        DesktopHostTransportRuntime::start(node, advertisement(&session, &host_id), sink, clock)
+            .expect("desktop host worker");
+    let mut listener = connect_listener(&factory, &session, &listener_id, endpoint);
+    let routes = listener.local_routes();
+    listener
+        .send_control(&ControlMessage::JoinRequest(JoinRequest {
+            session_id: session.clone(),
+            device: DeviceIdentity {
+                device_id: listener_id.clone(),
+                display_name: "Invalid UDP routes".to_owned(),
+            },
+            invite_code: None,
+            sync_port: 0,
+            audio_port: routes.audio.port(),
+        }))
+        .expect("send real TCP join with invalid sync route");
+    wait_for_control(listener.as_mut(), |control| matches!(control, ControlMessage::Hello(_)));
+    assert!(matches!(
+        receiver.recv_timeout(TEST_TIMEOUT).expect("actor join"),
+        CoreTransportEvent::JoinRequested(request) if request.device_id == listener_id
+    ));
+    runtime
+        .dispatch(
+            TransportEffect::new(
+                OperationId::new("invalid-route-approval").expect("operation"),
+                TransportEffectRequest::DeliverJoinApproval {
+                    request_id: RequestId::new("invalid-route-request").expect("request"),
+                    session_id: session.clone(),
+                    listener_id: listener_id.clone(),
+                    trusted_for_future: false,
+                },
+            )
+            .expect("effect"),
+        )
+        .expect("dispatch approval");
+    wait_for_control(listener.as_mut(), |control| {
+        matches!(control, ControlMessage::JoinApproval(_))
+    });
+    wait_for_control(listener.as_mut(), |control| {
+        matches!(
+            control,
+            ControlMessage::Disconnect(disconnect)
+                if disconnect.listener_id == listener_id
+                    && disconnect.reason.contains("audio route authorization failed")
+        )
+    });
+    assert!(matches!(
+        wait_for_delivery(&receiver),
+        CoreTransportEvent::DeliveryCompleted { report, .. }
+            if report.intended_peers == 1
+                && report.successful_peers == 0
+                && report.failed_peers == 1
+    ));
+    assert!(
+        runtime
+            .status()
+            .expect("host status")
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("nonzero ports")),
+        "native route rejection must remain visible to the host"
+    );
+    assert!(
+        receiver.recv_timeout(Duration::from_millis(200)).is_err(),
+        "a TCP approval with no authorized UDP routes must not project a ghost listener"
+    );
+    assert!(runtime.status().expect("status").running);
+    listener.shutdown().expect("listener shutdown");
+    runtime.shutdown().expect("host shutdown");
+}
+
+#[test]
 fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
     let factory = production_transport_factory();
     let session = SessionId::new("legacy-unverified-desktop-session").expect("session");

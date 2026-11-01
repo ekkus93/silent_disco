@@ -38,6 +38,13 @@ impl HostTransportNode for SocketHostTransport {
         if self.stop.load(Ordering::Acquire) {
             return Err(shutting_down_error());
         }
+        if sync_port == 0 || audio_port == 0 {
+            return Err(TransportError::new(
+                TransportErrorKind::InvalidConfiguration,
+                TransportChannel::Runtime,
+                "listener UDP routes must use nonzero ports",
+            ));
+        }
         let peer_ip = self.pending_peer_for_device(device_id)?.remote.ip();
         let routes = ListenerDatagramRoutes {
             synchronization: SocketAddr::new(peer_ip, sync_port),
