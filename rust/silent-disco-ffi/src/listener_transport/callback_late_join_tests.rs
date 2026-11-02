@@ -172,11 +172,13 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
             // connections; a boundary must not allocate a replacement sink.
             let pause_ms = START_MS + 5;
             assert_eq!(
-                host.broadcast_control(&ControlMessage::Pause(silent_disco_core::protocol::Pause {
-                    session_id: session.clone(),
-                    stream_id: stream.clone(),
-                    host_pause_time_ms: MonotonicMillis::new(pause_ms),
-                }))
+                host.broadcast_control(&ControlMessage::Pause(
+                    silent_disco_core::protocol::Pause {
+                        session_id: session.clone(),
+                        stream_id: stream.clone(),
+                        host_pause_time_ms: MonotonicMillis::new(pause_ms),
+                    }
+                ))
                 .expect("broadcast two-listener Pause")
                 .report
                 .successful_peers,
