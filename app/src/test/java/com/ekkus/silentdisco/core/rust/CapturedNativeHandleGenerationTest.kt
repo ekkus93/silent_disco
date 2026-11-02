@@ -62,7 +62,7 @@ class CapturedNativeHandleGenerationTest {
     @Test
     fun noActiveSessionNeverInvokesCapturedAction() {
         val gate = ListenerNativeHandleGate<Any>()
-        val delivered = gate.withCapturedCurrent { error("no listener is connected") }
+        val delivered: Any? = gate.withCapturedCurrent { error("no listener is connected") }
         assertThat(delivered).isNull()
     }
 }
