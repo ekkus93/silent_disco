@@ -137,7 +137,57 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         })
     ));
 
+    // Resume in place across the same TCP/UDP connection and native engine.
+    // The host's new StreamStart reanchors the *same* stream; Kotlin's
+    // production listener adapter forwards that anchor to this runtime.
     for sequence in 0_u64..4 {
+        if sequence == 2 {
+            let pause_time_ms = START_MS + 10;
+            let paused = host
+                .broadcast_control(&ControlMessage::Pause(silent_disco_core::protocol::Pause {
+                    session_id: session.clone(),
+                    stream_id: stream.clone(),
+                    host_pause_time_ms: MonotonicMillis::new(pause_time_ms),
+                }))
+                .expect("broadcast pause");
+            assert_eq!(paused.report.successful_peers, 1);
+            assert!(matches!(
+                handle.poll_event(1_000).expect("pause poll"),
+                Some(super::FfiListenerTransportEvent::Paused {
+                    stream_id,
+                    host_pause_time_ms,
+                }) if stream_id == stream.as_str() && host_pause_time_ms == pause_time_ms
+            ));
+            assert_eq!(handle.forwarded_audio_count(), 2);
+            assert_eq!(runtime.engine_token(), token, "Pause must retain native engine");
+
+            let resumed_start_ms = START_MS + 100;
+            let resumed = host
+                .broadcast_control(&ControlMessage::StreamStart(StreamStart {
+                    session_id: session.clone(),
+                    stream_id: stream.clone(),
+                    host_start_time_ms: MonotonicMillis::new(resumed_start_ms),
+                    sample_rate: 48_000,
+                    channels: 2,
+                    samples_per_packet: PACKET_FRAMES,
+                    current_entry_id: Some("second".to_owned()),
+                    current_display_name: Some("Second".to_owned()),
+                }))
+                .expect("broadcast same-stream resume");
+            assert_eq!(resumed.report.successful_peers, 1);
+            assert!(matches!(
+                handle.poll_event(1_000).expect("resume poll"),
+                Some(super::FfiListenerTransportEvent::StreamStarted {
+                    stream_id,
+                    host_start_time_ms,
+                    ..
+                }) if stream_id == stream.as_str() && host_start_time_ms == resumed_start_ms
+            ));
+            runtime
+                .reanchor_presentation_time(resumed_start_ms)
+                .expect("reanchor existing native playback");
+            assert_eq!(runtime.engine_token(), token, "Resume must not reopen output");
+        }
         let amplitude = (i16::try_from(sequence).expect("bounded") + 1) * 4_096;
         let payload = [amplitude, -amplitude]
             .into_iter()
@@ -154,7 +204,9 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
             channels: 2,
             samples_per_packet: PACKET_FRAMES,
             first_sample_index: SampleIndex::new(sequence * u64::from(PACKET_FRAMES)),
-            host_presentation_time_ms: MonotonicMillis::new(START_MS + sequence * 5),
+            host_presentation_time_ms: MonotonicMillis::new(
+                START_MS + sequence * 5 + if sequence >= 2 { 100 } else { 0 },
+            ),
             payload,
         });
         assert_eq!(
