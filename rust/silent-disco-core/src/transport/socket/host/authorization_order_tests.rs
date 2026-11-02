@@ -634,7 +634,8 @@ fn disconnected_peer_during_queued_authorization_cannot_leave_a_ghost_route() {
         )
         .expect("real TCP listener");
     assert!(matches!(
-        host.recv_event(Duration::from_secs(5)).expect("peer accepted"),
+        host.recv_event(Duration::from_secs(5))
+            .expect("peer accepted"),
         TransportEvent::PeerAccepted { .. }
     ));
     listener
@@ -668,7 +669,10 @@ fn disconnected_peer_during_queued_authorization_cannot_leave_a_ghost_route() {
     let drain = thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(5);
         while !retiring.authorized.load(Ordering::Acquire) {
-            assert!(Instant::now() < deadline, "authorization never staged its route");
+            assert!(
+                Instant::now() < deadline,
+                "authorization never staged its route"
+            );
             thread::yield_now();
         }
         // Model the real TCP reader's terminal transition at the precise
