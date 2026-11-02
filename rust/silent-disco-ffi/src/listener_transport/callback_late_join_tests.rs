@@ -496,9 +496,10 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         ));
     }
 
-    // A delayed datagram from the retired stream can arrive on the same
-    // authorized UDP route after Stop/replay. The newly attached native
-    // engine must reject its old stream identity, not play it as replay PCM.
+    // Stop/replay retains the authorized socket routes, but the host must
+    // refuse an attempted old-stream UDP broadcast before it reaches either
+    // replacement playback engine. The replay's exact callback PCM below
+    // also proves the refused packet did not corrupt its sample timeline.
     let stale_payload = [30_000_i16, -30_000_i16]
         .into_iter()
         .cycle()
@@ -518,31 +519,20 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
             host_presentation_time_ms: MonotonicMillis::new(START_MS + 10),
             payload: stale_payload,
         }))
-        .expect("delayed retired-stream UDP")
+        .expect("refuse retired-stream UDP")
         .report
         .successful_peers,
-        2
+        0,
+        "retired stream must not broadcast to either authorized listener"
     );
-    let stale_deadline = Instant::now() + Duration::from_secs(1);
-    for (index, handle) in listeners.iter().enumerate() {
-        while handle.forwarded_audio_count() < 3 {
-            assert!(
-                Instant::now() < stale_deadline,
-                "listener {index} did not inspect retired-stream UDP"
-            );
-            assert!(
-                handle
-                    .poll_event(20)
-                    .expect("inspect retired PCM")
-                    .is_none()
-            );
-        }
+    for handle in &listeners {
+        assert_eq!(handle.forwarded_audio_count(), 2);
     }
     assert!(
         replay_runtimes
             .iter()
             .all(|runtime| runtime.diagnostics().packets_emitted == 0),
-        "retired-stream UDP must not schedule replay audio"
+        "retired stream must not schedule replay audio"
     );
 
     for sequence in 0..2_u64 {
@@ -573,7 +563,7 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         );
         let deadline = Instant::now() + Duration::from_secs(1);
         for (index, handle) in listeners.iter().enumerate() {
-            while handle.forwarded_audio_count() < sequence + 4 {
+            while handle.forwarded_audio_count() < sequence + 3 {
                 assert!(
                     Instant::now() < deadline,
                     "listener {index} missed replay packet {sequence}"
