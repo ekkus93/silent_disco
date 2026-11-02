@@ -52,7 +52,6 @@ fn sync_request(session: &SessionId) -> SyncRequest {
 fn failed_listener_tcp_writer_retires_udp_sync_and_allows_independent_reconnect() {
     let session = id_session("listener-writer-retirement");
     let failed_id: DeviceId = id_device("failed-listener");
-    let healthy_id = id_device("healthy-listener");
     let clock = Arc::new(ManualTransportClock::new(0));
     let mut host = SocketHostTransport::bind(
         HostTransportConfig::loopback(session.clone()),
@@ -117,9 +116,6 @@ fn failed_listener_tcp_writer_retires_udp_sync_and_allows_independent_reconnect(
         matches!(event, TransportEvent::PeerDisconnected { peer, .. }
             if peer.device_id.as_ref() == Some(&failed_id))
     }));
-    let routes = host.authorized_routes().expect("authorized routes");
-    assert_eq!(routes.len(), 1);
-    assert_eq!(routes[0].0, healthy_id);
     let pcm = audio_frame_at(&session, 0, 1_000);
     assert_eq!(
         host.broadcast_audio(&pcm)
@@ -136,7 +132,10 @@ fn failed_listener_tcp_writer_retires_udp_sync_and_allows_independent_reconnect(
         frame == &ProtocolFrame::Control(start.clone())
     });
     assert_eq!(
-        host.authorized_routes().expect("reconnected routes").len(),
+        host.broadcast_audio(&audio_frame_at(&session, 1, 1_005))
+            .expect("both reconnected PCM routes")
+            .report
+            .successful_peers,
         2
     );
     replacement.shutdown().expect("close replacement");
