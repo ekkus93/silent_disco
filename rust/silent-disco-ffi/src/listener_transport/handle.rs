@@ -381,7 +381,9 @@ impl FfiListenerTransportHandle {
         // late attach calls fail closed, even while socket shutdown waits.
         {
             let mut attached = self.playback.lock().map_err(|_| {
-                FfiListenerTransportError::Closed("playback attachment lock was poisoned".to_owned())
+                FfiListenerTransportError::Closed(
+                    "playback attachment lock was poisoned".to_owned(),
+                )
             })?;
             self.closed.store(true, Ordering::Release);
             *attached = None;

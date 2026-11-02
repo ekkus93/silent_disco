@@ -213,7 +213,6 @@ fn detach_waits_for_in_flight_pcm_forwarding_before_runtime_shutdown() {
     assert_eq!(handle.forwarded_audio_count(), 0);
 }
 
-
 /// A native close must retire the attachment before socket teardown. A
 /// delayed attach after close must not resurrect playback, and a forwarding
 /// operation that already owns the attachment must finish before close returns.
