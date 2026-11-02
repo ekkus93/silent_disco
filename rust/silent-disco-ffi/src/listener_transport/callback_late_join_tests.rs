@@ -530,7 +530,12 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
                 Instant::now() < stale_deadline,
                 "listener {index} did not inspect retired-stream UDP"
             );
-            assert!(handle.poll_event(20).expect("inspect retired PCM").is_none());
+            assert!(
+                handle
+                    .poll_event(20)
+                    .expect("inspect retired PCM")
+                    .is_none()
+            );
         }
     }
     assert!(
