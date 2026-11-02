@@ -352,7 +352,6 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         listener: &mut dyn ListenerTransportNode,
         channel: TransportChannel,
         expected: &ProtocolFrame,
-
     ) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -749,7 +748,10 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         );
         expect_wire(late.as_mut(), TransportChannel::Audio, &packet);
         assert!(
-            handle.poll_event(300).expect("forward replay PCM").is_none(),
+            handle
+                .poll_event(300)
+                .expect("forward replay PCM")
+                .is_none(),
             "attached replay PCM must bypass the foreign event queue"
         );
         assert_eq!(handle.forwarded_audio_count(), 5 + sequence);
