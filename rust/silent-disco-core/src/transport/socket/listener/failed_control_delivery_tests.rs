@@ -1,7 +1,7 @@
 //! A failed authoritative listener TCP write must retire its generation.
 //! Real TCP/UDP loopback coverage; no physical-device claim.
-use super::SocketListenerTransport;
 use super::super::host::SocketHostTransport;
+use super::SocketListenerTransport;
 use crate::domain::{DeviceId, MonotonicMillis, SessionId};
 use crate::protocol::{ControlMessage, ProtocolFrame, ResyncNotice, SyncRequest};
 use crate::transport::test_support::{
@@ -64,7 +64,10 @@ fn failed_listener_tcp_writer_retires_udp_sync_and_allows_independent_reconnect(
 
     let start = stream_start(&session, 1_000);
     assert_eq!(
-        host.broadcast_control(&start).expect("start both").report.successful_peers,
+        host.broadcast_control(&start)
+            .expect("start both")
+            .report
+            .successful_peers,
         2
     );
     for listener in [&mut failed as &mut dyn ListenerTransportNode, &mut healthy] {
@@ -95,13 +98,17 @@ fn failed_listener_tcp_writer_retires_udp_sync_and_allows_independent_reconnect(
         "failed control delivery must retire the entire listener generation"
     );
     assert_eq!(
-        failed.send_control(&resync).expect_err("retired control").kind,
+        failed
+            .send_control(&resync)
+            .expect_err("retired control")
+            .kind,
         TransportErrorKind::ShuttingDown
     );
     assert_eq!(
         failed
             .send_sync_request(&sync_request(&session))
-            .expect_err("retired UDP sync").kind,
+            .expect_err("retired UDP sync")
+            .kind,
         TransportErrorKind::ShuttingDown
     );
 
@@ -115,7 +122,10 @@ fn failed_listener_tcp_writer_retires_udp_sync_and_allows_independent_reconnect(
     assert_eq!(routes[0].0, healthy_id);
     let pcm = audio_frame_at(&session, 0, 1_000);
     assert_eq!(
-        host.broadcast_audio(&pcm).expect("healthy PCM").report.successful_peers,
+        host.broadcast_audio(&pcm)
+            .expect("healthy PCM")
+            .report
+            .successful_peers,
         1
     );
     wait_for_frame(&mut healthy, TransportChannel::Audio, |frame| frame == &pcm);
@@ -125,7 +135,10 @@ fn failed_listener_tcp_writer_retires_udp_sync_and_allows_independent_reconnect(
     wait_for_frame(&mut replacement, TransportChannel::Control, |frame| {
         frame == &ProtocolFrame::Control(start.clone())
     });
-    assert_eq!(host.authorized_routes().expect("reconnected routes").len(), 2);
+    assert_eq!(
+        host.authorized_routes().expect("reconnected routes").len(),
+        2
+    );
     replacement.shutdown().expect("close replacement");
     healthy.shutdown().expect("close healthy");
     host.shutdown().expect("close host");
@@ -150,13 +163,15 @@ fn explicitly_closed_listener_cannot_send_control_or_udp_sync() {
     assert_eq!(
         listener
             .send_control(&join_request(&session, &device, "closed-listener"))
-            .expect_err("closed TCP send").kind,
+            .expect_err("closed TCP send")
+            .kind,
         TransportErrorKind::ShuttingDown
     );
     assert_eq!(
         listener
             .send_sync_request(&sync_request(&session))
-            .expect_err("closed UDP sync").kind,
+            .expect_err("closed UDP sync")
+            .kind,
         TransportErrorKind::ShuttingDown
     );
     host.shutdown().expect("close host");
