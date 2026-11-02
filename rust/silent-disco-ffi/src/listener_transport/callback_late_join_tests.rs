@@ -1,0 +1,280 @@
+//! Two independent production TCP/UDP listeners: cached late-join timeline
+//! and exact native callback PCM, without physical audio output claims.
+use super::{FfiListenerTransportHandle, Inner};
+use crate::audio_abi::{
+    registry_test_guard, silent_disco_audio_frames_rendered,
+    silent_disco_audio_read_interleaved_f32, silent_disco_audio_underrun_count,
+};
+use crate::listener_playback::{FfiListenerPlaybackConfig, FfiListenerPlaybackHandle};
+use silent_disco_core::audio::DEFAULT_CONCEALMENT_RAMP_MS;
+use silent_disco_core::domain::{
+    DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
+};
+use silent_disco_core::protocol::{
+    AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, StreamStart, TrackBoundary,
+};
+use silent_disco_core::transport::{
+    HostTransportConfig, ListenerTransportConfig, ManualTransportClock, SocketTransportFactory,
+    TransportChannel, TransportClock, TransportEvent, TransportFactory,
+};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+
+const PACKET_FRAMES: u32 = 240;
+const START_MS: u64 = 2_000;
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "two independent production sockets and native callback engines are verified together"
+)]
+fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_callbacks() {
+    let _guard = registry_test_guard();
+    let session = SessionId::new("callback-late-join-session").expect("session");
+    let stream = StreamId::new("callback-late-join-stream").expect("stream");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut host = SocketTransportFactory
+        .bind_host(
+            HostTransportConfig::loopback(session.clone()),
+            clock.clone(),
+        )
+        .expect("production TCP/UDP host");
+    let start = StreamStart {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        host_start_time_ms: MonotonicMillis::new(START_MS),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: PACKET_FRAMES,
+        current_entry_id: Some("first".to_owned()),
+        current_display_name: Some("First".to_owned()),
+    };
+    let boundary = TrackBoundary {
+        session_id: session.clone(),
+        stream_id: stream.clone(),
+        first_sample_index: SampleIndex::new(u64::from(PACKET_FRAMES)),
+        entry_id: "second".to_owned(),
+        display_name: "Second".to_owned(),
+    };
+    let mut listeners = Vec::new();
+    for (index, name) in ["callback-early", "callback-late"].iter().enumerate() {
+        let device = DeviceId::new(*name).expect("device");
+        let listener = SocketTransportFactory
+            .connect_listener(
+                ListenerTransportConfig::loopback(
+                    session.clone(),
+                    device.clone(),
+                    host.endpoint(),
+                ),
+                clock.clone(),
+            )
+            .expect("production listener TCP/UDP");
+        let routes = listener.local_routes();
+        let transport_clock: Arc<dyn TransportClock> = clock.clone();
+        let handle = FfiListenerTransportHandle {
+            inner: RwLock::new(Some(Inner {
+                transport: listener,
+                session_id: session.clone(),
+                device_id: device.clone(),
+                clock: transport_clock,
+            })),
+            playback: Mutex::new(None),
+            forwarded_audio: AtomicU64::new(0),
+            closed: std::sync::atomic::AtomicBool::new(false),
+        };
+        handle
+            .send_join_request((*name).to_owned(), None)
+            .expect("send real TCP join");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "timed out waiting for listener join");
+            if let TransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
+                frame: ProtocolFrame::Control(ControlMessage::JoinRequest(_)),
+                peer,
+                ..
+            } = host.recv_event(remaining).expect("host join event")
+                && peer.device_id.as_ref() == Some(&device)
+            {
+                break;
+            }
+        }
+        host.authorize_peer(&device, routes)
+            .expect("authorize real TCP generation and UDP routes");
+        if index == 0 {
+            assert_eq!(
+                host.broadcast_control(&ControlMessage::StreamStart(start.clone()))
+                    .expect("live Start")
+                    .report
+                    .successful_peers,
+                1
+            );
+            assert_eq!(
+                host.broadcast_control(&ControlMessage::TrackBoundary(boundary.clone()))
+                    .expect("live boundary")
+                    .report
+                    .successful_peers,
+                1
+            );
+        }
+        // The second listener receives these controls from the host's
+        // authorization-time cache, not from either live broadcast above.
+        assert!(matches!(
+            handle.poll_event(1_000).expect("Start event"),
+            Some(super::FfiListenerTransportEvent::StreamStarted {
+                stream_id,
+                host_start_time_ms,
+                ..
+            }) if stream_id == stream.as_str() && host_start_time_ms == START_MS
+        ));
+        assert!(matches!(
+            handle.poll_event(1_000).expect("boundary event"),
+            Some(super::FfiListenerTransportEvent::TrackBoundary {
+                first_sample_index,
+                ..
+            }) if first_sample_index == u64::from(PACKET_FRAMES)
+        ));
+        listeners.push(handle);
+    }
+
+    let mut runtimes = Vec::new();
+    for handle in &listeners {
+        let runtime = FfiListenerPlaybackHandle::open(FfiListenerPlaybackConfig {
+            session_id: session.as_str().to_owned(),
+            stream_id: stream.as_str().to_owned(),
+            sample_rate: 48_000,
+            host_start_time_ms: START_MS,
+            samples_per_packet: PACKET_FRAMES,
+            channels: 2,
+            startup_buffer_target_ms: 0,
+            rebuffer_target_ms: 0,
+            ring_capacity_frames: 48_000,
+            ring_target_fill_frames: 39_360,
+            write_lead_ms: 800,
+            max_prefill_ms: 800,
+            volume: 1.0,
+        })
+        .expect("native callback runtime");
+        runtime
+            .lock_same_process_host_clock(0)
+            .expect("same-process host clock");
+        handle.attach_playback(Arc::clone(&runtime));
+        runtimes.push(runtime);
+    }
+    let tokens: Vec<u64> = runtimes.iter().map(|runtime| runtime.engine_token()).collect();
+    assert_ne!(tokens[0], tokens[1], "each listener owns its native output");
+
+    for sequence in 0..2_u64 {
+        let amplitude = if sequence == 0 { 8_192_i16 } else { 16_384_i16 };
+        let payload = [amplitude, -amplitude]
+            .into_iter()
+            .cycle()
+            .take(PACKET_FRAMES as usize * 2)
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        assert_eq!(
+            host.broadcast_audio(&ProtocolFrame::Audio(AudioDatagram {
+                session_id: session.clone(),
+                stream_id: stream.clone(),
+                sequence: PacketSequence::new(sequence),
+                codec: AudioCodec::PcmS16Le,
+                sample_rate: 48_000,
+                channels: 2,
+                samples_per_packet: PACKET_FRAMES,
+                first_sample_index: SampleIndex::new(sequence * u64::from(PACKET_FRAMES)),
+                host_presentation_time_ms: MonotonicMillis::new(START_MS + sequence * 5),
+                payload,
+            }))
+            .expect("broadcast production UDP PCM")
+            .report
+            .successful_peers,
+            2
+        );
+        for (index, handle) in listeners.iter().enumerate() {
+            assert!(
+                handle.poll_event(500).expect("forward PCM").is_none(),
+                "attached PCM must not enter the foreign event queue"
+            );
+            assert_eq!(handle.forwarded_audio_count(), sequence + 1);
+            assert_eq!(runtimes[index].engine_token(), tokens[index]);
+        }
+    }
+
+    for (index, runtime) in runtimes.iter().enumerate() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let prefill = loop {
+            let state = runtime.diagnostics();
+            if state.packets_emitted == 2
+                && state.ring_queued_frames
+                    >= state.prefill_frames + u64::from(PACKET_FRAMES) * 2
+            {
+                break state.prefill_frames;
+            }
+            assert!(Instant::now() < deadline, "listener {index} PCM: {state:?}");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let engine =
+            usize::try_from(tokens[index]).expect("token fits pointer") as *mut core::ffi::c_void;
+        let mut silence = vec![f32::NAN; usize::try_from(prefill).expect("prefill fits") * 2];
+        let mut supplied = 0_u32;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                silence.as_mut_ptr(),
+                u32::try_from(prefill).expect("prefill fits"),
+                2,
+                &raw mut supplied,
+            ),
+            0
+        );
+        assert_eq!(u64::from(supplied), prefill);
+        assert!(silence.iter().all(|sample| *sample == 0.0));
+
+        let mut pcm = vec![f32::NAN; PACKET_FRAMES as usize * 4];
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine,
+                pcm.as_mut_ptr(),
+                PACKET_FRAMES * 2,
+                2,
+                &raw mut supplied,
+            ),
+            0
+        );
+        assert_eq!(supplied, PACKET_FRAMES * 2);
+        for (frame, stereo) in pcm.chunks_exact(2).enumerate() {
+            let amplitude = if frame < PACKET_FRAMES as usize {
+                8_192_i64
+            } else {
+                16_384_i64
+            };
+            let shaped = if frame < DEFAULT_CONCEALMENT_RAMP_MS as usize * 48 {
+                amplitude * i64::try_from(frame).expect("bounded frame")
+                    / (i64::from(DEFAULT_CONCEALMENT_RAMP_MS) * 48)
+            } else {
+                amplitude
+            };
+            let expected = f32::from(i16::try_from(shaped).expect("PCM16")) / 32_768.0;
+            assert_eq!(stereo[0].to_bits(), expected.to_bits(), "listener {index} left {frame}");
+            assert_eq!(
+                stereo[1].to_bits(),
+                (-expected).to_bits(),
+                "listener {index} right {frame}"
+            );
+        }
+        assert_eq!(
+            silent_disco_audio_frames_rendered(engine),
+            prefill + u64::from(PACKET_FRAMES) * 2
+        );
+        assert_eq!(silent_disco_audio_underrun_count(engine), 0);
+        assert_eq!(runtime.engine_token(), tokens[index]);
+    }
+    for (handle, runtime) in listeners.iter().zip(&runtimes) {
+        handle.detach_playback();
+        runtime.stop().expect("stop native runtime");
+        handle.shutdown().expect("close TCP/UDP listener");
+    }
+    host.shutdown().expect("close TCP/UDP host");
+}

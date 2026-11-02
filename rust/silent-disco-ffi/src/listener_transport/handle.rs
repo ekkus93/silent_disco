@@ -619,3 +619,7 @@ mod audio_forwarding_tests;
 #[cfg(test)]
 #[path = "callback_pcm_tests.rs"]
 mod callback_pcm_tests;
+
+#[cfg(test)]
+#[path = "callback_late_join_tests.rs"]
+mod callback_late_join_tests;
