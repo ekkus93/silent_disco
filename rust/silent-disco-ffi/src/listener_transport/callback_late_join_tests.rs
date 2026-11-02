@@ -496,6 +496,50 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         ));
     }
 
+    // A delayed datagram from the retired stream can arrive on the same
+    // authorized UDP route after Stop/replay. The newly attached native
+    // engine must reject its old stream identity, not play it as replay PCM.
+    let stale_payload = [30_000_i16, -30_000_i16]
+        .into_iter()
+        .cycle()
+        .take(PACKET_FRAMES as usize * 2)
+        .flat_map(i16::to_le_bytes)
+        .collect();
+    assert_eq!(
+        host.broadcast_audio(&ProtocolFrame::Audio(AudioDatagram {
+            session_id: session.clone(),
+            stream_id: stream.clone(),
+            sequence: PacketSequence::new(2),
+            codec: AudioCodec::PcmS16Le,
+            sample_rate: 48_000,
+            channels: 2,
+            samples_per_packet: PACKET_FRAMES,
+            first_sample_index: SampleIndex::new(u64::from(PACKET_FRAMES) * 2),
+            host_presentation_time_ms: MonotonicMillis::new(START_MS + 10),
+            payload: stale_payload,
+        }))
+        .expect("delayed retired-stream UDP")
+        .report
+        .successful_peers,
+        2
+    );
+    let stale_deadline = Instant::now() + Duration::from_secs(1);
+    for (index, handle) in listeners.iter().enumerate() {
+        while handle.forwarded_audio_count() < 3 {
+            assert!(
+                Instant::now() < stale_deadline,
+                "listener {index} did not inspect retired-stream UDP"
+            );
+            assert!(handle.poll_event(20).expect("inspect retired PCM").is_none());
+        }
+    }
+    assert!(
+        replay_runtimes
+            .iter()
+            .all(|runtime| runtime.diagnostics().packets_emitted == 0),
+        "retired-stream UDP must not schedule replay audio"
+    );
+
     for sequence in 0..2_u64 {
         let amplitude = if sequence == 0 { 12_288_i16 } else { 8_192_i16 };
         let payload = [amplitude, -amplitude]
@@ -524,7 +568,7 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         );
         let deadline = Instant::now() + Duration::from_secs(1);
         for (index, handle) in listeners.iter().enumerate() {
-            while handle.forwarded_audio_count() < sequence + 3 {
+            while handle.forwarded_audio_count() < sequence + 4 {
                 assert!(
                     Instant::now() < deadline,
                     "listener {index} missed replay packet {sequence}"
