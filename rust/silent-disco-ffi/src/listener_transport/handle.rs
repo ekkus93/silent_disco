@@ -587,3 +587,7 @@ mod legacy_trust_tests;
 #[cfg(test)]
 #[path = "audio_forwarding_tests.rs"]
 mod audio_forwarding_tests;
+
+#[cfg(test)]
+#[path = "callback_pcm_tests.rs"]
+mod callback_pcm_tests;
