@@ -6,6 +6,7 @@ use crate::audio_abi::{
     silent_disco_audio_read_interleaved_f32, silent_disco_audio_underrun_count,
 };
 use crate::listener_playback::{FfiListenerPlaybackConfig, FfiListenerPlaybackHandle};
+use silent_disco_core::audio::DEFAULT_CONCEALMENT_RAMP_MS;
 use silent_disco_core::domain::{
     DeviceId, MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId,
 };
@@ -210,8 +211,21 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
             let amplitude = if index < diagnostics.prefill_frames {
                 0_i16
             } else {
-                let sequence = (index - diagnostics.prefill_frames) / u64::from(PACKET_FRAMES);
-                (i16::try_from(sequence).expect("bounded") + 1) * 4_096
+                let pcm_index = index - diagnostics.prefill_frames;
+                let sequence = pcm_index / u64::from(PACKET_FRAMES);
+                let raw = (i16::try_from(sequence).expect("bounded") + 1) * 4_096;
+                // The production scheduler fades the first real packet in
+                // from silence to avoid a click. Compare the actual shaped
+                // PCM16 samples, including integer truncation, rather than
+                // incorrectly expecting an unmodified first sample.
+                let ramp_frames = u64::from(DEFAULT_CONCEALMENT_RAMP_MS) * 48;
+                if sequence == 0 && pcm_index < ramp_frames {
+                    let shaped = i64::from(raw) * i64::try_from(pcm_index).expect("bounded")
+                        / i64::try_from(ramp_frames).expect("bounded");
+                    i16::try_from(shaped).expect("ramped sample fits")
+                } else {
+                    raw
+                }
             };
             let left = f32::from(amplitude) / 32_768.0;
             let right = f32::from(-amplitude) / 32_768.0;
