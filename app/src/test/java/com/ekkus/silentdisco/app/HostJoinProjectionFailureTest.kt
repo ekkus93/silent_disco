@@ -32,6 +32,7 @@ class HostJoinProjectionFailureTest {
     }
 
     private fun join(deviceId: String = "listener-1") = FfiHostTransportEvent.JoinRequestReceived(
+        controlAddress = "127.0.0.1:10001",
         deviceId = deviceId,
         displayName = "Unaccepted listener",
         inviteCode = null,
@@ -43,7 +44,7 @@ class HostJoinProjectionFailureTest {
     fun failedActorProjectionRejectsOriginalTcpJoinAndReleasesItsRoute() = runTest(dispatcher) {
         val native = Mockito.mock(FfiHostTransportHandle::class.java)
         Mockito.doAnswer { Thread.sleep(10); null }.`when`(native).pollEvent(500uL)
-        Mockito.`when`(native.sendJoinRejection("listener-1", "host_busy"))
+        Mockito.`when`(native.rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "host_busy"))
             .thenReturn(FfiHostTransportDelivery(1u, 1u, 0u, 24uL))
         val transport = HostTransportController(
             // The refusal job runs on real IO; injecting a virtual dispatcher
@@ -71,7 +72,7 @@ class HostJoinProjectionFailureTest {
     fun fullPendingRouteTableRefusesTheNextAcceptedJoinWithoutSubmittingToActor() = runTest(dispatcher) {
         val native = Mockito.mock(FfiHostTransportHandle::class.java)
         Mockito.doAnswer { Thread.sleep(10); null }.`when`(native).pollEvent(500uL)
-        Mockito.`when`(native.sendJoinRejection("overflow-listener", "host_busy"))
+        Mockito.`when`(native.rejectPendingPeerAt("127.0.0.1:10001", "overflow-listener", "host_busy"))
             .thenReturn(FfiHostTransportDelivery(1u, 1u, 0u, 24uL))
         val transport = HostTransportController(
             // The refusal job runs on real IO; injecting a virtual dispatcher
@@ -116,7 +117,7 @@ class HostJoinProjectionFailureTest {
     fun failedNativeRefusalIsNotMisreportedAsDelivered() = runTest(dispatcher) {
         val native = Mockito.mock(FfiHostTransportHandle::class.java)
         Mockito.doAnswer { Thread.sleep(10); null }.`when`(native).pollEvent(500uL)
-        Mockito.`when`(native.sendJoinRejection("listener-1", "host_busy"))
+        Mockito.`when`(native.rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "host_busy"))
             .thenReturn(FfiHostTransportDelivery(1u, 0u, 1u, 0uL))
         val transport = HostTransportController(
             // The refusal job runs on real IO; injecting a virtual dispatcher
