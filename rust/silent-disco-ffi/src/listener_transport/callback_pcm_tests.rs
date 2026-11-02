@@ -344,7 +344,7 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
     host.broadcast_control(&ControlMessage::Stop(silent_disco_core::protocol::Stop {
         session_id: session.clone(),
         stream_id: stream.clone(),
-        host_stop_time_ms: MonotonicMillis::new(START_MS + 20),
+        host_stop_time_ms: MonotonicMillis::new(START_MS + 120),
     }))
     .expect("broadcast stop");
     assert!(matches!(
@@ -354,7 +354,7 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
     let replay_stream = StreamId::new("callback-replay").expect("replay stream");
     // A replay starts AFTER the retired stream's terminal fence. Reusing
     // the old presentation anchor is correctly rejected as stale control.
-    let replay_start_ms = START_MS + 100;
+    let replay_start_ms = START_MS + 200;
     let replay = FfiListenerPlaybackHandle::open(FfiListenerPlaybackConfig {
         session_id: session.as_str().to_owned(),
         stream_id: replay_stream.as_str().to_owned(),
