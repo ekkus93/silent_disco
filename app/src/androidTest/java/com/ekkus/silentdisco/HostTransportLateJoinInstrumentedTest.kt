@@ -315,6 +315,9 @@ class HostTransportLateJoinInstrumentedTest {
                 "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
                 "inviteCodeRequired":false,"expiresAtMs":null}
             """.trimIndent().replace("\n", "")
+            // Bind disconnect observations to the original TCP generation,
+            // not merely the legacy device ID reused by a reconnect.
+            val admittedControlAddresses = mutableMapOf<String, String>()
 
             suspend fun join(id: String): FfiListenerTransportHandle {
                 val listener = FfiListenerTransportHandle.connect(
@@ -325,6 +328,7 @@ class HostTransportLateJoinInstrumentedTest {
                 val request = withTimeout(5_000) {
                     host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
                 } as FfiHostTransportEvent.JoinRequestReceived
+                admittedControlAddresses[id] = request.controlAddress
                 host.sendJoinApproval(request.deviceId, false)
                 assertThat(awaitListenerEvent(listener) { it is FfiListenerTransportEvent.JoinApproved })
                     .isInstanceOf(FfiListenerTransportEvent.JoinApproved::class.java)
@@ -368,8 +372,9 @@ class HostTransportLateJoinInstrumentedTest {
             paused.shutdown()
             withTimeout(5_000) {
                 host.events.first {
-                    it is FfiHostTransportEvent.PeerDisconnected &&
-                        it.listenerId == "paused-listener"
+                    it is FfiHostTransportEvent.PeerDisconnectedAt &&
+                        it.listenerId == "paused-listener" &&
+                        it.controlAddress == admittedControlAddresses["paused-listener"]
                 }
             }
             val returning = join("paused-listener")
@@ -398,6 +403,7 @@ class HostTransportLateJoinInstrumentedTest {
             )
             assertThat(awaitListenerEvent(returning) { it is FfiListenerTransportEvent.StreamStarted })
                 .isEqualTo(
+
                     FfiListenerTransportEvent.StreamStarted(
                         "active-stream", resumedAnchor.toULong(), 48_000u, 2u, 240u,
                         "second", "Second track",
