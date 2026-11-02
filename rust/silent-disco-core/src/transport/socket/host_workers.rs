@@ -605,7 +605,6 @@ pub(super) fn spawn_udp_receiver(
                                         TransportErrorKind::Protocol,
                                         channel,
                                         "datagram exceeded the maximum supported size",
-
                                     ),
                                     received_at: clock.now(),
                                 },
@@ -779,4 +778,3 @@ const fn session_id_address() -> std::net::IpAddr {
 #[cfg(test)]
 #[path = "host_worker_admission_pressure_tests.rs"]
 mod admission_pressure_tests;
-

@@ -1,4 +1,3 @@
-
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -116,6 +115,3 @@ fn open_join_queue_delivers_once_without_refusing() {
     assert_eq!(counters.snapshot().queue_overflows, 0);
     assert_eq!(counters.snapshot().delivery_failures, 0);
 }
-
-
-
