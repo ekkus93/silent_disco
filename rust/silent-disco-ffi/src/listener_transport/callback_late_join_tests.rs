@@ -220,14 +220,23 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
     // callback is drained.
     let deadline = Instant::now() + Duration::from_secs(5);
     let prefills = loop {
-        let states: Vec<_> = runtimes.iter().map(|runtime| runtime.diagnostics()).collect();
+        let states: Vec<_> = runtimes
+            .iter()
+            .map(|runtime| runtime.diagnostics())
+            .collect();
         if states.iter().all(|state| {
             state.packets_emitted == 2
                 && state.ring_queued_frames >= state.prefill_frames + u64::from(PACKET_FRAMES) * 2
         }) {
-            break states.iter().map(|state| state.prefill_frames).collect::<Vec<_>>();
+            break states
+                .iter()
+                .map(|state| state.prefill_frames)
+                .collect::<Vec<_>>();
         }
-        assert!(Instant::now() < deadline, "both listener PCM rings: {states:?}");
+        assert!(
+            Instant::now() < deadline,
+            "both listener PCM rings: {states:?}"
+        );
         std::thread::sleep(Duration::from_millis(5));
     };
     for (index, runtime) in runtimes.iter().enumerate() {
