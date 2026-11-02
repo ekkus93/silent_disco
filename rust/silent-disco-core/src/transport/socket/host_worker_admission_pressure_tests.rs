@@ -65,7 +65,7 @@ fn worker_start_failure_after_accept_emits_terminal_and_releases_peer_slot() {
             assert_eq!(disconnected.control_address, remote);
             assert_eq!(reason.message, failure.message);
         }
-        other => panic!("expected terminal disconnect, got {other:?}"),
+        _ => panic!("expected terminal disconnect after PeerAccepted"),
     }
     assert!(!peer.active.load(Ordering::Acquire));
     assert!(peer.stop.load(Ordering::Acquire));

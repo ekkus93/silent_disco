@@ -1,9 +1,12 @@
-use super::*;
+use super::{
+    Arc, AtomicBool, CounterState, Duration, HashMap, Mutex, PeerState, SyncSender, TransportError,
+    TransportEvent, send_authoritative_event_bounded,
+};
 
-/// A failed worker spawn happens *after* PeerAccepted was delivered to the
+/// A failed worker spawn happens *after* `PeerAccepted` was delivered to the
 /// host actor. Close the provisional socket and emit a matching terminal
 /// event before releasing its peer slot; otherwise the actor retains a ghost
-/// listener and repeated failures exhaust max_peers. The writer may already
+/// listener and repeated failures exhaust `max_peers`. The writer may already
 /// be running when reader startup fails, so close its socket as well.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn rollback_failed_peer_start(
