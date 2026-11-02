@@ -303,6 +303,219 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         assert_eq!(silent_disco_audio_underrun_count(engine), 0);
         assert_eq!(runtime.engine_token(), tokens[index]);
     }
+
+    // Stop both listeners on their original authorized sockets, then replay
+    // through those SAME sockets with fresh native engines. This tests a
+    // multi-peer Stop/replay transition beyond cached late-join controls.
+    assert_eq!(
+        host.broadcast_control(&ControlMessage::Stop(silent_disco_core::protocol::Stop {
+            session_id: session.clone(),
+            stream_id: stream.clone(),
+            host_stop_time_ms: MonotonicMillis::new(START_MS + 20),
+        }))
+        .expect("broadcast authoritative Stop")
+        .report
+        .successful_peers,
+        2
+    );
+    for (index, (handle, runtime)) in listeners.iter().zip(&runtimes).enumerate() {
+        assert!(matches!(
+            handle.poll_event(1_000).expect("Stop event"),
+            Some(super::FfiListenerTransportEvent::Stopped { stream_id, .. })
+                if stream_id == stream.as_str()
+        ), "listener {index} must receive Stop");
+        handle.detach_playback();
+        runtime.stop().expect("retire old output");
+        let old_engine =
+            usize::try_from(tokens[index]).expect("token fits pointer") as *mut core::ffi::c_void;
+        let mut output = [f32::NAN; 2];
+        let mut supplied = u32::MAX;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                old_engine,
+                output.as_mut_ptr(),
+                1,
+                2,
+                &raw mut supplied,
+            ),
+            2,
+            "listener {index} old output must remain retired"
+        );
+        assert_eq!(supplied, 0);
+    }
+
+    let replay_stream = StreamId::new("callback-late-join-replay").expect("replay stream");
+    let replay_start_ms = START_MS + 200;
+    let mut replay_runtimes = Vec::new();
+    for (index, handle) in listeners.iter().enumerate() {
+        let replay = FfiListenerPlaybackHandle::open(FfiListenerPlaybackConfig {
+            session_id: session.as_str().to_owned(),
+            stream_id: replay_stream.as_str().to_owned(),
+            sample_rate: 48_000,
+            host_start_time_ms: replay_start_ms,
+            samples_per_packet: PACKET_FRAMES,
+            channels: 2,
+            startup_buffer_target_ms: 0,
+            rebuffer_target_ms: 0,
+            ring_capacity_frames: 48_000,
+            ring_target_fill_frames: 39_360,
+            write_lead_ms: 800,
+            max_prefill_ms: 800,
+            volume: 1.0,
+        })
+        .expect("fresh replay output");
+        replay.lock_same_process_host_clock(0).expect("replay clock");
+        assert_ne!(replay.engine_token(), tokens[index]);
+        handle.attach_playback(Arc::clone(&replay));
+        replay_runtimes.push(replay);
+    }
+    assert_eq!(
+        host.broadcast_control(&ControlMessage::StreamStart(StreamStart {
+            session_id: session.clone(),
+            stream_id: replay_stream.clone(),
+            host_start_time_ms: MonotonicMillis::new(replay_start_ms),
+            sample_rate: 48_000,
+            channels: 2,
+            samples_per_packet: PACKET_FRAMES,
+            current_entry_id: Some("replay-first".to_owned()),
+            current_display_name: Some("Replay First".to_owned()),
+        }))
+        .expect("replay Start")
+        .report
+        .successful_peers,
+        2
+    );
+    for handle in &listeners {
+        assert!(matches!(
+            handle.poll_event(1_000).expect("replay Start event"),
+            Some(super::FfiListenerTransportEvent::StreamStarted {
+                stream_id, host_start_time_ms, ..
+            }) if stream_id == replay_stream.as_str() && host_start_time_ms == replay_start_ms
+        ));
+    }
+    assert_eq!(
+        host.broadcast_control(&ControlMessage::TrackBoundary(TrackBoundary {
+            session_id: session.clone(),
+            stream_id: replay_stream.clone(),
+            first_sample_index: SampleIndex::new(u64::from(PACKET_FRAMES)),
+            entry_id: "replay-second".to_owned(),
+            display_name: "Replay Second".to_owned(),
+        }))
+        .expect("replay boundary")
+        .report
+        .successful_peers,
+        2
+    );
+    for handle in &listeners {
+        assert!(matches!(
+            handle.poll_event(1_000).expect("replay boundary event"),
+            Some(super::FfiListenerTransportEvent::TrackBoundary {
+                stream_id, first_sample_index, ..
+            }) if stream_id == replay_stream.as_str()
+                && first_sample_index == u64::from(PACKET_FRAMES)
+        ));
+    }
+
+    for sequence in 0..2_u64 {
+        let amplitude = if sequence == 0 { 12_288_i16 } else { 8_192_i16 };
+        let payload = [amplitude, -amplitude]
+            .into_iter()
+            .cycle()
+            .take(PACKET_FRAMES as usize * 2)
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        assert_eq!(
+            host.broadcast_audio(&ProtocolFrame::Audio(AudioDatagram {
+                session_id: session.clone(),
+                stream_id: replay_stream.clone(),
+                sequence: PacketSequence::new(sequence),
+                codec: AudioCodec::PcmS16Le,
+                sample_rate: 48_000,
+                channels: 2,
+                samples_per_packet: PACKET_FRAMES,
+                first_sample_index: SampleIndex::new(sequence * u64::from(PACKET_FRAMES)),
+                host_presentation_time_ms: MonotonicMillis::new(replay_start_ms + sequence * 5),
+                payload,
+            }))
+            .expect("replay UDP PCM")
+            .report
+            .successful_peers,
+            2
+        );
+        let deadline = Instant::now() + Duration::from_secs(1);
+        for (index, handle) in listeners.iter().enumerate() {
+            while handle.forwarded_audio_count() < sequence + 3 {
+                assert!(
+                    Instant::now() < deadline,
+                    "listener {index} missed replay packet {sequence}"
+                );
+                assert!(handle.poll_event(20).expect("forward replay PCM").is_none());
+            }
+        }
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let replay_prefills = loop {
+        let states: Vec<_> = replay_runtimes.iter().map(|runtime| runtime.diagnostics()).collect();
+        if states.iter().all(|state| {
+            state.packets_emitted == 2
+                && state.ring_queued_frames >= state.prefill_frames + u64::from(PACKET_FRAMES) * 2
+        }) {
+            break states.iter().map(|state| state.prefill_frames).collect::<Vec<_>>();
+        }
+        assert!(Instant::now() < deadline, "both replay rings: {states:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    for (index, replay) in replay_runtimes.iter().enumerate() {
+        let replay_token = replay.engine_token();
+        let engine =
+            usize::try_from(replay_token).expect("token fits pointer") as *mut core::ffi::c_void;
+        let prefill = replay_prefills[index];
+        let mut silence = vec![f32::NAN; usize::try_from(prefill).expect("prefill fits") * 2];
+        let mut supplied = 0_u32;
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine, silence.as_mut_ptr(),
+                u32::try_from(prefill).expect("prefill fits"), 2, &raw mut supplied,
+            ),
+            0
+        );
+        assert_eq!(u64::from(supplied), prefill);
+        assert!(silence.iter().all(|sample| *sample == 0.0));
+        let mut pcm = vec![f32::NAN; PACKET_FRAMES as usize * 4];
+        assert_eq!(
+            silent_disco_audio_read_interleaved_f32(
+                engine, pcm.as_mut_ptr(), PACKET_FRAMES * 2, 2, &raw mut supplied,
+            ),
+            0
+        );
+        assert_eq!(supplied, PACKET_FRAMES * 2);
+        for (frame, stereo) in pcm.chunks_exact(2).enumerate() {
+            let amplitude = if frame < PACKET_FRAMES as usize { 12_288_i64 } else { 8_192_i64 };
+            let shaped = if frame < DEFAULT_CONCEALMENT_RAMP_MS as usize * 48 {
+                amplitude * i64::try_from(frame).expect("bounded frame")
+                    / (i64::from(DEFAULT_CONCEALMENT_RAMP_MS) * 48)
+            } else {
+                amplitude
+            };
+            let shaped = i16::try_from(shaped).expect("PCM16");
+            assert_eq!(
+                stereo[0].to_bits(),
+                (f32::from(shaped) / 32_768.0).to_bits(),
+                "listener {index} replay left {frame}"
+            );
+            assert_eq!(
+                stereo[1].to_bits(),
+                (f32::from(-shaped) / 32_768.0).to_bits(),
+                "listener {index} replay right {frame}"
+            );
+        }
+        assert_eq!(silent_disco_audio_frames_rendered(engine), prefill + u64::from(PACKET_FRAMES) * 2);
+        assert_eq!(silent_disco_audio_underrun_count(engine), 0);
+        assert_eq!(replay.engine_token(), replay_token, "boundary cannot reopen output");
+        listeners[index].detach_playback();
+        replay.stop().expect("stop replay output");
+    }
+
     for (handle, runtime) in listeners.iter().zip(&runtimes) {
         handle.detach_playback();
         runtime.stop().expect("stop native runtime");
