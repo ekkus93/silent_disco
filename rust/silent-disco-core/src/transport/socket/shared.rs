@@ -393,6 +393,18 @@ pub(super) fn read_control_loop<F>(
                 break;
             }
             Ok(read) => {
+                // A completed read is not evidence that an unjoined peer met
+                // its admission deadline: the kernel may return just after it.
+                if pending_join.is_some_and(|(joined, deadline)| {
+                    !joined.load(Ordering::Acquire) && join_started.elapsed() >= deadline
+                }) {
+                    let _ = on_outcome(ReadControlOutcome::Rejected(TransportError::new(
+                        TransportErrorKind::Timeout,
+                        TransportChannel::Control,
+                        "TCP peer completed its pre-join read after the admission deadline",
+                    )));
+                    break;
+                }
                 if buffer.len().saturating_add(read) > MAX_CONTROL_FRAME_BYTES {
                     let error = TransportError::new(
                         TransportErrorKind::Protocol,
@@ -417,6 +429,19 @@ pub(super) fn read_control_loop<F>(
                     break;
                 }
                 loop {
+                    // An earlier frame's application delivery can block while
+                    // another pre-join frame is already buffered. Never admit
+                    // that buffered frame after the absolute join deadline.
+                    if pending_join.is_some_and(|(joined, deadline)| {
+                        !joined.load(Ordering::Acquire) && join_started.elapsed() >= deadline
+                    }) {
+                        let _ = on_outcome(ReadControlOutcome::Rejected(TransportError::new(
+                            TransportErrorKind::Timeout,
+                            TransportChannel::Control,
+                            "TCP peer exceeded the admission deadline while frames were buffered",
+                        )));
+                        return;
+                    }
                     if buffer.len() < FRAME_HEADER_BYTES {
                         break;
                     }

@@ -180,3 +180,67 @@ fn joined_peer_cannot_trickle_partial_next_frame_indefinitely() {
     assert_eq!(frames, 1, "the complete frame must be delivered first");
     assert_eq!(kind, TransportErrorKind::Timeout);
 }
+
+#[test]
+fn buffered_pre_join_control_cannot_outlive_admission_deadline_during_backpressure() {
+    let (mut client, server) = loopback();
+    let session = SessionId::new("pre-join-deadline").expect("session");
+    let hello = encode_frame(&ProtocolFrame::Control(ControlMessage::Hello(Hello {
+        session_id: session.clone(),
+        session_name: "session".to_owned(),
+        host_name: "host".to_owned(),
+        approval_required: true,
+    })))
+    .expect("hello");
+    let stop = encode_frame(&ProtocolFrame::Control(ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: StreamId::new("pre-join-stream").expect("stream"),
+        host_stop_time_ms: MonotonicMillis::new(100),
+    })))
+    .expect("stop");
+    let mut coalesced = hello;
+    coalesced.extend_from_slice(&stop);
+    client.write_all(&coalesced).expect("write both controls");
+    client.shutdown(Shutdown::Write).expect("finish writes");
+
+    // The first frame reaches the application within the deadline, but the
+    // application takes longer than the pre-join allowance to process it.
+    // The second frame is already in the same TCP read buffer. It must not
+    // be dispatched after the deadline simply because no new read occurs.
+    let worker = thread::spawn(move || {
+        let joined = AtomicBool::new(false);
+        let mut received = Vec::new();
+        read_control_loop(
+            server,
+            &AtomicBool::new(false),
+            Duration::from_millis(10),
+            Duration::from_millis(250),
+            &session,
+            Some((&joined, Duration::from_millis(40))),
+            |outcome| {
+                match outcome {
+                    ReadControlOutcome::Frame(
+                        ProtocolFrame::Control(ControlMessage::Hello(_)),
+                        _,
+                    ) => {
+                        received.push("hello");
+                        thread::sleep(Duration::from_millis(70));
+                    }
+                    ReadControlOutcome::Frame(
+                        ProtocolFrame::Control(ControlMessage::Stop(_)),
+                        _,
+                    ) => received.push("late-stop"),
+                    ReadControlOutcome::Rejected(error)
+                        if error.kind == TransportErrorKind::Timeout =>
+                    {
+                        received.push("timeout");
+                    }
+                    _ => received.push("unexpected"),
+                }
+                true
+            },
+        );
+        received
+    });
+    assert_eq!(worker.join().expect("reader"), ["hello", "timeout"]);
+}
