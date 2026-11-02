@@ -24,9 +24,13 @@ fn detached_handle() -> FfiListenerTransportHandle {
 }
 
 fn playback() -> Arc<FfiListenerPlaybackHandle> {
+    playback_for_stream("stream-forwarding")
+}
+
+fn playback_for_stream(stream_id: &str) -> Arc<FfiListenerPlaybackHandle> {
     FfiListenerPlaybackHandle::open(FfiListenerPlaybackConfig {
         session_id: "session-forwarding".to_owned(),
-        stream_id: "stream-forwarding".to_owned(),
+        stream_id: stream_id.to_owned(),
         sample_rate: 48_000,
         host_start_time_ms: 0,
         samples_per_packet: SAMPLES_PER_PACKET,
@@ -348,6 +352,7 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         listener: &mut dyn ListenerTransportNode,
         channel: TransportChannel,
         expected: &ProtocolFrame,
+
     ) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -655,6 +660,123 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         0
     );
     assert_eq!(handle.forwarded_audio_count(), 4);
+
+    // Stop retires the old stream. A subsequent Play must use a NEW native
+    // runtime, but both tracks within that replay must keep its engine token.
+    // Drive the same production TCP/UDP transport, including the reconnected
+    // listener, rather than replacing this with a synthetic event fixture.
+    let replay_stream = StreamId::new("stream-replay").expect("replay stream");
+    let replay_runtime = playback_for_stream("stream-replay");
+    replay_runtime
+        .lock_same_process_host_clock(0)
+        .expect("lock replay clock");
+    let replay_token = replay_runtime.engine_token();
+    assert_ne!(
+        replay_token, original_token,
+        "a fresh Play after Stop must not reuse the retired native engine"
+    );
+    handle.attach_playback(Arc::clone(&replay_runtime));
+    let replay_start = ControlMessage::StreamStart(StreamStart {
+        session_id: session.clone(),
+        stream_id: replay_stream.clone(),
+        host_start_time_ms: MonotonicMillis::new(400),
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: SAMPLES_PER_PACKET,
+        current_entry_id: Some("replay-a".to_owned()),
+        current_display_name: Some("Replay A".to_owned()),
+    });
+    host.broadcast_control(&replay_start)
+        .expect("start fresh replay");
+    assert!(matches!(
+        handle.poll_event(1_000).expect("FFI replay Start poll"),
+        Some(super::FfiListenerTransportEvent::StreamStarted {
+            stream_id,
+            ..
+        }) if stream_id == "stream-replay"
+    ));
+    expect_wire(
+        late.as_mut(),
+        TransportChannel::Control,
+        &ProtocolFrame::Control(replay_start),
+    );
+    let replay_boundary = ControlMessage::TrackBoundary(TrackBoundary {
+        session_id: session.clone(),
+        stream_id: replay_stream.clone(),
+        first_sample_index: SampleIndex::new(240),
+        entry_id: "replay-b".to_owned(),
+        display_name: "Replay B".to_owned(),
+    });
+    host.broadcast_control(&replay_boundary)
+        .expect("schedule replay successor");
+    assert!(matches!(
+        handle.poll_event(1_000).expect("FFI replay boundary poll"),
+        Some(super::FfiListenerTransportEvent::TrackBoundary {
+            first_sample_index: 240,
+            ..
+        })
+    ));
+    expect_wire(
+        late.as_mut(),
+        TransportChannel::Control,
+        &ProtocolFrame::Control(replay_boundary),
+    );
+    for sequence in 0..2_u64 {
+        let sample = i16::try_from(sequence + 7).expect("replay fixture");
+        let packet = ProtocolFrame::Audio(AudioDatagram {
+            session_id: session.clone(),
+            stream_id: replay_stream.clone(),
+            sequence: PacketSequence::new(sequence),
+            codec: AudioCodec::PcmS16Le,
+            sample_rate: 48_000,
+            channels: 2,
+            samples_per_packet: SAMPLES_PER_PACKET,
+            first_sample_index: SampleIndex::new(sequence * u64::from(SAMPLES_PER_PACKET)),
+            host_presentation_time_ms: MonotonicMillis::new(400 + sequence * 5),
+            payload: [sample, -sample]
+                .into_iter()
+                .cycle()
+                .take(SAMPLES_PER_PACKET as usize * 2)
+                .flat_map(i16::to_le_bytes)
+                .collect(),
+        });
+        assert_eq!(
+            host.broadcast_audio(&packet)
+                .expect("fresh replay UDP PCM")
+                .report
+                .successful_peers,
+            2
+        );
+        expect_wire(late.as_mut(), TransportChannel::Audio, &packet);
+        assert!(
+            handle.poll_event(300).expect("forward replay PCM").is_none(),
+            "attached replay PCM must bypass the foreign event queue"
+        );
+        assert_eq!(handle.forwarded_audio_count(), 5 + sequence);
+        assert_eq!(
+            replay_runtime.engine_token(),
+            replay_token,
+            "track boundary must not reopen the replay output"
+        );
+    }
+    let replay_stop = ControlMessage::Stop(Stop {
+        session_id: session.clone(),
+        stream_id: replay_stream,
+        host_stop_time_ms: MonotonicMillis::new(500),
+    });
+    host.broadcast_control(&replay_stop)
+        .expect("stop fresh replay");
+    assert!(matches!(
+        handle.poll_event(1_000).expect("FFI replay Stop poll"),
+        Some(super::FfiListenerTransportEvent::Stopped { .. })
+    ));
+    expect_wire(
+        late.as_mut(),
+        TransportChannel::Control,
+        &ProtocolFrame::Control(replay_stop),
+    );
+    handle.detach_playback();
+    replay_runtime.stop().expect("stop replay runtime");
     handle.shutdown().expect("shutdown FFI listener");
     late.shutdown().expect("shutdown late listener");
     host.shutdown().expect("shutdown host");
