@@ -36,6 +36,17 @@ internal class HostNativeHandleGate<T : Any> {
         current.get()?.let(action)
     }
 
+    /**
+     * Bind a synchronous listener operation to the handle present at call
+     * entry, before waiting for a concurrent close/rebind to release the
+     * monitor. An old synchronization report or playback attachment must not
+     * be silently applied to the replacement socket.
+     */
+    fun <R> withCapturedCurrent(action: (T) -> R): R? {
+        val expected = current.get() ?: return null
+        return withExpected(expected, action)
+    }
+
     /** A queued command cannot silently migrate to a newly bound session. */
     fun <R> withExpected(expected: T, action: (T) -> R): R? = synchronized(monitor) {
         current.get()?.takeIf { it === expected }?.let(action)

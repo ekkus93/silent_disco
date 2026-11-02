@@ -145,18 +145,18 @@ class ListenerTransportController : ListenerTransport {
         roundTripMs: Double,
         driftPpm: Double,
     ) {
-        handleGate.withCurrent {
+        handleGate.withCapturedCurrent {
             it.sendSynchronizationReport(confidence, offsetMs, roundTripMs, driftPpm)
         }
     }
 
     override fun attachPlayback(playback: FfiListenerPlaybackHandle) {
-        handleGate.withCurrent { it.attachPlayback(playback) }
-            ?: error("listener transport is not connected")
+        handleGate.withCapturedCurrent { it.attachPlayback(playback) }
+            ?: error("listener transport generation changed before playback attachment")
     }
 
     override fun detachPlayback() {
-        handleGate.withCurrent { it.detachPlayback() }
+        handleGate.withCapturedCurrent { it.detachPlayback() }
     }
 
     override suspend fun disconnect(reason: String) {
