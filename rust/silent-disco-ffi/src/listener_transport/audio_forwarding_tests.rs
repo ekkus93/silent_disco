@@ -6,7 +6,7 @@ use silent_disco_core::domain::{
 };
 use silent_disco_core::protocol::{AudioCodec, AudioDatagram, ControlMessage, Disconnect};
 use silent_disco_core::transport::{TransportChannel, TransportEvent, TransportPeer};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 const SAMPLES_PER_PACKET: u32 = 240;
@@ -19,6 +19,7 @@ fn detached_handle() -> FfiListenerTransportHandle {
         inner: RwLock::new(None),
         playback: Mutex::new(None),
         forwarded_audio: AtomicU64::new(0),
+        closed: AtomicBool::new(false),
     }
 }
 
@@ -212,6 +213,72 @@ fn detach_waits_for_in_flight_pcm_forwarding_before_runtime_shutdown() {
     assert_eq!(handle.forwarded_audio_count(), 0);
 }
 
+
+/// A native close must retire the attachment before socket teardown. A
+/// delayed attach after close must not resurrect playback, and a forwarding
+/// operation that already owns the attachment must finish before close returns.
+#[test]
+fn shutdown_waits_for_in_flight_pcm_and_rejects_late_playback_attachment() {
+    let _guard = registry_test_guard();
+    let handle = Arc::new(detached_handle());
+    let runtime = playback();
+    handle.attach_playback(Arc::clone(&runtime));
+
+    let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+    let forwarding_handle = Arc::clone(&handle);
+    let forwarding = std::thread::spawn(move || {
+        forwarding_handle
+            .with_playback_lock(|attached| {
+                assert!(attached.is_some());
+                entered_tx.send(()).expect("forwarding started");
+                release_rx.recv().expect("forwarding released");
+            })
+            .expect("forwarding lock");
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("forwarding acquired playback");
+
+    let (attempt_tx, attempt_rx) = std::sync::mpsc::sync_channel(1);
+    let (finished_tx, finished_rx) = std::sync::mpsc::sync_channel(1);
+    let closing_handle = Arc::clone(&handle);
+    let closing = std::thread::spawn(move || {
+        attempt_tx.send(()).expect("shutdown attempted");
+        closing_handle.shutdown().expect("shutdown succeeds");
+        finished_tx.send(()).expect("shutdown finished");
+    });
+    attempt_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("shutdown worker started");
+    assert!(matches!(
+        finished_rx.recv_timeout(std::time::Duration::from_millis(50)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    release_tx.send(()).expect("finish PCM forwarding");
+    forwarding.join().expect("forwarding completes");
+    closing.join().expect("shutdown completes");
+
+    assert!(handle.closed.load(Ordering::Acquire));
+    assert!(handle.playback.lock().expect("attachment lock").is_none());
+    handle.attach_playback(Arc::clone(&runtime));
+    assert!(
+        handle.playback.lock().expect("attachment lock").is_none(),
+        "late attach must not resurrect the retired playback session"
+    );
+    assert!(matches!(
+        handle.forward_audio(audio_event(0)),
+        Err(FfiListenerTransportError::Closed(_))
+    ));
+    assert!(matches!(
+        handle.forward_audio(control_event()),
+        Err(FfiListenerTransportError::Closed(_))
+    ));
+    assert_eq!(handle.forwarded_audio_count(), 0);
+    handle.shutdown().expect("repeated shutdown is idempotent");
+    runtime.stop().expect("retired runtime stops");
+}
+
 /// Detaching must stop forwarding immediately: submitting into a
 /// runtime that is being stopped is exactly what the detach ordering in
 /// the Kotlin controller exists to prevent.
@@ -332,6 +399,7 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         })),
         playback: Mutex::new(None),
         forwarded_audio: AtomicU64::new(0),
+        closed: AtomicBool::new(false),
     };
     handle
         .send_join_request("FFI listener".to_owned(), None)

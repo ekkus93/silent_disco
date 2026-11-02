@@ -1,5 +1,5 @@
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -80,6 +80,9 @@ pub struct FfiListenerTransportHandle {
     /// received-packet count the foreign caller used to derive by counting
     /// the per-packet events it no longer sees.
     forwarded_audio: AtomicU64,
+    /// Terminal fence shared by attach, forwarding and shutdown. Once closed,
+    /// delayed callers cannot reattach a retired native playback runtime.
+    closed: AtomicBool,
 }
 
 impl std::fmt::Debug for FfiListenerTransportHandle {
@@ -140,6 +143,7 @@ impl FfiListenerTransportHandle {
         Ok(Arc::new(Self {
             playback: Mutex::new(None),
             forwarded_audio: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
             inner: RwLock::new(Some(Inner {
                 transport,
                 session_id,
@@ -257,7 +261,9 @@ impl FfiListenerTransportHandle {
     /// rejected and biased the offset estimate -- the reason packets read as
     /// late and forced the rebuffering heard as dropouts.
     pub fn attach_playback(&self, playback: Arc<FfiListenerPlaybackHandle>) {
-        if let Ok(mut guard) = self.playback.lock() {
+        if let Ok(mut guard) = self.playback.lock()
+            && !self.closed.load(Ordering::Acquire)
+        {
             *guard = Some(playback);
         }
     }
@@ -369,6 +375,17 @@ impl FfiListenerTransportHandle {
 
     /// Idempotently shuts down and joins every transport worker.
     pub fn shutdown(&self) -> Result<(), FfiListenerTransportError> {
+        // Retire playback first: a poller may already have read a UDP packet
+        // and released the transport read lock before forwarding it. The
+        // attachment lock waits for any in-flight PCM submission and makes
+        // late attach calls fail closed, even while socket shutdown waits.
+        {
+            let mut attached = self.playback.lock().map_err(|_| {
+                FfiListenerTransportError::Closed("playback attachment lock was poisoned".to_owned())
+            })?;
+            self.closed.store(true, Ordering::Release);
+            *attached = None;
+        }
         let mut guard = self.write()?;
         let Some(mut inner) = guard.take() else {
             return Ok(());
@@ -421,6 +438,10 @@ impl FfiListenerTransportHandle {
 
 impl Drop for FfiListenerTransportHandle {
     fn drop(&mut self) {
+        self.closed.store(true, Ordering::Release);
+        if let Ok(mut attached) = self.playback.lock() {
+            *attached = None;
+        }
         if let Ok(mut guard) = self.inner.write()
             && let Some(mut inner) = guard.take()
         {
@@ -438,6 +459,11 @@ impl FfiListenerTransportHandle {
         &self,
         event: TransportEvent,
     ) -> Result<Option<TransportEvent>, FfiListenerTransportError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(FfiListenerTransportError::Closed(
+                "listener transport has shut down".to_owned(),
+            ));
+        }
         let is_audio = matches!(
             &event,
             TransportEvent::FrameReceived {

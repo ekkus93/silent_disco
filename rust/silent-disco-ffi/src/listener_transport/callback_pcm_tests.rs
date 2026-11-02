@@ -58,6 +58,7 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         })),
         playback: Mutex::new(None),
         forwarded_audio: AtomicU64::new(0),
+        closed: std::sync::atomic::AtomicBool::new(false),
     };
     handle
         .send_join_request("Callback listener".to_owned(), None)
