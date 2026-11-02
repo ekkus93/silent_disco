@@ -48,7 +48,15 @@ internal class PendingHostJoinRoutes<H : Any>(private val capacity: Int = 128) {
         take(requestId, deviceId)
     }
 
-    /** A terminal socket event invalidates every outstanding claim of that ID. */
+    /** A terminal socket event retires only its original TCP generation.
+     * Another pending socket may legitimately claim the same legacy ID. */
+    fun removePeer(deviceId: String, controlAddress: String) = synchronized(lock) {
+        pending.entries.removeAll {
+            it.value.deviceId == deviceId && it.value.controlAddress == controlAddress
+        }
+    }
+
+    /** Explicit device-wide invalidation is reserved for host policy/teardown. */
     fun removeDevice(deviceId: String) = synchronized(lock) {
         pending.entries.removeAll { it.value.deviceId == deviceId }
     }

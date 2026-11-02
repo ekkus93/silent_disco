@@ -157,6 +157,33 @@ class HostJoinProjectionFailureTest {
     }
 
     @Test
+    fun oldSocketDisconnectDoesNotEraseReplacementPendingJoinWithSameClaimedId() = runTest(dispatcher) {
+        val native = Mockito.mock(FfiHostTransportHandle::class.java)
+        val harness = newTestMainViewModelHarness()
+        val controller = harness.hostCoreController
+        val viewModel = harness.viewModel
+        viewModel.handleHostTransportEvent(controller, join(controlAddress = "127.0.0.1:10001"), native)
+        viewModel.handleHostTransportEvent(controller, join(controlAddress = "127.0.0.1:10002"), native)
+        val requests = controller.submitJoinRequestCalls
+        assertThat(requests).hasSize(2)
+
+        viewModel.handleHostTransportEvent(
+            controller,
+            FfiHostTransportEvent.PeerDisconnectedAt(
+                controlAddress = "127.0.0.1:10001",
+                listenerId = "listener-1",
+                message = "old TCP socket closed",
+            ),
+            native,
+        )
+        assertThat(viewModel.pendingListenerDatagramPorts.take(requests[0].requestId, "listener-1"))
+            .isNull()
+        val replacement = viewModel.pendingListenerDatagramPorts.take(requests[1].requestId, "listener-1")
+        assertThat(replacement?.controlAddress).isEqualTo("127.0.0.1:10002")
+        assertThat(replacement?.sourceHandle).isSameInstanceAs(native)
+    }
+
+    @Test
     fun delayedActorRejectionRefusesOnlyOriginalTcpGenerationWithDuplicateClaimedId() = runTest(dispatcher) {
         val native = Mockito.mock(FfiHostTransportHandle::class.java)
         Mockito.doAnswer { Thread.sleep(10); null }.`when`(native).pollEvent(500uL)

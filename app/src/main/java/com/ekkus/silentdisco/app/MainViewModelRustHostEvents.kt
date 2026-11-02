@@ -55,10 +55,16 @@ internal fun MainViewModel.handleHostTransportEvent(
                 refuseUnprojectedHostJoin(event.deviceId, event.controlAddress, sourceHandle)
             }
         }
+        is FfiHostTransportEvent.PeerDisconnectedAt -> event.listenerId?.let { listenerId ->
+            // TCP source address identifies the retired peer even when a
+            // replacement join claims the same unverified legacy device ID.
+            pendingListenerDatagramPorts.removePeer(listenerId, event.controlAddress)
+            runCatching { controller.submitListenerDisconnected(listenerId) }
+                .onFailure { error -> reportRustHostCommandFailure("submit listener disconnected", error) }
+        }
         is FfiHostTransportEvent.PeerDisconnected -> event.listenerId?.let { listenerId ->
-            // A pending request's datagram ports are invalid as soon as its
-            // claimed device ID disconnects, even if the actor's approval
-            // effect was queued before this terminal event.
+            // Address-less synthetic poll failures cannot identify one TCP
+            // generation; fail closed rather than reusing stale routes.
             pendingListenerDatagramPorts.removeDevice(listenerId)
             runCatching { controller.submitListenerDisconnected(listenerId) }
                 .onFailure { error -> reportRustHostCommandFailure("submit listener disconnected", error) }

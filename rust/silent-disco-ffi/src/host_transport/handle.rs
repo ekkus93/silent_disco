@@ -635,7 +635,8 @@ fn map_event(event: TransportEvent) -> Option<FfiHostTransportEvent> {
             t1_listener_send_elapsed_ms: request.t1_listener_send_elapsed_ms.get(),
         }),
         TransportEvent::PeerDisconnected { peer, error, .. } => {
-            Some(FfiHostTransportEvent::PeerDisconnected {
+            Some(FfiHostTransportEvent::PeerDisconnectedAt {
+                control_address: peer.control_address.to_string(),
                 listener_id: peer.device_id.map(DeviceId::into_string),
                 message: error.map(|error| error.to_string()),
             })
@@ -780,3 +781,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "disconnect_mapping_tests.rs"]
+mod disconnect_mapping_tests;

@@ -76,6 +76,13 @@ pub enum FfiHostTransportEvent {
         listener_id: Option<String>,
         message: Option<String>,
     },
+    /// A real TCP peer's terminal event, bound to the socket that closed.
+    /// The legacy address-less variant remains for local poll failures.
+    PeerDisconnectedAt {
+        control_address: String,
+        listener_id: Option<String>,
+        message: Option<String>,
+    },
     /// A malformed or unauthorized frame was rejected by the transport.
     Rejected {
         message: String,
