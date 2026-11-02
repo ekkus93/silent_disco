@@ -227,7 +227,12 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         if sequence == 1 {
             // TCP control and UDP PCM can be observed in either order.
             // Drain both earlier packets before asserting the Pause fence.
-            assert!(handle.poll_event(500).expect("forward pre-pause PCM").is_none());
+            assert!(
+                handle
+                    .poll_event(500)
+                    .expect("forward pre-pause PCM")
+                    .is_none()
+            );
             assert_eq!(handle.forwarded_audio_count(), 2);
         }
     }
