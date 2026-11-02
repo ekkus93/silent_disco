@@ -220,9 +220,13 @@ internal fun MainViewModel.ensureListenerTransportEventLoop() {
     if (listenerTransportEventLoopStarted) return
     listenerTransportEventLoopStarted = true
     viewModelScope.launch(Dispatchers.IO) {
-        listenerTransportController.events.collect { event ->
+        listenerTransportController.eventsWithGeneration.collect { delivery ->
+            // A collector may have dequeued an old socket's Stop, approval,
+            // boundary or PCM just before Leave/rebind. Validate again at the
+            // final actor/UI handoff, not only when the queue dequeues it.
+            if (!listenerTransportController.isCurrentGeneration(delivery.handle)) return@collect
             val controller = listenerCoreController ?: return@collect
-            handleListenerTransportEvent(controller, event)
+            handleListenerTransportEvent(controller, delivery.event)
         }
     }
 }

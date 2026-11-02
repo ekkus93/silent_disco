@@ -67,6 +67,15 @@ class ListenerTransportController : ListenerTransport {
     )
 
     override val events: Flow<FfiListenerTransportEvent> = eventQueue.events
+    // The ViewModel must retain this native generation across the collector
+    // handoff: an old Stop/approval can already be dequeued when Leave/rebind
+    // replaces the socket. Checking only inside the queue is insufficient.
+    internal val eventsWithGeneration: Flow<TransportGenerationEvent<FfiListenerTransportHandle, FfiListenerTransportEvent>> =
+        eventQueue.eventsWithGeneration
+
+    internal fun isCurrentGeneration(handle: FfiListenerTransportHandle): Boolean =
+        handleGate.currentHandle() === handle
+
     /** Best-effort PCM notifications dropped when a slow collector exhausted capacity. */
     val droppedAudioEvents: Long get() = eventQueue.droppedBestEffort
 

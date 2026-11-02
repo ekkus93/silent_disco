@@ -5,6 +5,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -410,6 +411,48 @@ class BoundedTransportEventQueueTest {
         assertThat(received.await())
             .containsExactly("first", "control-0", "control-1", "control-2", "control-3")
         assertThat(blocked.all { it.isCompleted }).isTrue()
+        queue.close()
+    }
+
+    @Test
+    fun listenerHandoffDropsRetiredStopAlreadyDequeuedBeforeReconnect() = runTest {
+        val gate = ListenerNativeHandleGate<Any>()
+        val old = Any()
+        val replacement = Any()
+        val queue = BoundedTransportEventQueue<Any, String>(gate::currentHandle, capacity = 2)
+        gate.replace(retire = {}, open = { old }, start = {})
+        val releaseOldHandoff = CompletableDeferred<Unit>()
+        val oldDequeued = CompletableDeferred<Unit>()
+        val projected = mutableListOf<String>()
+        val collector = backgroundScope.async {
+            queue.eventsWithGeneration.take(2).collect { delivery ->
+                if (delivery.event == "old-stop") {
+                    oldDequeued.complete(Unit)
+                    releaseOldHandoff.await()
+                }
+                // Same final-generation guard used by the production listener
+                // ViewModel, after the event has left the bounded queue.
+                if (gate.currentHandle() === delivery.handle) {
+                    projected.add(delivery.event)
+                }
+            }
+        }
+
+        queue.emit(old, "old-stop")
+        runCurrent()
+        oldDequeued.await()
+        gate.replace(
+            retire = {},
+            open = { replacement },
+            start = { queue.discardRetiredEvents() },
+        )
+        queue.emit(replacement, "new-approval")
+        releaseOldHandoff.complete(Unit)
+        runCurrent()
+
+        collector.await()
+        assertThat(projected).containsExactly("new-approval")
+        gate.close { queue.discardRetiredEvents() }
         queue.close()
     }
 }
