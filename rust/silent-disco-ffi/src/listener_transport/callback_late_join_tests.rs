@@ -319,11 +319,14 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         2
     );
     for (index, (handle, runtime)) in listeners.iter().zip(&runtimes).enumerate() {
-        assert!(matches!(
-            handle.poll_event(1_000).expect("Stop event"),
-            Some(super::FfiListenerTransportEvent::Stopped { stream_id, .. })
-                if stream_id == stream.as_str()
-        ), "listener {index} must receive Stop");
+        assert!(
+            matches!(
+                handle.poll_event(1_000).expect("Stop event"),
+                Some(super::FfiListenerTransportEvent::Stopped { stream_id, .. })
+                    if stream_id == stream.as_str()
+            ),
+            "listener {index} must receive Stop"
+        );
         handle.detach_playback();
         runtime.stop().expect("retire old output");
         let old_engine =
@@ -364,7 +367,9 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
             volume: 1.0,
         })
         .expect("fresh replay output");
-        replay.lock_same_process_host_clock(0).expect("replay clock");
+        replay
+            .lock_same_process_host_clock(0)
+            .expect("replay clock");
         assert_ne!(replay.engine_token(), tokens[index]);
         handle.attach_playback(Arc::clone(&replay));
         replay_runtimes.push(replay);
@@ -455,12 +460,18 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
     }
     let deadline = Instant::now() + Duration::from_secs(5);
     let replay_prefills = loop {
-        let states: Vec<_> = replay_runtimes.iter().map(|runtime| runtime.diagnostics()).collect();
+        let states: Vec<_> = replay_runtimes
+            .iter()
+            .map(|runtime| runtime.diagnostics())
+            .collect();
         if states.iter().all(|state| {
             state.packets_emitted == 2
                 && state.ring_queued_frames >= state.prefill_frames + u64::from(PACKET_FRAMES) * 2
         }) {
-            break states.iter().map(|state| state.prefill_frames).collect::<Vec<_>>();
+            break states
+                .iter()
+                .map(|state| state.prefill_frames)
+                .collect::<Vec<_>>();
         }
         assert!(Instant::now() < deadline, "both replay rings: {states:?}");
         std::thread::sleep(Duration::from_millis(5));
@@ -474,8 +485,11 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         let mut supplied = 0_u32;
         assert_eq!(
             silent_disco_audio_read_interleaved_f32(
-                engine, silence.as_mut_ptr(),
-                u32::try_from(prefill).expect("prefill fits"), 2, &raw mut supplied,
+                engine,
+                silence.as_mut_ptr(),
+                u32::try_from(prefill).expect("prefill fits"),
+                2,
+                &raw mut supplied,
             ),
             0
         );
@@ -484,13 +498,21 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         let mut pcm = vec![f32::NAN; PACKET_FRAMES as usize * 4];
         assert_eq!(
             silent_disco_audio_read_interleaved_f32(
-                engine, pcm.as_mut_ptr(), PACKET_FRAMES * 2, 2, &raw mut supplied,
+                engine,
+                pcm.as_mut_ptr(),
+                PACKET_FRAMES * 2,
+                2,
+                &raw mut supplied,
             ),
             0
         );
         assert_eq!(supplied, PACKET_FRAMES * 2);
         for (frame, stereo) in pcm.chunks_exact(2).enumerate() {
-            let amplitude = if frame < PACKET_FRAMES as usize { 12_288_i64 } else { 8_192_i64 };
+            let amplitude = if frame < PACKET_FRAMES as usize {
+                12_288_i64
+            } else {
+                8_192_i64
+            };
             let shaped = if frame < DEFAULT_CONCEALMENT_RAMP_MS as usize * 48 {
                 amplitude * i64::try_from(frame).expect("bounded frame")
                     / (i64::from(DEFAULT_CONCEALMENT_RAMP_MS) * 48)
@@ -509,9 +531,16 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
                 "listener {index} replay right {frame}"
             );
         }
-        assert_eq!(silent_disco_audio_frames_rendered(engine), prefill + u64::from(PACKET_FRAMES) * 2);
+        assert_eq!(
+            silent_disco_audio_frames_rendered(engine),
+            prefill + u64::from(PACKET_FRAMES) * 2
+        );
         assert_eq!(silent_disco_audio_underrun_count(engine), 0);
-        assert_eq!(replay.engine_token(), replay_token, "boundary cannot reopen output");
+        assert_eq!(
+            replay.engine_token(),
+            replay_token,
+            "boundary cannot reopen output"
+        );
         listeners[index].detach_playback();
         replay.stop().expect("stop replay output");
     }
