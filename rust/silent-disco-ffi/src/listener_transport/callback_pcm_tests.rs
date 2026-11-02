@@ -159,7 +159,11 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
                 }) if stream_id == stream.as_str() && host_pause_time_ms == pause_time_ms
             ));
             assert_eq!(handle.forwarded_audio_count(), 2);
-            assert_eq!(runtime.engine_token(), token, "Pause must retain native engine");
+            assert_eq!(
+                runtime.engine_token(),
+                token,
+                "Pause must retain native engine"
+            );
 
             let resumed_start_ms = START_MS + 100;
             let resumed = host
@@ -186,7 +190,11 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
             runtime
                 .reanchor_presentation_time(resumed_start_ms)
                 .expect("reanchor existing native playback");
-            assert_eq!(runtime.engine_token(), token, "Resume must not reopen output");
+            assert_eq!(
+                runtime.engine_token(),
+                token,
+                "Resume must not reopen output"
+            );
         }
         let amplitude = (i16::try_from(sequence).expect("bounded") + 1) * 4_096;
         let payload = [amplitude, -amplitude]
@@ -216,6 +224,12 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
                 .successful_peers,
             1
         );
+        if sequence == 1 {
+            // TCP control and UDP PCM can be observed in either order.
+            // Drain both earlier packets before asserting the Pause fence.
+            assert!(handle.poll_event(500).expect("forward pre-pause PCM").is_none());
+            assert_eq!(handle.forwarded_audio_count(), 2);
+        }
     }
     assert!(handle.poll_event(500).expect("forward audio").is_none());
     assert_eq!(handle.forwarded_audio_count(), 4);
