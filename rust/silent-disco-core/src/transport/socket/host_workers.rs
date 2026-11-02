@@ -223,7 +223,14 @@ fn register_peer(
         counters.clone(),
         config.io_timeout,
         format!("silent-disco-control-writer-{number}"),
-    )?;
+    )
+    .map_err(|error| {
+        rollback_failed_peer_start(
+            &peer, peers, event_sender, global_stop, counters, clock.now(),
+            config.operation_timeout, &error,
+        );
+        error
+    })?;
     workers.lock().map_err(worker_registry_error)?.push(writer);
 
     let session_id = config.session_id.clone();
@@ -298,6 +305,7 @@ fn register_peer(
                                         event,
                                         || {
                                             // Bounded native writer; a completed
+
                                             // reply precedes socket teardown.
                                             let refusal = ProtocolFrame::Control(
                                                 ControlMessage::JoinRejection(JoinRejection {
@@ -409,18 +417,60 @@ fn register_peer(
             );
         })
         .map_err(|error| {
-            TransportError::io(
+            let error = TransportError::io(
                 TransportErrorKind::Listen,
                 TransportChannel::Control,
                 "failed to spawn control reader",
                 &error,
-            )
+            );
+            rollback_failed_peer_start(
+                &peer, peers, event_sender, global_stop, counters, clock.now(),
+                config.operation_timeout, &error,
+            );
+            error
         })?;
     workers.lock().map_err(worker_registry_error)?.push(reader);
     if global_stop.load(Ordering::Acquire) {
         drop(peer.close());
     }
     Ok(())
+}
+
+/// A failed worker spawn happens *after* PeerAccepted was delivered to the
+/// host actor. Close the provisional socket and emit a matching terminal
+/// event before releasing its peer slot; otherwise the actor retains a ghost
+/// listener and repeated failures exhaust max_peers. The writer may already
+/// be running when reader startup fails, so close its socket as well.
+#[allow(clippy::too_many_arguments)]
+fn rollback_failed_peer_start(
+    peer: &Arc<PeerState>,
+    peers: &Mutex<HashMap<u64, Arc<PeerState>>>,
+    event_sender: &SyncSender<TransportEvent>,
+    global_stop: &AtomicBool,
+    counters: &CounterState,
+    received_at: crate::domain::MonotonicMillis,
+    timeout: Duration,
+    error: &TransportError,
+) {
+    drop(peer.close());
+    // Keep the slot reserved until the actor observes the terminal event.
+    // On a stalled/shutdown actor, fail within the bounded deadline and
+    // release the slot rather than leaving an unobservable live socket.
+    send_authoritative_event_bounded(
+        event_sender,
+        global_stop,
+        counters,
+        TransportEvent::PeerDisconnected {
+            peer: peer.transport_peer(),
+            error: Some(error.clone()),
+            received_at,
+        },
+        timeout,
+    );
+    if let Ok(mut registry) = peers.lock() {
+        registry.remove(&peer.number);
+    }
+    counters.closed();
 }
 
 /// Retire only the route owned by the reader that is actually exiting.
@@ -598,6 +648,7 @@ pub(super) fn spawn_udp_receiver(
                                     }
                                 };
                                 (expected == source
+
                                     && route.peer.active.load(Ordering::Acquire)
                                     && route.peer.authorized.load(Ordering::Acquire))
                                 .then(|| (device_id.clone(), route.peer.clone()))
@@ -754,6 +805,65 @@ const fn session_id_address() -> std::net::IpAddr {
 mod admission_pressure_tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn worker_start_failure_after_accept_emits_terminal_and_releases_peer_slot() {
+        use crate::domain::MonotonicMillis;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).expect("client");
+        let (stream, remote) = listener.accept().expect("accepted peer");
+        let shutdown_copy = stream.try_clone().expect("shutdown socket");
+        let (write_sender, _write_receiver) = sync_channel(1);
+        let counters = Arc::new(CounterState::default());
+        let peer = Arc::new(PeerState {
+            number: 17,
+            remote,
+            identity: Mutex::new(None),
+            authorized: AtomicBool::new(false),
+            admission_denied: AtomicBool::new(false),
+            join_forwarded: AtomicBool::new(false),
+            active: AtomicBool::new(true),
+            consecutive_failures: AtomicU32::new(0),
+            sender: ControlSender::new(write_sender, Duration::from_millis(20), counters.clone()),
+            stop: Arc::new(AtomicBool::new(false)),
+            shutdown_stream: Mutex::new(shutdown_copy),
+            last_inbound_millis: AtomicU64::new(1),
+            silence_armed: AtomicBool::new(false),
+        });
+        let registry = Mutex::new(HashMap::from([(peer.number, peer.clone())]));
+        let (sender, receiver) = sync_channel(2);
+        let stop = AtomicBool::new(false);
+        sender.send(TransportEvent::PeerAccepted {
+            peer: peer.transport_peer(),
+            received_at: MonotonicMillis::new(1),
+        }).expect("accepted event");
+
+        let failure = TransportError::new(
+            TransportErrorKind::Listen,
+            TransportChannel::Control,
+            "injected TCP reader startup failure",
+        );
+        rollback_failed_peer_start(
+            &peer, &registry, &sender, &stop, &counters,
+            MonotonicMillis::new(2), Duration::from_millis(20), &failure,
+        );
+
+        assert!(matches!(receiver.try_recv(), Ok(TransportEvent::PeerAccepted { .. })));
+        match receiver.try_recv().expect("terminal after accepted") {
+            TransportEvent::PeerDisconnected { peer: disconnected, error: Some(reason), .. } => {
+                assert_eq!(disconnected.control_address, remote);
+                assert_eq!(reason.message, failure.message);
+            }
+            other => panic!("expected terminal disconnect, got {other:?}"),
+        }
+        assert!(!peer.active.load(Ordering::Acquire));
+        assert!(peer.stop.load(Ordering::Acquire));
+        assert!(registry.lock().unwrap().is_empty());
+        assert_eq!(counters.snapshot().closed_control_connections, 1);
+        assert_eq!(counters.snapshot().delivery_failures, 0);
+    }
+
 
     #[test]
     fn saturated_join_queue_is_refused_without_silent_acceptance() {
