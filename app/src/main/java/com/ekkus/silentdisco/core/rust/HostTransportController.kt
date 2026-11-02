@@ -100,16 +100,16 @@ class HostTransportController(
                 shouldReplace = {
                     sessionGeneration.isCurrent(requestedGeneration) && stillRequested()
                 },
-            retire = ::retireHandle,
-            open = {
-                bindHandle(
-                    localAddress,
-                    controlPort.toUShort(),
-                    syncPort.toUShort(),
-                    audioPort.toUShort(),
-                    sessionId,
-                )
-            },
+                retire = ::retireHandle,
+                open = {
+                    bindHandle(
+                        localAddress,
+                        controlPort.toUShort(),
+                        syncPort.toUShort(),
+                        audioPort.toUShort(),
+                        sessionId,
+                    )
+                },
                 start = { handle ->
                     // Old-session events must not occupy the new session's bounded queue.
                     eventQueue.discardRetiredEvents()
