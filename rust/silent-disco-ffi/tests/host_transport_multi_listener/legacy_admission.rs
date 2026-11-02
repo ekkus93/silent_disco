@@ -253,11 +253,15 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
     host.shutdown().expect("close host");
 }
 
-/// The Android host receives the original TCP source with each JoinRequest.
+/// The Android host receives the original TCP source with each `JoinRequest`.
 /// Refusing a duplicate by claimed ID alone is ambiguous; address-bound
 /// rejection must retire only the offending generation, leaving the original
 /// listener eligible for admission and exact PCM delivery.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one real-socket duplicate-ID refusal and independent admission regression"
+)]
 fn duplicate_claimed_id_refusal_targets_only_its_tcp_generation() {
     let (control_port, sync_port, audio_port) = available_host_ports();
     let session = "ffi-duplicate-refusal";
