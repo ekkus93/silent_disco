@@ -313,7 +313,7 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
     assert_eq!(replay_start_delivery.report.successful_peers, 1);
     let replay_start_event = handle.poll_event(1_000).expect("replay start poll");
     assert!(matches!(
-        replay_start_event,
+        &replay_start_event,
         Some(super::FfiListenerTransportEvent::StreamStarted { stream_id, .. })
             if stream_id == replay_stream.as_str()
     ), "unexpected replay control event: {replay_start_event:?}");
