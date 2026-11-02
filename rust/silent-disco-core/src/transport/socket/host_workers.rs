@@ -20,12 +20,12 @@ use super::super::{
 use super::host::{PeerRoute, PeerState};
 #[path = "host_worker_startup.rs"]
 mod startup;
-use startup::rollback_failed_peer_start;
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
     reap_finished_workers, send_authoritative_event, send_authoritative_event_bounded, send_event,
     shutdown_stream, spawn_control_writer,
 };
+use startup::rollback_failed_peer_start;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_accept_loop(
@@ -229,8 +229,14 @@ fn register_peer(
     )
     .map_err(|error| {
         rollback_failed_peer_start(
-            &peer, peers, event_sender, global_stop, counters, clock.now(),
-            config.operation_timeout, &error,
+            &peer,
+            peers,
+            event_sender,
+            global_stop,
+            counters,
+            clock.now(),
+            config.operation_timeout,
+            &error,
         );
         error
     })?;
@@ -298,6 +304,7 @@ fn register_peer(
                                     // retransmitted JoinRequest must not create
                                     // another host-actor approval or enrollment.
                                     // A rejected first delivery closes this
+
                                     // connection; a fresh TCP generation may
                                     // submit a new request.
                                     true
@@ -598,6 +605,7 @@ pub(super) fn spawn_udp_receiver(
                                         TransportErrorKind::Protocol,
                                         channel,
                                         "datagram exceeded the maximum supported size",
+
                                     ),
                                     received_at: clock.now(),
                                 },
@@ -616,7 +624,6 @@ pub(super) fn spawn_udp_receiver(
                                     }
                                 };
                                 (expected == source
-
                                     && route.peer.active.load(Ordering::Acquire)
                                     && route.peer.authorized.load(Ordering::Acquire))
                                 .then(|| (device_id.clone(), route.peer.clone()))
@@ -772,3 +779,4 @@ const fn session_id_address() -> std::net::IpAddr {
 #[cfg(test)]
 #[path = "host_worker_admission_pressure_tests.rs"]
 mod admission_pressure_tests;
+
