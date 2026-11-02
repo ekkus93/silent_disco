@@ -85,6 +85,7 @@ class ManualListenerTransportController(
     /** Held for the connection's lifetime; null when the platform provides none. */
     private val networkSessionLock: NetworkSessionLock? = null,
 ) : AutoCloseable {
+    private val lifetime = ManualListenerLifetime()
     internal val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
     internal fun <T> withManualHandle(
         expected: FfiListenerTransportHandle,
@@ -143,12 +144,16 @@ class ManualListenerTransportController(
         displayName: String,
         inviteCode: String?,
     ) {
+        lifetime.ensureOpen()
         withContext(Dispatchers.IO) {
+            // A queued connect must not resurrect a native socket after close.
+            if (!lifetime.isOpen()) return@withContext
             // Stop any stream still running before tearing down its
             // transport: a failed reconnect otherwise leaves the previous
             // stream audibly playing behind a "connection failed" message.
             if (stopPlayback() != null) return@withContext
             if (closeExistingHandle() != null) return@withContext
+            if (!lifetime.isOpen()) return@withContext
             // Before the socket connect, not after approval: power-save
             // latency also poisons the first clock-sync exchanges, and those
             // begin the moment the connection is up.
@@ -156,6 +161,12 @@ class ManualListenerTransportController(
                 networkSessionLock?.acquire()
             } catch (error: RuntimeException) {
                 logger.w("manual.network_lock", "acquire failed: ${error.message}")
+            }
+            // Close may have run while the network lock was being acquired.
+            // Its release is idempotent, including when close already released it.
+            if (!lifetime.isOpen()) {
+                closeExistingHandle()
+                return@withContext
             }
             _connectState.value = ManualConnectUiState.Connecting
             val endpoint = try {
@@ -165,11 +176,17 @@ class ManualListenerTransportController(
                 closeExistingHandle() // release network lock after failed parse
                 return@withContext
             }
+            if (!lifetime.isOpen()) {
+                closeExistingHandle()
+                return@withContext
+            }
             sessionId = SessionId(endpoint.sessionId)
             protocolVersion = endpoint.protocolVersion.toInt()
             try {
-                // Bind, Join and poller startup share one native lifetime gate.
-                handleGate.replace(
+                // The terminal predicate is evaluated *under* the native gate:
+                // a delayed IO bind cannot replace a closed controller.
+                val bound = handleGate.replaceIf(
+                    shouldReplace = lifetime::isOpen,
                     retire = ::retireManualHandle,
                     open = {
                         FfiListenerTransportHandle.connect(
@@ -181,7 +198,9 @@ class ManualListenerTransportController(
                         startEventLoop(scope, handle)
                     },
                 )
+                if (!bound) return@withContext
             } catch (error: Exception) {
+                if (!lifetime.isOpen()) return@withContext
                 val cleanup = closeExistingHandle()
                 if (cleanup != null && cleanup !== error) error.addSuppressed(cleanup)
                 _connectState.value = ManualConnectUiState.Failed(error.message ?: "connection failed")
@@ -205,6 +224,7 @@ class ManualListenerTransportController(
     }
 
     fun reset() {
+        if (!lifetime.isOpen()) return
         eventLoop?.cancel()
         eventLoop = null
         val playbackFailure = stopPlayback()
@@ -215,6 +235,9 @@ class ManualListenerTransportController(
     }
 
     override fun close() {
+        // Terminal even when native cleanup fails; repeated close cannot
+        // reopen output or retry releasing an already-retired UniFFI handle.
+        if (!lifetime.closeOnce()) return
         eventLoop?.cancel()
         eventLoop = null
         val playbackFailure = stopPlayback()
