@@ -214,12 +214,9 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
                 (i16::try_from(sequence).expect("bounded") + 1) * 4_096
             };
             let left = f32::from(amplitude) / 32_768.0;
+            let right = f32::from(-amplitude) / 32_768.0;
             assert_eq!(stereo[0].to_bits(), left.to_bits(), "left sample {index}");
-            assert_eq!(
-                stereo[1].to_bits(),
-                (-left).to_bits(),
-                "right sample {index}"
-            );
+            assert_eq!(stereo[1].to_bits(), right.to_bits(), "right sample {index}");
         }
         consumed += u64::from(frames);
         calls += 1;
