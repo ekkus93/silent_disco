@@ -659,7 +659,7 @@ fn disconnected_peer_during_queued_authorization_cannot_leave_a_ghost_route() {
     host.event_sender
         .try_send(TransportEvent::PeerAccepted {
             peer: pending.transport_peer(),
-            received_at: clock.now(),
+            received_at: MonotonicMillis::new(0),
         })
         .expect("fill bounded actor queue");
     let (_, empty_receiver) = sync_channel(1);
@@ -671,7 +671,11 @@ fn disconnected_peer_during_queued_authorization_cannot_leave_a_ghost_route() {
             assert!(Instant::now() < deadline, "authorization never staged its route");
             thread::yield_now();
         }
-        retiring.close().expect("disconnect pending TCP generation");
+        // Model the real TCP reader's terminal transition at the precise
+        // point authorization is blocked. Delaying socket shutdown keeps
+        // its separate PeerDisconnected notification from racing the test's
+        // single queued PeerAuthorized slot.
+        retiring.active.store(false, Ordering::Release);
         receiver
             .recv_timeout(Duration::from_secs(5))
             .expect("drain blocked actor event");
@@ -689,6 +693,7 @@ fn disconnected_peer_during_queued_authorization_cannot_leave_a_ghost_route() {
         !host.routes.lock().expect("routes").contains_key(&device_id),
         "a dead generation must not retain its provisional UDP authorization"
     );
+    pending.close().expect("retire disconnected TCP socket");
     let _ = listener.shutdown();
     host.shutdown().expect("shutdown host");
 }
