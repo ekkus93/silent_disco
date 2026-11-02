@@ -352,14 +352,21 @@ fn blocked_pcm_and_reanchor_cannot_mutate_scheduler_after_stop_begins() {
         started_tx.send(()).expect("anchor worker ready");
         anchor_runtime.reanchor_presentation_time(123_456)
     });
-    started_rx.recv_timeout(Duration::from_secs(5)).expect("packet started");
-    started_rx.recv_timeout(Duration::from_secs(5)).expect("anchor started");
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("packet started");
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("anchor started");
 
     let stopping_runtime = Arc::clone(&runtime);
     let stopping = thread::spawn(move || stopping_runtime.stop());
     let deadline = Instant::now() + Duration::from_secs(5);
     while !runtime.stopped.load(Ordering::SeqCst) {
-        assert!(Instant::now() < deadline, "stop never established terminal fence");
+        assert!(
+            Instant::now() < deadline,
+            "stop never established terminal fence"
+        );
         thread::yield_now();
     }
     // Both workers may have passed the old pre-lock running check. They
@@ -373,9 +380,15 @@ fn blocked_pcm_and_reanchor_cannot_mutate_scheduler_after_stop_begins() {
         anchor.join().expect("anchor worker"),
         Err(ListenerPlaybackError::Stopped(_))
     ));
-    stopping.join().expect("stop worker").expect("stop succeeds");
+    stopping
+        .join()
+        .expect("stop worker")
+        .expect("stop succeeds");
     assert_eq!(
-        runtime.final_diagnostics().expect("stop accounting").packets_accepted,
+        runtime
+            .final_diagnostics()
+            .expect("stop accounting")
+            .packets_accepted,
         0,
         "retired PCM must never enter the scheduler"
     );

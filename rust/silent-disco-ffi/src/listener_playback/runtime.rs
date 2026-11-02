@@ -71,13 +71,13 @@ pub(crate) struct PumpLiveness {
 /// handled but is not the intended path.
 #[derive(Debug)]
 pub struct ListenerPlaybackRuntime {
-    shared: Arc<Shared>,
+    pub(super) shared: Arc<Shared>,
     clock: Arc<PumpClock>,
     token: u64,
     pump_thread: Mutex<Option<JoinHandle<()>>>,
     /// Lifecycle stop is separate from `Shared::running`: a worker may stop
     /// itself after a contained failure and still require explicit cleanup.
-    stopped: AtomicBool,
+    pub(super) stopped: AtomicBool,
     /// Diagnostics captured at stop, so a stream's final accounting survives
     /// the teardown that produced it.
     last_diagnostics: Mutex<Option<PlaybackDiagnostics>>,
@@ -333,7 +333,8 @@ impl ListenerPlaybackRuntime {
     ) -> Result<(), ListenerPlaybackError> {
         let mut estimator = self.shared.lock_estimator();
         self.ensure_running()?;
-        estimator.begin_probe(
+        estimator
+            .begin_probe(
                 SyncCorrelationId::new(correlation_id),
                 LocalMonotonicMillis::new(local_send_time_ms),
             )
@@ -363,14 +364,15 @@ impl ListenerPlaybackRuntime {
         let observation = {
             let mut estimator = self.shared.lock_estimator();
             self.ensure_running()?;
-            estimator.observe_response(
-                SyncCorrelationId::new(correlation_id),
-                LocalMonotonicMillis::new(echoed_local_send_time_ms),
-                HostMonotonicMillis::new(host_receive_time_ms),
-                HostMonotonicMillis::new(host_send_time_ms),
-                LocalMonotonicMillis::new(local_receive_time_ms),
-            )
-            .map_err(|error| ListenerPlaybackError::Sync(format!("{error:?}")))?
+            estimator
+                .observe_response(
+                    SyncCorrelationId::new(correlation_id),
+                    LocalMonotonicMillis::new(echoed_local_send_time_ms),
+                    HostMonotonicMillis::new(host_receive_time_ms),
+                    HostMonotonicMillis::new(host_send_time_ms),
+                    LocalMonotonicMillis::new(local_receive_time_ms),
+                )
+                .map_err(|error| ListenerPlaybackError::Sync(format!("{error:?}")))?
         };
 
         let snapshot = observation.snapshot;
