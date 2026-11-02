@@ -175,7 +175,10 @@ fn host_transport_completes_join_request_through_approval_and_disconnect() {
             audio_port,
         } => {
             assert_eq!(
-                control_address.parse::<std::net::SocketAddr>().expect("TCP source").ip(),
+                control_address
+                    .parse::<std::net::SocketAddr>()
+                    .expect("TCP source")
+                    .ip(),
                 std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
             );
             assert_eq!(device_id, "listener-device");

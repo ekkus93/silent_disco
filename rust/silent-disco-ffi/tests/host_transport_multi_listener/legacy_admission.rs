@@ -253,7 +253,6 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
     host.shutdown().expect("close host");
 }
 
-
 /// The Android host receives the original TCP source with each JoinRequest.
 /// Refusing a duplicate by claimed ID alone is ambiguous; address-bound
 /// rejection must retire only the offending generation, leaving the original
@@ -263,51 +262,88 @@ fn duplicate_claimed_id_refusal_targets_only_its_tcp_generation() {
     let (control_port, sync_port, audio_port) = available_host_ports();
     let session = "ffi-duplicate-refusal";
     let host = FfiHostTransportHandle::bind(
-        HOST_ADDRESS.to_owned(), control_port, sync_port, audio_port, session.to_owned(),
-    ).expect("bind host");
+        HOST_ADDRESS.to_owned(),
+        control_port,
+        sync_port,
+        audio_port,
+        session.to_owned(),
+    )
+    .expect("bind host");
     let endpoint = manual_endpoint_payload(control_port, sync_port, audio_port, session);
     let first = FfiListenerTransportHandle::connect(
-        endpoint.clone(), now_wall_clock_ms(), "shared-id".to_owned(), HOST_ADDRESS.to_owned(),
-    ).expect("connect first listener");
+        endpoint.clone(),
+        now_wall_clock_ms(),
+        "shared-id".to_owned(),
+        HOST_ADDRESS.to_owned(),
+    )
+    .expect("connect first listener");
     let duplicate = FfiListenerTransportHandle::connect(
-        endpoint, now_wall_clock_ms(), "shared-id".to_owned(), HOST_ADDRESS.to_owned(),
-    ).expect("connect duplicate listener");
+        endpoint,
+        now_wall_clock_ms(),
+        "shared-id".to_owned(),
+        HOST_ADDRESS.to_owned(),
+    )
+    .expect("connect duplicate listener");
 
-    first.send_join_request("Original".to_owned(), None).expect("first join");
+    first
+        .send_join_request("Original".to_owned(), None)
+        .expect("first join");
     let first_address = match poll_host_until(&host, |event| {
         matches!(event, FfiHostTransportEvent::JoinRequestReceived { .. })
     }) {
-        FfiHostTransportEvent::JoinRequestReceived { control_address, device_id, .. } => {
+        FfiHostTransportEvent::JoinRequestReceived {
+            control_address,
+            device_id,
+            ..
+        } => {
             assert_eq!(device_id, "shared-id");
             control_address
         }
         other => panic!("unexpected first join: {other:?}"),
     };
-    duplicate.send_join_request("Duplicate".to_owned(), None).expect("duplicate join");
+    duplicate
+        .send_join_request("Duplicate".to_owned(), None)
+        .expect("duplicate join");
     let duplicate_address = match poll_host_until(&host, |event| {
         matches!(event, FfiHostTransportEvent::JoinRequestReceived { .. })
     }) {
-        FfiHostTransportEvent::JoinRequestReceived { control_address, device_id, .. } => {
+        FfiHostTransportEvent::JoinRequestReceived {
+            control_address,
+            device_id,
+            ..
+        } => {
             assert_eq!(device_id, "shared-id");
             control_address
         }
         other => panic!("unexpected duplicate join: {other:?}"),
     };
     assert_ne!(first_address, duplicate_address, "distinct TCP generations");
-    assert!(matches!(
-        host.send_join_rejection("shared-id".to_owned(), "host_busy".to_owned()),
-        Err(FfiHostTransportError::Unauthorized(_))
-    ), "ID-only rejection must fail closed for duplicate claims");
-    assert!(matches!(
-        host.reject_pending_peer_at(
-            "127.0.0.1:1".to_owned(), "shared-id".to_owned(), "host_busy".to_owned()
+    assert!(
+        matches!(
+            host.send_join_rejection("shared-id".to_owned(), "host_busy".to_owned()),
+            Err(FfiHostTransportError::Unauthorized(_))
         ),
-        Err(FfiHostTransportError::Unauthorized(_))
-    ), "unrelated TCP address must not reject either listener");
+        "ID-only rejection must fail closed for duplicate claims"
+    );
+    assert!(
+        matches!(
+            host.reject_pending_peer_at(
+                "127.0.0.1:1".to_owned(),
+                "shared-id".to_owned(),
+                "host_busy".to_owned()
+            ),
+            Err(FfiHostTransportError::Unauthorized(_))
+        ),
+        "unrelated TCP address must not reject either listener"
+    );
     assert_eq!(
         host.reject_pending_peer_at(
-            duplicate_address, "shared-id".to_owned(), "host_busy".to_owned()
-        ).expect("targeted refusal").successful_peers,
+            duplicate_address,
+            "shared-id".to_owned(),
+            "host_busy".to_owned()
+        )
+        .expect("targeted refusal")
+        .successful_peers,
         1
     );
     assert!(matches!(
@@ -318,22 +354,33 @@ fn duplicate_claimed_id_refusal_targets_only_its_tcp_generation() {
     ));
     assert_eq!(
         host.send_join_approval("shared-id".to_owned(), false)
-            .expect("original pending listener remains approvable").successful_peers,
+            .expect("original pending listener remains approvable")
+            .successful_peers,
         1
     );
     assert!(matches!(
         poll_listener_until(&first, |event| matches!(
-            event, FfiListenerTransportEvent::JoinApproved { .. }
+            event,
+            FfiListenerTransportEvent::JoinApproved { .. }
         )),
-        FfiListenerTransportEvent::JoinApproved { trusted_for_future: false }
+        FfiListenerTransportEvent::JoinApproved {
+            trusted_for_future: false
+        }
     ));
     // The original pending TCP generation still owns its admission; the
     // rejected duplicate must never receive the subsequent stream controls.
     assert_eq!(
         host.broadcast_stream_start(
-            "first-stream".to_owned(), 1_000, 48_000, 2, 240,
-            Some("first".to_owned()), Some("First".to_owned())
-        ).expect("broadcast before UDP authorization").successful_peers,
+            "first-stream".to_owned(),
+            1_000,
+            48_000,
+            2,
+            240,
+            Some("first".to_owned()),
+            Some("First".to_owned())
+        )
+        .expect("broadcast before UDP authorization")
+        .successful_peers,
         0
     );
     first.shutdown().expect("first shutdown");

@@ -185,6 +185,10 @@ impl FfiHostTransportHandle {
     /// Refuses only the pending TCP connection that submitted this join.
     /// A self-declared device ID can be duplicated, so a refusal for a
     /// congested/unprojected join must never be routed by ID alone.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "uniffi::export requires owned String parameters at the foreign boundary"
+    )]
     pub fn reject_pending_peer_at(
         &self,
         control_address: String,
@@ -203,9 +207,10 @@ impl FfiHostTransportHandle {
                 listener_id: listener_id.clone(),
                 reason,
             });
-            let delivery = inner
-                .transport
-                .reject_pending_peer_at(address, &listener_id, &message)?;
+            let delivery =
+                inner
+                    .transport
+                    .reject_pending_peer_at(address, &listener_id, &message)?;
             Ok(delivery_from(delivery))
         })
     }
