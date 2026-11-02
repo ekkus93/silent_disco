@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -22,6 +23,12 @@ private const val POLL_TIMEOUT_MS: ULong = 500uL
 /** Narrow reusable listener-transport port used by the discovered-session effect runner. */
 interface ListenerTransport : AutoCloseable {
     val events: Flow<FfiListenerTransportEvent>
+
+    /** Fakes retain their ordinary event stream; the native implementation
+     * validates socket generation immediately before actor/UI projection. */
+    suspend fun collectCurrentEvents(consumer: suspend (FfiListenerTransportEvent) -> Unit) {
+        events.collect { consumer(it) }
+    }
 
     suspend fun connect(
         scope: CoroutineScope,
@@ -67,14 +74,16 @@ class ListenerTransportController : ListenerTransport {
     )
 
     override val events: Flow<FfiListenerTransportEvent> = eventQueue.events
-    // The ViewModel must retain this native generation across the collector
-    // handoff: an old Stop/approval can already be dequeued when Leave/rebind
-    // replaces the socket. Checking only inside the queue is insufficient.
-    internal val eventsWithGeneration: Flow<TransportGenerationEvent<FfiListenerTransportHandle, FfiListenerTransportEvent>> =
-        eventQueue.eventsWithGeneration
-
-    internal fun isCurrentGeneration(handle: FfiListenerTransportHandle): Boolean =
-        handleGate.currentHandle() === handle
+    // A dequeued Stop/approval may become stale before the ViewModel acts.
+    // Keep the generation guard at the final consumer handoff while preserving
+    // the ListenerTransport abstraction used by test doubles.
+    override suspend fun collectCurrentEvents(consumer: suspend (FfiListenerTransportEvent) -> Unit) {
+        eventQueue.eventsWithGeneration.collect { delivery ->
+            if (handleGate.currentHandle() === delivery.handle) {
+                consumer(delivery.event)
+            }
+        }
+    }
 
     /** Best-effort PCM notifications dropped when a slow collector exhausted capacity. */
     val droppedAudioEvents: Long get() = eventQueue.droppedBestEffort
