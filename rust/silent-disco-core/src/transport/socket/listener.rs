@@ -209,6 +209,13 @@ impl ListenerTransportNode for SocketListenerTransport {
     }
 
     fn send_control(&self, message: &ControlMessage) -> Result<TransportDelivery, TransportError> {
+        if self.stop.load(Ordering::Acquire) {
+            return Err(TransportError::new(
+                TransportErrorKind::ShuttingDown,
+                TransportChannel::Control,
+                "listener control connection is retired",
+            ));
+        }
         if message.session_id() != &self.config.session_id {
             return Err(TransportError::new(
                 TransportErrorKind::Unauthorized,
@@ -224,7 +231,13 @@ impl ListenerTransportNode for SocketListenerTransport {
                 TransportDelivery::new(1, 1, 0, u64::try_from(written).unwrap_or(u64::MAX))
             }
             Err(error) => {
+                // A timed-out control may already be in the kernel writer.
+                // Retire this TCP generation rather than allowing a late Join,
+                // Disconnect or Resync to arrive after the caller saw failure.
+                // A fresh listener transport is required for retry.
                 self.counters.delivery_failure();
+                self.stop.store(true, Ordering::Release);
+                drop(shutdown_stream(&self.control_stream));
                 Err(error)
             }
         }
@@ -234,6 +247,14 @@ impl ListenerTransportNode for SocketListenerTransport {
         &self,
         request: &SyncRequest,
     ) -> Result<TransportDelivery, TransportError> {
+        // UDP clock probes must not escape a retired TCP admission generation.
+        if self.stop.load(Ordering::Acquire) {
+            return Err(TransportError::new(
+                TransportErrorKind::ShuttingDown,
+                TransportChannel::Synchronization,
+                "listener control connection is retired",
+            ));
+        }
         if request.session_id != self.config.session_id {
             return Err(TransportError::new(
                 TransportErrorKind::Unauthorized,
@@ -676,3 +697,7 @@ fn listener_datagram_matches(channel: TransportChannel, frame: &ProtocolFrame) -
         ) | (TransportChannel::Audio, ProtocolFrame::Audio(_))
     )
 }
+
+#[cfg(test)]
+#[path = "listener/failed_control_delivery_tests.rs"]
+mod failed_control_delivery_tests;
