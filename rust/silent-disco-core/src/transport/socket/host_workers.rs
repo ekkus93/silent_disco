@@ -247,7 +247,6 @@ fn register_peer(
     let routes_for_reader = routes.clone();
     let event_for_reader = event_sender.clone();
     let clock_for_reader = clock.clone();
-
     let reader_peer = peer.clone();
     let io_timeout = config.io_timeout;
     let join_timeout = config.operation_timeout;
@@ -498,7 +497,6 @@ fn forward_join_or_refuse<T>(
             false
         }
     }
-
 }
 
 fn validate_host_frame(peer: &PeerState, frame: &ProtocolFrame) -> Result<(), TransportError> {
@@ -749,7 +747,6 @@ pub(super) fn spawn_udp_receiver(
 fn datagram_matches_channel(channel: TransportChannel, frame: &ProtocolFrame) -> bool {
     matches!(
         (channel, frame),
-
         (
             TransportChannel::Synchronization,
             ProtocolFrame::SyncRequest(_)
