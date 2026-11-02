@@ -51,7 +51,7 @@ internal fun MainViewModel.handleHostTransportEvent(
                 // The TCP reader already accepted this join. If the Rust
                 // actor cannot ingest it, leaving the peer pending would
                 // strand its approval spinner indefinitely.
-                refuseUnprojectedHostJoin(event.deviceId, sourceHandle)
+                refuseUnprojectedHostJoin(event.deviceId, event.controlAddress, sourceHandle)
             }
         }
         is FfiHostTransportEvent.PeerDisconnected -> event.listenerId?.let { listenerId ->

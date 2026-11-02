@@ -145,7 +145,18 @@ class HostTransportController(
     suspend fun sendJoinRejection(listenerId: String, reason: String): FfiHostTransportDelivery? =
         withHandle { it.sendJoinRejection(listenerId, reason) }
 
-    /** Never reject a replacement session's same-ID listener for an old actor request. */
+    /** Actor decisions retain their original native host generation. ID-only
+     * delivery fails closed if two pending TCP connections claim that ID. */
+    internal suspend fun sendJoinRejectionForGeneration(
+        expected: FfiHostTransportHandle,
+        listenerId: String,
+        reason: String,
+    ): FfiHostTransportDelivery? = withContext(callDispatcher) {
+        handleGate.withExpected(expected) { it.sendJoinRejection(listenerId, reason) }
+    }
+
+    /** An unprojected join has no actor request ID. Reject its exact TCP
+     * generation, not an unrelated pending listener claiming the same ID. */
     internal suspend fun sendJoinRejectionForGeneration(
         expected: FfiHostTransportHandle,
         listenerId: String,
