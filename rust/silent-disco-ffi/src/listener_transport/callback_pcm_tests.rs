@@ -290,11 +290,16 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         volume: 1.0,
     })
     .expect("open replay callback runtime");
-    replay.lock_same_process_host_clock(0).expect("lock replay clock");
+    replay
+        .lock_same_process_host_clock(0)
+        .expect("lock replay clock");
     let replay_token = replay.engine_token();
-    assert_ne!(replay_token, original_token, "replay must have a new engine");
+    assert_ne!(
+        replay_token, original_token,
+        "replay must have a new engine"
+    );
     handle.attach_playback(Arc::clone(&replay));
-    host.broadcast_control(&ControlMessage::StreamStart(StreamStart {
+    let replay_start_delivery = host.broadcast_control(&ControlMessage::StreamStart(StreamStart {
         session_id: session.clone(),
         stream_id: replay_stream.clone(),
         host_start_time_ms: MonotonicMillis::new(START_MS),
@@ -305,11 +310,13 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         current_display_name: Some("Replay".to_owned()),
     }))
     .expect("broadcast replay start");
+    assert_eq!(replay_start_delivery.report.successful_peers, 1);
+    let replay_start_event = handle.poll_event(1_000).expect("replay start poll");
     assert!(matches!(
-        handle.poll_event(1_000).expect("replay start poll"),
+        replay_start_event,
         Some(super::FfiListenerTransportEvent::StreamStarted { stream_id, .. })
             if stream_id == replay_stream.as_str()
-    ));
+    ), "unexpected replay control event: {replay_start_event:?}");
     let replay_pcm = [12_288_i16, -12_288_i16]
         .into_iter()
         .cycle()
@@ -329,7 +336,12 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         payload: replay_pcm,
     }))
     .expect("broadcast replay PCM");
-    assert!(handle.poll_event(500).expect("forward replay PCM").is_none());
+    assert!(
+        handle
+            .poll_event(500)
+            .expect("forward replay PCM")
+            .is_none()
+    );
     assert_eq!(handle.forwarded_audio_count(), 5);
     let deadline = Instant::now() + Duration::from_secs(5);
     let replay_prefill = loop {
@@ -339,16 +351,22 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         {
             break state.prefill_frames;
         }
-        assert!(Instant::now() < deadline, "replay PCM did not reach native ring: {state:?}");
+        assert!(
+            Instant::now() < deadline,
+            "replay PCM did not reach native ring: {state:?}"
+        );
         std::thread::sleep(Duration::from_millis(5));
     };
-    let replay_engine = usize::try_from(replay_token).expect("replay token fits pointer")
-        as *mut core::ffi::c_void;
-    let mut prefill = vec![f32::NAN; replay_prefill as usize * 2];
+    let replay_engine =
+        usize::try_from(replay_token).expect("replay token fits pointer") as *mut core::ffi::c_void;
+    let mut prefill = vec![f32::NAN; usize::try_from(replay_prefill).expect("bounded prefill") * 2];
     let mut prefill_supplied = 0;
     assert_eq!(
         silent_disco_audio_read_interleaved_f32(
-            replay_engine, prefill.as_mut_ptr(), replay_prefill as u32, 2,
+            replay_engine,
+            prefill.as_mut_ptr(),
+            u32::try_from(replay_prefill).expect("bounded prefill"),
+            2,
             &raw mut prefill_supplied,
         ),
         0
@@ -359,7 +377,10 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
     let mut replay_supplied = 0;
     assert_eq!(
         silent_disco_audio_read_interleaved_f32(
-            replay_engine, replay_output.as_mut_ptr(), PACKET_FRAMES, 2,
+            replay_engine,
+            replay_output.as_mut_ptr(),
+            PACKET_FRAMES,
+            2,
             &raw mut replay_supplied,
         ),
         0
@@ -367,15 +388,21 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
     assert_eq!(replay_supplied, PACKET_FRAMES);
     for (frame, stereo) in replay_output.chunks_exact(2).enumerate() {
         let shaped = if frame < DEFAULT_CONCEALMENT_RAMP_MS as usize * 48 {
-            12_288_i64 * frame as i64 / (DEFAULT_CONCEALMENT_RAMP_MS as i64 * 48)
+            12_288_i64 * i64::try_from(frame).expect("bounded frame")
+                / (i64::from(DEFAULT_CONCEALMENT_RAMP_MS) * 48)
         } else {
             12_288
         };
-        let expected = shaped as f32 / 32_768.0;
-        assert_eq!(stereo[0].to_bits(), expected.to_bits(), "replay left {frame}");
+        let shaped = i16::try_from(shaped).expect("replay PCM16 amplitude");
+        let expected = f32::from(shaped) / 32_768.0;
+        assert_eq!(
+            stereo[0].to_bits(),
+            expected.to_bits(),
+            "replay left {frame}"
+        );
         assert_eq!(
             stereo[1].to_bits(),
-            (f32::from(-(shaped as i16)) / 32_768.0).to_bits(),
+            (f32::from(-shaped) / 32_768.0).to_bits(),
             "replay right {frame}"
         );
     }
@@ -383,7 +410,11 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
     // is actively returning PCM to a native callback.
     assert_eq!(
         silent_disco_audio_read_interleaved_f32(
-            engine, output.as_mut_ptr(), 1, 2, &raw mut supplied,
+            engine,
+            output.as_mut_ptr(),
+            1,
+            2,
+            &raw mut supplied,
         ),
         2
     );
