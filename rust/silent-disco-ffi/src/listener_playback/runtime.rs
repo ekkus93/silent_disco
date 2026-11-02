@@ -178,13 +178,17 @@ impl ListenerPlaybackRuntime {
     /// Returns [`ListenerPlaybackError::Stopped`] once the runtime has been
     /// stopped.
     pub fn submit_packet(&self, datagram: AudioDatagram) -> Result<(), ListenerPlaybackError> {
-        self.ensure_running()?;
         // A rejected packet is ordinary, expected traffic (a duplicate, a late
         // arrival, an out-of-window reorder) that the jitter buffer counts;
         // it is not a runtime failure. Routed through the pump rather than
         // straight to the scheduler so packets arriving before sync locks are
         // dropped instead of overflowing the reorder window.
-        let _ = self.shared.lock_pump().submit_packet(datagram);
+        // Stop marks the runtime terminal before taking the pump lock. Check
+        // under that same lock so a sender parked behind Stop cannot submit
+        // to a finished scheduler after its earlier preflight passed.
+        let mut pump = self.shared.lock_pump();
+        self.ensure_running()?;
+        let _ = pump.submit_packet(datagram);
         Ok(())
     }
 
@@ -204,10 +208,9 @@ impl ListenerPlaybackRuntime {
         &self,
         host_start_time_ms: u64,
     ) -> Result<(), ListenerPlaybackError> {
+        let mut pump = self.shared.lock_pump();
         self.ensure_running()?;
-        self.shared
-            .lock_pump()
-            .scheduler_mut()
+        pump.scheduler_mut()
             .set_host_start_time_ms(host_start_time_ms);
         Ok(())
     }
@@ -225,8 +228,8 @@ impl ListenerPlaybackRuntime {
     /// created, and [`ListenerPlaybackError::Stopped`] once the runtime has
     /// been stopped.
     pub fn start_debug_capture(&self, path: &str) -> Result<(), ListenerPlaybackError> {
-        self.ensure_running()?;
         let mut pump = self.shared.lock_pump();
+        self.ensure_running()?;
         let sample_rate = pump.sample_rate();
         let recorder = DebugPcmRecorder::create(path, sample_rate, 2)
             .map_err(|error| ListenerPlaybackError::DebugCapture(error.to_string()))?;
@@ -295,10 +298,11 @@ impl ListenerPlaybackRuntime {
         &self,
         host_monotonic_now_ms: u64,
     ) -> Result<(), ListenerPlaybackError> {
-        self.ensure_running()?;
         let local_now_ms = self.now_ms();
         let offset_ms = host_monotonic_now_ms as f64 - local_now_ms as f64;
-        self.shared.lock_pump().apply_sync_offset(offset_ms);
+        let mut pump = self.shared.lock_pump();
+        self.ensure_running()?;
+        pump.apply_sync_offset(offset_ms);
         Ok(())
     }
 
@@ -309,10 +313,9 @@ impl ListenerPlaybackRuntime {
     /// Returns [`ListenerPlaybackError::InvalidConfiguration`] for a non-finite
     /// or out-of-range gain, and [`ListenerPlaybackError::Stopped`] once stopped.
     pub fn set_volume(&self, volume: f32) -> Result<(), ListenerPlaybackError> {
+        let mut pump = self.shared.lock_pump();
         self.ensure_running()?;
-        self.shared
-            .lock_pump()
-            .set_volume(volume)
+        pump.set_volume(volume)
             .map_err(|error| ListenerPlaybackError::InvalidConfiguration(error.message))
     }
 
@@ -328,10 +331,9 @@ impl ListenerPlaybackRuntime {
         correlation_id: u64,
         local_send_time_ms: u64,
     ) -> Result<(), ListenerPlaybackError> {
+        let mut estimator = self.shared.lock_estimator();
         self.ensure_running()?;
-        self.shared
-            .lock_estimator()
-            .begin_probe(
+        estimator.begin_probe(
                 SyncCorrelationId::new(correlation_id),
                 LocalMonotonicMillis::new(local_send_time_ms),
             )
@@ -358,23 +360,24 @@ impl ListenerPlaybackRuntime {
         host_send_time_ms: u64,
         local_receive_time_ms: u64,
     ) -> Result<SyncSampleOutcome, ListenerPlaybackError> {
-        self.ensure_running()?;
-        let observation = self
-            .shared
-            .lock_estimator()
-            .observe_response(
+        let observation = {
+            let mut estimator = self.shared.lock_estimator();
+            self.ensure_running()?;
+            estimator.observe_response(
                 SyncCorrelationId::new(correlation_id),
                 LocalMonotonicMillis::new(echoed_local_send_time_ms),
                 HostMonotonicMillis::new(host_receive_time_ms),
                 HostMonotonicMillis::new(host_send_time_ms),
                 LocalMonotonicMillis::new(local_receive_time_ms),
             )
-            .map_err(|error| ListenerPlaybackError::Sync(format!("{error:?}")))?;
+            .map_err(|error| ListenerPlaybackError::Sync(format!("{error:?}")))?
+        };
 
         let snapshot = observation.snapshot;
         let mut sync_locked = self.shared.lock_pump().is_sync_locked();
         if observation.accepted {
             let mut pump = self.shared.lock_pump();
+            self.ensure_running()?;
             pump.apply_sync_offset(snapshot.offset_ms);
             sync_locked = pump.is_sync_locked();
         }

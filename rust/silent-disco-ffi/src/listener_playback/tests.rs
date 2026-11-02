@@ -324,6 +324,63 @@ fn submitting_after_stop_is_an_explicit_failure_not_a_silent_no_op() {
     assert!(matches!(error, ListenerPlaybackError::Stopped(_)));
 }
 
+/// Stop must fence in-flight packet and timeline updates even when they
+/// were already queued behind the pump mutex before shutdown started.
+/// This is the same pump lock used by the production network PCM path.
+#[test]
+fn blocked_pcm_and_reanchor_cannot_mutate_scheduler_after_stop_begins() {
+    let _guard = registry_test_guard();
+    let runtime = Arc::new(
+        ListenerPlaybackRuntime::start(
+            scheduler_config(),
+            ring_config(),
+            PlaybackPumpConfig::default(),
+            0.0,
+        )
+        .expect("runtime starts"),
+    );
+    let pump_guard = runtime.shared.lock_pump();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let packet_runtime = Arc::clone(&runtime);
+    let packet_started = started_tx.clone();
+    let packet = thread::spawn(move || {
+        packet_started.send(()).expect("packet worker ready");
+        packet_runtime.submit_packet(datagram(0))
+    });
+    let anchor_runtime = Arc::clone(&runtime);
+    let anchor = thread::spawn(move || {
+        started_tx.send(()).expect("anchor worker ready");
+        anchor_runtime.reanchor_presentation_time(123_456)
+    });
+    started_rx.recv_timeout(Duration::from_secs(5)).expect("packet started");
+    started_rx.recv_timeout(Duration::from_secs(5)).expect("anchor started");
+
+    let stopping_runtime = Arc::clone(&runtime);
+    let stopping = thread::spawn(move || stopping_runtime.stop());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !runtime.stopped.load(Ordering::SeqCst) {
+        assert!(Instant::now() < deadline, "stop never established terminal fence");
+        thread::yield_now();
+    }
+    // Both workers may have passed the old pre-lock running check. They
+    // must recheck after acquiring the pump mutex and reject the old stream.
+    drop(pump_guard);
+    assert!(matches!(
+        packet.join().expect("packet worker"),
+        Err(ListenerPlaybackError::Stopped(_))
+    ));
+    assert!(matches!(
+        anchor.join().expect("anchor worker"),
+        Err(ListenerPlaybackError::Stopped(_))
+    ));
+    stopping.join().expect("stop worker").expect("stop succeeds");
+    assert_eq!(
+        runtime.final_diagnostics().expect("stop accounting").packets_accepted,
+        0,
+        "retired PCM must never enter the scheduler"
+    );
+}
+
 #[test]
 fn final_diagnostics_survive_the_teardown_that_produced_them() {
     let _guard = registry_test_guard();
