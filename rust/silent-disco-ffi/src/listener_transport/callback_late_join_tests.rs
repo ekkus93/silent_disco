@@ -62,11 +62,7 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         let device = DeviceId::new(*name).expect("device");
         let listener = SocketTransportFactory
             .connect_listener(
-                ListenerTransportConfig::loopback(
-                    session.clone(),
-                    device.clone(),
-                    host.endpoint(),
-                ),
+                ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
                 clock.clone(),
             )
             .expect("production listener TCP/UDP");
@@ -163,7 +159,10 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         handle.attach_playback(Arc::clone(&runtime));
         runtimes.push(runtime);
     }
-    let tokens: Vec<u64> = runtimes.iter().map(|runtime| runtime.engine_token()).collect();
+    let tokens: Vec<i64> = runtimes
+        .iter()
+        .map(|runtime| runtime.engine_token())
+        .collect();
     assert_ne!(tokens[0], tokens[1], "each listener owns its native output");
 
     for sequence in 0..2_u64 {
@@ -207,8 +206,7 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
         let prefill = loop {
             let state = runtime.diagnostics();
             if state.packets_emitted == 2
-                && state.ring_queued_frames
-                    >= state.prefill_frames + u64::from(PACKET_FRAMES) * 2
+                && state.ring_queued_frames >= state.prefill_frames + u64::from(PACKET_FRAMES) * 2
             {
                 break state.prefill_frames;
             }
@@ -257,7 +255,11 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
                 amplitude
             };
             let expected = f32::from(i16::try_from(shaped).expect("PCM16")) / 32_768.0;
-            assert_eq!(stereo[0].to_bits(), expected.to_bits(), "listener {index} left {frame}");
+            assert_eq!(
+                stereo[0].to_bits(),
+                expected.to_bits(),
+                "listener {index} left {frame}"
+            );
             assert_eq!(
                 stereo[1].to_bits(),
                 (-expected).to_bits(),
