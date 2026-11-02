@@ -226,14 +226,18 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         );
         if sequence == 1 {
             // TCP control and UDP PCM can be observed in either order.
-            // Drain both earlier packets before asserting the Pause fence.
-            assert!(
-                handle
-                    .poll_event(500)
-                    .expect("forward pre-pause PCM")
-                    .is_none()
-            );
-            assert_eq!(handle.forwarded_audio_count(), 2);
+            // Drain the two packets without an artificial 500 ms idle gap:
+            // the host's peer-liveness window must not expire during a test.
+            let pre_pause_deadline = Instant::now() + Duration::from_secs(1);
+            while handle.forwarded_audio_count() < 2 {
+                assert!(Instant::now() < pre_pause_deadline, "pre-pause PCM not forwarded");
+                assert!(
+                    handle
+                        .poll_event(20)
+                        .expect("forward pre-pause PCM")
+                        .is_none()
+                );
+            }
         }
     }
     assert!(handle.poll_event(500).expect("forward audio").is_none());
