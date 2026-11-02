@@ -230,7 +230,10 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
             // the host's peer-liveness window must not expire during a test.
             let pre_pause_deadline = Instant::now() + Duration::from_secs(1);
             while handle.forwarded_audio_count() < 2 {
-                assert!(Instant::now() < pre_pause_deadline, "pre-pause PCM not forwarded");
+                assert!(
+                    Instant::now() < pre_pause_deadline,
+                    "pre-pause PCM not forwarded"
+                );
                 assert!(
                     handle
                         .poll_event(20)
