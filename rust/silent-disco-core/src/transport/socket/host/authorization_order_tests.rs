@@ -610,3 +610,85 @@ fn stale_replay_controls_are_not_sent_to_live_authorized_listeners() {
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn disconnected_peer_during_queued_authorization_cannot_leave_a_ghost_route() {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::sync_channel;
+
+    let session_id = id_session("disconnect-during-authorization-publication");
+    let device_id = id_device("disconnect-during-publication-peer");
+    let clock = Arc::new(ManualTransportClock::new(0));
+    let mut config = HostTransportConfig::loopback(session_id.clone());
+    config.event_queue_capacity = 1;
+    config.operation_timeout = Duration::from_secs(3);
+    let mut host = SocketHostTransport::bind(config, clock.clone()).expect("bind host");
+    let mut listener = SocketTransportFactory
+        .connect_listener(
+            ListenerTransportConfig::loopback(
+                session_id.clone(),
+                device_id.clone(),
+                host.endpoint(),
+            ),
+            clock.clone(),
+        )
+        .expect("real TCP listener");
+    assert!(matches!(
+        host.recv_event(Duration::from_secs(5)).expect("peer accepted"),
+        TransportEvent::PeerAccepted { .. }
+    ));
+    listener
+        .send_control(&join_request(&session_id, &device_id, "Pending peer"))
+        .expect("send real join");
+    wait_for_control_from(&mut host, &device_id, |message| {
+        matches!(message, ControlMessage::JoinRequest(_))
+    });
+    let pending = host
+        .peers
+        .lock()
+        .expect("peer registry")
+        .values()
+        .find(|peer| peer.device_id().as_ref() == Some(&device_id))
+        .cloned()
+        .expect("pending TCP generation");
+
+    // Hold the actor's one available event slot so authorization publishes
+    // its provisional UDP route, then waits for notification capacity.
+    // The competing disconnect must retire that provisional route even if
+    // the actor resumes accepting events before the operation times out.
+    host.event_sender
+        .try_send(TransportEvent::PeerAccepted {
+            peer: pending.transport_peer(),
+            received_at: clock.now(),
+        })
+        .expect("fill bounded actor queue");
+    let (_, empty_receiver) = sync_channel(1);
+    let receiver = std::mem::replace(&mut host.event_receiver, empty_receiver);
+    let retiring = Arc::clone(&pending);
+    let drain = thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !retiring.authorized.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "authorization never staged its route");
+            thread::yield_now();
+        }
+        retiring.close().expect("disconnect pending TCP generation");
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("drain blocked actor event");
+        receiver
+    });
+
+    let result = host.authorize_peer(&device_id, listener.local_routes());
+    host.event_receiver = drain.join().expect("drain thread");
+    assert!(
+        result.is_err(),
+        "a disconnected generation must not complete admission after actor backpressure"
+    );
+    assert!(!pending.authorized.load(Ordering::Acquire));
+    assert!(
+        !host.routes.lock().expect("routes").contains_key(&device_id),
+        "a dead generation must not retain its provisional UDP authorization"
+    );
+    let _ = listener.shutdown();
+    host.shutdown().expect("shutdown host");
+}

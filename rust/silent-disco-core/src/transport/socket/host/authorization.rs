@@ -108,7 +108,11 @@ impl SocketHostTransport {
             },
             self.config.operation_timeout,
         );
-        if !published {
+        // The TCP reader can retire this generation while the bounded
+        // PeerAuthorized notification waits behind a stalled actor. Even if
+        // publication eventually succeeds, a disconnected peer must not
+        // retain an authorized UDP route or evict a still-live old route.
+        if !published || !peer.active.load(Ordering::Acquire) {
             peer.authorized.store(false, Ordering::Release);
             let mut registry = self.routes.lock().map_err(|_| {
                 TransportError::new(
@@ -136,11 +140,19 @@ impl SocketHostTransport {
             }
             drop(registry);
             drop(peer.close());
-            return Err(TransportError::new(
-                TransportErrorKind::QueueFull,
-                TransportChannel::Runtime,
-                "host admission event could not be delivered; listener authorization rolled back",
-            ));
+            return Err(if published {
+                TransportError::new(
+                    TransportErrorKind::PeerNotFound,
+                    TransportChannel::Control,
+                    "pending control peer disconnected while authorization was queued",
+                )
+            } else {
+                TransportError::new(
+                    TransportErrorKind::QueueFull,
+                    TransportChannel::Runtime,
+                    "host admission event could not be delivered; listener authorization rolled back",
+                )
+            });
         }
         // Only retire the old connection after the replacement's actor
         // notification has been accepted. A saturated collector must not
