@@ -373,7 +373,11 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         };
         let expected = shaped as f32 / 32_768.0;
         assert_eq!(stereo[0].to_bits(), expected.to_bits(), "replay left {frame}");
-        assert_eq!(stereo[1].to_bits(), (-expected).to_bits(), "replay right {frame}");
+        assert_eq!(
+            stereo[1].to_bits(),
+            (f32::from(-(shaped as i16)) / 32_768.0).to_bits(),
+            "replay right {frame}"
+        );
     }
     // The first token remains permanently retired even while the replacement
     // is actively returning PCM to a native callback.
