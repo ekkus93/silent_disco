@@ -166,6 +166,77 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
     assert_ne!(tokens[0], tokens[1], "each listener owns its native output");
 
     for sequence in 0..2_u64 {
+        if sequence == 1 {
+            // Pause after the first packet has reached BOTH independent
+            // native engines. Resume the same stream on both existing TCP
+            // connections; a boundary must not allocate a replacement sink.
+            let pause_ms = START_MS + 5;
+            assert_eq!(
+                host.broadcast_control(&ControlMessage::Pause(silent_disco_core::protocol::Pause {
+                    session_id: session.clone(),
+                    stream_id: stream.clone(),
+                    host_pause_time_ms: MonotonicMillis::new(pause_ms),
+                }))
+                .expect("broadcast two-listener Pause")
+                .report
+                .successful_peers,
+                2
+            );
+            for (index, handle) in listeners.iter().enumerate() {
+                assert!(
+                    matches!(
+                        handle.poll_event(1_000).expect("listener Pause"),
+                        Some(super::FfiListenerTransportEvent::Paused {
+                            stream_id,
+                            host_pause_time_ms,
+                        }) if stream_id == stream.as_str() && host_pause_time_ms == pause_ms
+                    ),
+                    "listener {index} must receive authoritative Pause"
+                );
+                assert_eq!(handle.forwarded_audio_count(), 1);
+                assert_eq!(runtimes[index].engine_token(), tokens[index]);
+            }
+
+            let resumed_start_ms = START_MS + 100;
+            assert_eq!(
+                host.broadcast_control(&ControlMessage::StreamStart(StreamStart {
+                    session_id: session.clone(),
+                    stream_id: stream.clone(),
+                    host_start_time_ms: MonotonicMillis::new(resumed_start_ms),
+                    sample_rate: 48_000,
+                    channels: 2,
+                    samples_per_packet: PACKET_FRAMES,
+                    current_entry_id: Some("second".to_owned()),
+                    current_display_name: Some("Second".to_owned()),
+                }))
+                .expect("broadcast two-listener Resume")
+                .report
+                .successful_peers,
+                2
+            );
+            for (index, handle) in listeners.iter().enumerate() {
+                assert!(
+                    matches!(
+                        handle.poll_event(1_000).expect("listener Resume"),
+                        Some(super::FfiListenerTransportEvent::StreamStarted {
+                            stream_id,
+                            host_start_time_ms,
+                            ..
+                        }) if stream_id == stream.as_str()
+                            && host_start_time_ms == resumed_start_ms
+                    ),
+                    "listener {index} must receive the new host anchor"
+                );
+                runtimes[index]
+                    .reanchor_presentation_time(resumed_start_ms)
+                    .expect("reanchor existing native output");
+                assert_eq!(
+                    runtimes[index].engine_token(),
+                    tokens[index],
+                    "Resume must not reopen listener {index} output"
+                );
+            }
+        }
         let amplitude = if sequence == 0 { 8_192_i16 } else { 16_384_i16 };
         let payload = [amplitude, -amplitude]
             .into_iter()
@@ -183,7 +254,9 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
                 channels: 2,
                 samples_per_packet: PACKET_FRAMES,
                 first_sample_index: SampleIndex::new(sequence * u64::from(PACKET_FRAMES)),
-                host_presentation_time_ms: MonotonicMillis::new(START_MS + sequence * 5),
+                host_presentation_time_ms: MonotonicMillis::new(
+                    START_MS + sequence * 5 + if sequence == 1 { 100 } else { 0 },
+                ),
                 payload,
             }))
             .expect("broadcast production UDP PCM")
