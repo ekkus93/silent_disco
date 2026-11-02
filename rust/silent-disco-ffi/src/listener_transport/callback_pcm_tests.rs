@@ -402,37 +402,64 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         ),
         "unexpected replay control event: {replay_start_event:?}"
     );
-    let replay_pcm = [12_288_i16, -12_288_i16]
-        .into_iter()
-        .cycle()
-        .take(PACKET_FRAMES as usize * 2)
-        .flat_map(i16::to_le_bytes)
-        .collect();
-    host.broadcast_audio(&ProtocolFrame::Audio(AudioDatagram {
+    // Replay crosses a fresh sample-indexed track boundary. Both UDP
+    // packets must reach the replacement native callback without a second
+    // fade, duplicated samples or reopening the output.
+    host.broadcast_control(&ControlMessage::TrackBoundary(TrackBoundary {
         session_id: session.clone(),
-        stream_id: replay_stream,
-        sequence: PacketSequence::new(0),
-        codec: AudioCodec::PcmS16Le,
-        sample_rate: 48_000,
-        channels: 2,
-        samples_per_packet: PACKET_FRAMES,
-        first_sample_index: SampleIndex::new(0),
-        host_presentation_time_ms: MonotonicMillis::new(replay_start_ms),
-        payload: replay_pcm,
+        stream_id: replay_stream.clone(),
+        first_sample_index: SampleIndex::new(u64::from(PACKET_FRAMES)),
+        entry_id: "replay-next".to_owned(),
+        display_name: "Replay Next".to_owned(),
     }))
-    .expect("broadcast replay PCM");
-    assert!(
-        handle
-            .poll_event(500)
-            .expect("forward replay PCM")
-            .is_none()
-    );
-    assert_eq!(handle.forwarded_audio_count(), 5);
+    .expect("broadcast replay boundary");
+    assert!(matches!(
+        handle.poll_event(1_000).expect("replay boundary poll"),
+        Some(super::FfiListenerTransportEvent::TrackBoundary {
+            first_sample_index,
+            ..
+        }) if first_sample_index == u64::from(PACKET_FRAMES)
+    ));
+    for sequence in 0..2_u64 {
+        let amplitude = if sequence == 0 { 12_288_i16 } else { 8_192_i16 };
+        let payload = [amplitude, -amplitude]
+            .into_iter()
+            .cycle()
+            .take(PACKET_FRAMES as usize * 2)
+            .flat_map(i16::to_le_bytes)
+            .collect();
+        host.broadcast_audio(&ProtocolFrame::Audio(AudioDatagram {
+            session_id: session.clone(),
+            stream_id: replay_stream.clone(),
+            sequence: PacketSequence::new(sequence),
+            codec: AudioCodec::PcmS16Le,
+            sample_rate: 48_000,
+            channels: 2,
+            samples_per_packet: PACKET_FRAMES,
+            first_sample_index: SampleIndex::new(sequence * u64::from(PACKET_FRAMES)),
+            host_presentation_time_ms: MonotonicMillis::new(replay_start_ms + sequence * 5),
+            payload,
+        }))
+        .expect("broadcast replay PCM");
+        assert!(
+            handle
+                .poll_event(500)
+                .expect("forward replay PCM")
+                .is_none(),
+            "attached PCM must bypass the foreign event queue"
+        );
+        assert_eq!(handle.forwarded_audio_count(), 5 + sequence);
+        assert_eq!(
+            replay.engine_token(),
+            replay_token,
+            "a replay track boundary must not reopen the native output"
+        );
+    }
     let deadline = Instant::now() + Duration::from_secs(5);
     let replay_prefill = loop {
         let state = replay.diagnostics();
-        if state.packets_emitted == 1
-            && state.ring_queued_frames >= state.prefill_frames + u64::from(PACKET_FRAMES)
+        if state.packets_emitted == 2
+            && state.ring_queued_frames >= state.prefill_frames + u64::from(PACKET_FRAMES) * 2
         {
             break state.prefill_frames;
         }
@@ -458,25 +485,30 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
     );
     assert_eq!(u64::from(prefill_supplied), replay_prefill);
     assert!(prefill.iter().all(|sample| *sample == 0.0));
-    let mut replay_output = vec![f32::NAN; PACKET_FRAMES as usize * 2];
+    let mut replay_output = vec![f32::NAN; PACKET_FRAMES as usize * 4];
     let mut replay_supplied = 0;
     assert_eq!(
         silent_disco_audio_read_interleaved_f32(
             replay_engine,
             replay_output.as_mut_ptr(),
-            PACKET_FRAMES,
+            PACKET_FRAMES * 2,
             2,
             &raw mut replay_supplied,
         ),
         0
     );
-    assert_eq!(replay_supplied, PACKET_FRAMES);
+    assert_eq!(replay_supplied, PACKET_FRAMES * 2);
     for (frame, stereo) in replay_output.chunks_exact(2).enumerate() {
+        let amplitude = if frame < PACKET_FRAMES as usize {
+            12_288_i64
+        } else {
+            8_192_i64
+        };
         let shaped = if frame < DEFAULT_CONCEALMENT_RAMP_MS as usize * 48 {
-            12_288_i64 * i64::try_from(frame).expect("bounded frame")
+            amplitude * i64::try_from(frame).expect("bounded frame")
                 / (i64::from(DEFAULT_CONCEALMENT_RAMP_MS) * 48)
         } else {
-            12_288
+            amplitude
         };
         let shaped = i16::try_from(shaped).expect("replay PCM16 amplitude");
         let expected = f32::from(shaped) / 32_768.0;
@@ -491,6 +523,12 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
             "replay right {frame}"
         );
     }
+    assert_eq!(
+        silent_disco_audio_frames_rendered(replay_engine),
+        replay_prefill + u64::from(PACKET_FRAMES) * 2
+    );
+    assert_eq!(silent_disco_audio_underrun_count(replay_engine), 0);
+    assert_eq!(silent_disco_audio_callback_count(replay_engine), 2);
     // The first token remains permanently retired even while the replacement
     // is actively returning PCM to a native callback.
     assert_eq!(
