@@ -59,7 +59,8 @@ class HostJoinProjectionFailureTest {
             transport.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "session-1")
             harness.viewModel.handleHostTransportEvent(harness.hostCoreController, join(), native)
 
-            Mockito.verify(native, Mockito.timeout(2_000)).sendJoinRejection("listener-1", "host_busy")
+            Mockito.verify(native, Mockito.timeout(2_000))
+                .rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "host_busy")
             assertThat(harness.hostCoreController.submitJoinRequestCalls).isEmpty()
             assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(0)
             assertThat(harness.viewModel.uiState.value.lastError).contains("actor queue unavailable")
@@ -96,7 +97,7 @@ class HostJoinProjectionFailureTest {
                 harness.hostCoreController, join("overflow-listener"), native,
             )
             Mockito.verify(native, Mockito.timeout(2_000))
-                .sendJoinRejection("overflow-listener", "host_busy")
+                .rejectPendingPeerAt("127.0.0.1:10001", "overflow-listener", "host_busy")
             assertThat(harness.hostCoreController.submitJoinRequestCalls).hasSize(128)
             assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(128)
 
@@ -132,7 +133,8 @@ class HostJoinProjectionFailureTest {
             transport.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "session-1")
             harness.viewModel.handleHostTransportEvent(harness.hostCoreController, join(), native)
 
-            Mockito.verify(native, Mockito.timeout(2_000)).sendJoinRejection("listener-1", "host_busy")
+            Mockito.verify(native, Mockito.timeout(2_000))
+                .rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "host_busy")
             // Wait for the real IO coroutine to report its failed send to the
             // ViewModel rather than asserting on a pre-send UI snapshot.
             val deadline = System.nanoTime() + 2_000_000_000L
