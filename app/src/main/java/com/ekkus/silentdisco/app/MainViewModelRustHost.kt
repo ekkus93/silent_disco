@@ -75,6 +75,9 @@ private fun MainViewModel.ensureHostTransportEventLoop(controller: HostCoreContr
     hostTransportEventLoopStarted = true
     viewModelScope.launch {
         hostTransportController.eventsWithGeneration.collect { source ->
+            // Rebind can retire the socket after dequeue but before actor
+            // projection. Never submit a stale join/disconnect to the new host.
+            if (!hostTransportController.isCurrentGeneration(source.handle)) return@collect
             handleHostTransportEvent(controller, source.event, source.handle)
         }
     }

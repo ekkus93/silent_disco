@@ -66,6 +66,11 @@ class HostTransportController(
     val events: Flow<FfiHostTransportEvent> = eventQueue.events
     internal val eventsWithGeneration: Flow<TransportGenerationEvent<FfiHostTransportHandle, FfiHostTransportEvent>> =
         eventQueue.eventsWithGeneration
+
+    /** Revalidate after a collector has dequeued an event but before actor projection. */
+    internal fun isCurrentGeneration(handle: FfiHostTransportHandle): Boolean =
+        handleGate.currentHandle() === handle
+
     /** Best-effort diagnostic events dropped while the UI collector was slow. */
     val droppedDiagnosticEvents: Long get() = eventQueue.droppedBestEffort
 

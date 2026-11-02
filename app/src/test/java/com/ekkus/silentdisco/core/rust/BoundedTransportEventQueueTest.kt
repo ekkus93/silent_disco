@@ -455,4 +455,44 @@ class BoundedTransportEventQueueTest {
         gate.close { queue.discardRetiredEvents() }
         queue.close()
     }
+
+    @Test
+    fun hostHandoffDropsRetiredJoinAlreadyDequeuedBeforeRebind() = runTest {
+        val gate = HostNativeHandleGate<Any>()
+        val old = Any()
+        val replacement = Any()
+        val queue = BoundedTransportEventQueue<Any, String>(gate::currentHandle, capacity = 2)
+        gate.replace(retire = {}, open = { old }, start = {})
+        val releaseOldHandoff = CompletableDeferred<Unit>()
+        val oldDequeued = CompletableDeferred<Unit>()
+        val projected = mutableListOf<String>()
+        val collector = backgroundScope.async {
+            queue.eventsWithGeneration.take(2).collect { delivery ->
+                if (delivery.event == "old-join") {
+                    oldDequeued.complete(Unit)
+                    releaseOldHandoff.await()
+                }
+                if (gate.currentHandle() === delivery.handle) {
+                    projected.add(delivery.event)
+                }
+            }
+        }
+
+        queue.emit(old, "old-join")
+        runCurrent()
+        oldDequeued.await()
+        gate.replace(
+            retire = {},
+            open = { replacement },
+            start = { queue.discardRetiredEvents() },
+        )
+        queue.emit(replacement, "new-join")
+        releaseOldHandoff.complete(Unit)
+        runCurrent()
+
+        collector.await()
+        assertThat(projected).containsExactly("new-join")
+        gate.close { queue.discardRetiredEvents() }
+        queue.close()
+    }
 }
