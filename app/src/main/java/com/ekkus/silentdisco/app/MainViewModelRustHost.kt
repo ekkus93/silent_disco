@@ -572,9 +572,13 @@ private suspend fun MainViewModel.executeRustTransportEffect(
     val delivery = when (effect) {
         is FfiTransportEffect.DeliverJoinRejection -> {
             val route = pendingListenerDatagramPorts.take(effect.requestId, effect.listenerId)
-            route?.let {
+            // A claimed legacy ID can be reused by a newer pending TCP
+            // generation. Refuse only the exact socket that originated this
+            // actor request; an old decision must never reject the replacement.
+            // Routes without a recorded address fail closed, not by ID.
+            route?.controlAddress?.let { address ->
                 hostTransportController.sendJoinRejectionForGeneration(
-                    it.sourceHandle, effect.listenerId, effect.reasonCode,
+                    route.sourceHandle, effect.listenerId, address, effect.reasonCode,
                 )
             }
         }

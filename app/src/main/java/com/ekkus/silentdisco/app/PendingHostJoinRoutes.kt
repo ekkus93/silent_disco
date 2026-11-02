@@ -19,17 +19,22 @@ internal class PendingHostJoinRoutes<H : Any>(private val capacity: Int = 128) {
         val syncPort: UShort,
         val audioPort: UShort,
         val sourceHandle: H,
+        // Original TCP socket, not the spoofable device ID, owns a refusal.
+        val controlAddress: String?,
     )
 
     private val lock = Any()
     private val pending = linkedMapOf<String, Route<H>>()
 
-    fun record(requestId: String, deviceId: String, syncPort: UShort, audioPort: UShort, handle: H): Boolean =
+    fun record(
+        requestId: String, deviceId: String, syncPort: UShort, audioPort: UShort,
+        handle: H, controlAddress: String? = null,
+    ): Boolean =
         synchronized(lock) {
             if (pending.containsKey(requestId) || pending.size >= capacity) {
                 false
             } else {
-                pending[requestId] = Route(deviceId, syncPort, audioPort, handle)
+                pending[requestId] = Route(deviceId, syncPort, audioPort, handle, controlAddress)
                 true
             }
         }

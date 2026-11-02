@@ -1,6 +1,8 @@
 package com.ekkus.silentdisco.app
 
 import com.ekkus.silentdisco.core.rust.HostTransportController
+import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
+import com.ekkus.silentdisco.core.uniffi.FfiTransportEffect
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
@@ -8,6 +10,7 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -31,8 +34,11 @@ class HostJoinProjectionFailureTest {
         Dispatchers.resetMain()
     }
 
-    private fun join(deviceId: String = "listener-1") = FfiHostTransportEvent.JoinRequestReceived(
-        controlAddress = "127.0.0.1:10001",
+    private fun join(
+        deviceId: String = "listener-1",
+        controlAddress: String = "127.0.0.1:10001",
+    ) = FfiHostTransportEvent.JoinRequestReceived(
+        controlAddress = controlAddress,
         deviceId = deviceId,
         displayName = "Unaccepted listener",
         inviteCode = null,
@@ -145,6 +151,59 @@ class HostJoinProjectionFailureTest {
             }
             assertThat(harness.viewModel.uiState.value.lastError).contains("not delivered")
             assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(0)
+        } finally {
+            transport.close()
+        }
+    }
+
+    @Test
+    fun delayedActorRejectionRefusesOnlyOriginalTcpGenerationWithDuplicateClaimedId() = runTest(dispatcher) {
+        val native = Mockito.mock(FfiHostTransportHandle::class.java)
+        Mockito.doAnswer { Thread.sleep(10); null }.`when`(native).pollEvent(500uL)
+        Mockito.`when`(native.rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "denied"))
+            .thenReturn(FfiHostTransportDelivery(1u, 1u, 0u, 24uL))
+        val transport = HostTransportController(
+            callDispatcher = Dispatchers.IO,
+            bindHandle = { _, _, _, _, _ -> native },
+        )
+        val harness = newTestMainViewModelHarness(hostTransportController = transport)
+        try {
+            transport.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "session-1")
+            harness.viewModel.ensureRustHostCore()
+            advanceUntilIdle()
+            // The old approval decision can arrive after another TCP socket
+            // claims the same unverified legacy device ID.
+            harness.viewModel.handleHostTransportEvent(
+                harness.hostCoreController, join(controlAddress = "127.0.0.1:10001"), native,
+            )
+            harness.viewModel.handleHostTransportEvent(
+                harness.hostCoreController, join(controlAddress = "127.0.0.1:10002"), native,
+            )
+            val requests = harness.hostCoreController.submitJoinRequestCalls
+            assertThat(requests).hasSize(2)
+            assertThat(requests[0].requestId).isNotEqualTo(requests[1].requestId)
+
+            harness.hostCoreController.emit(
+                FfiCoreNotification.TransportEffect(
+                    FfiTransportEffect.DeliverJoinRejection(
+                        operationId = "reject-old",
+                        requestId = requests[0].requestId,
+                        sessionId = "session-1",
+                        listenerId = "listener-1",
+                        reasonCode = "denied",
+                    ),
+                ),
+            )
+            advanceUntilIdle()
+            Mockito.verify(native, Mockito.timeout(2_000))
+                .rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "denied")
+            Mockito.verify(native, Mockito.never()).sendJoinRejection("listener-1", "denied")
+            // The newer pending request keeps its own address and route.
+            val newer = harness.viewModel.pendingListenerDatagramPorts.take(
+                requests[1].requestId, "listener-1",
+            )
+            assertThat(newer?.controlAddress).isEqualTo("127.0.0.1:10002")
+            assertThat(newer?.syncPort).isEqualTo(101u.toUShort())
         } finally {
             transport.close()
         }

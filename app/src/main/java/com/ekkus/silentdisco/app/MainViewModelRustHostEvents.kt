@@ -22,6 +22,7 @@ internal fun MainViewModel.handleHostTransportEvent(
             val requestId = newHostJoinRequestId()
             val tracked = pendingListenerDatagramPorts.record(
                 requestId, event.deviceId, event.syncPort, event.audioPort, sourceHandle,
+                controlAddress = event.controlAddress,
             )
             if (!tracked) {
                 // Do not enqueue an unapprovable actor request. Attempt a
