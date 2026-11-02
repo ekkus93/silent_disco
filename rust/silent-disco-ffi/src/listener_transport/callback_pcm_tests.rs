@@ -274,11 +274,14 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         Some(super::FfiListenerTransportEvent::Stopped { .. })
     ));
     let replay_stream = StreamId::new("callback-replay").expect("replay stream");
+    // A replay starts AFTER the retired stream's terminal fence. Reusing
+    // the old presentation anchor is correctly rejected as stale control.
+    let replay_start_ms = START_MS + 100;
     let replay = FfiListenerPlaybackHandle::open(FfiListenerPlaybackConfig {
         session_id: session.as_str().to_owned(),
         stream_id: replay_stream.as_str().to_owned(),
         sample_rate: 48_000,
-        host_start_time_ms: START_MS,
+        host_start_time_ms: replay_start_ms,
         samples_per_packet: PACKET_FRAMES,
         channels: 2,
         startup_buffer_target_ms: 0,
@@ -299,24 +302,28 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         "replay must have a new engine"
     );
     handle.attach_playback(Arc::clone(&replay));
-    let replay_start_delivery = host.broadcast_control(&ControlMessage::StreamStart(StreamStart {
-        session_id: session.clone(),
-        stream_id: replay_stream.clone(),
-        host_start_time_ms: MonotonicMillis::new(START_MS),
-        sample_rate: 48_000,
-        channels: 2,
-        samples_per_packet: PACKET_FRAMES,
-        current_entry_id: Some("replay".to_owned()),
-        current_display_name: Some("Replay".to_owned()),
-    }))
-    .expect("broadcast replay start");
+    let replay_start_delivery = host
+        .broadcast_control(&ControlMessage::StreamStart(StreamStart {
+            session_id: session.clone(),
+            stream_id: replay_stream.clone(),
+            host_start_time_ms: MonotonicMillis::new(replay_start_ms),
+            sample_rate: 48_000,
+            channels: 2,
+            samples_per_packet: PACKET_FRAMES,
+            current_entry_id: Some("replay".to_owned()),
+            current_display_name: Some("Replay".to_owned()),
+        }))
+        .expect("broadcast replay start");
     assert_eq!(replay_start_delivery.report.successful_peers, 1);
     let replay_start_event = handle.poll_event(1_000).expect("replay start poll");
-    assert!(matches!(
-        &replay_start_event,
-        Some(super::FfiListenerTransportEvent::StreamStarted { stream_id, .. })
-            if stream_id == replay_stream.as_str()
-    ), "unexpected replay control event: {replay_start_event:?}");
+    assert!(
+        matches!(
+            &replay_start_event,
+            Some(super::FfiListenerTransportEvent::StreamStarted { stream_id, .. })
+                if stream_id == replay_stream.as_str()
+        ),
+        "unexpected replay control event: {replay_start_event:?}"
+    );
     let replay_pcm = [12_288_i16, -12_288_i16]
         .into_iter()
         .cycle()
@@ -332,7 +339,7 @@ fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retireme
         channels: 2,
         samples_per_packet: PACKET_FRAMES,
         first_sample_index: SampleIndex::new(0),
-        host_presentation_time_ms: MonotonicMillis::new(START_MS),
+        host_presentation_time_ms: MonotonicMillis::new(replay_start_ms),
         payload: replay_pcm,
     }))
     .expect("broadcast replay PCM");

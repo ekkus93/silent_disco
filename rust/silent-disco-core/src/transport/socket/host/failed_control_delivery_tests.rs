@@ -47,12 +47,15 @@ fn join(
 }
 
 fn fail_next_tcp_write(peer: &PeerState) {
+    // Check the precondition BEFORE injecting the socket fault: the TCP
+    // reader may retire the peer concurrently as soon as the writer half
+    // closes, and that retirement is the behavior this test requires.
+    assert!(peer.active.load(Ordering::Acquire));
     peer.shutdown_stream
         .lock()
         .expect("TCP writer socket")
         .shutdown(Shutdown::Write)
         .expect("half-close host TCP writer");
-    assert!(peer.active.load(Ordering::Acquire));
 }
 
 fn expect_only_healthy_route(host: &SocketHostTransport, healthy: &DeviceId) {
