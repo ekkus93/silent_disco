@@ -182,6 +182,34 @@ impl FfiHostTransportHandle {
         })
     }
 
+    /// Refuses only the pending TCP connection that submitted this join.
+    /// A self-declared device ID can be duplicated, so a refusal for a
+    /// congested/unprojected join must never be routed by ID alone.
+    pub fn reject_pending_peer_at(
+        &self,
+        control_address: String,
+        listener_id: String,
+        reason: String,
+    ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
+        let address: std::net::SocketAddr = control_address.parse().map_err(|_| {
+            FfiHostTransportError::InvalidConfiguration(
+                "pending listener control address is malformed".to_owned(),
+            )
+        })?;
+        self.with_transport(|inner| {
+            let listener_id = device_id(listener_id)?;
+            let message = ControlMessage::JoinRejection(JoinRejection {
+                session_id: inner.session_id.clone(),
+                listener_id: listener_id.clone(),
+                reason,
+            });
+            let delivery = inner
+                .transport
+                .reject_pending_peer_at(address, &listener_id, &message)?;
+            Ok(delivery_from(delivery))
+        })
+    }
+
     /// Sends an explicit disconnect to an admitted listener and atomically
     /// retires its audio route. Pending (not-yet-authorized) peers still
     /// receive the rejection through their control-only TCP connection.
@@ -588,8 +616,9 @@ fn map_event(event: TransportEvent) -> Option<FfiHostTransportEvent> {
         TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
             frame,
+            peer,
             ..
-        } => map_control_frame(frame),
+        } => map_control_frame(frame, peer.control_address),
         TransportEvent::FrameReceived {
             channel: TransportChannel::Synchronization,
             frame: ProtocolFrame::SyncRequest(request),
@@ -615,6 +644,7 @@ fn map_event(event: TransportEvent) -> Option<FfiHostTransportEvent> {
 
 fn map_control_frame(
     frame: silent_disco_core::protocol::ProtocolFrame,
+    control_address: std::net::SocketAddr,
 ) -> Option<FfiHostTransportEvent> {
     use silent_disco_core::protocol::ProtocolFrame;
     let ProtocolFrame::Control(message) = frame else {
@@ -622,6 +652,7 @@ fn map_control_frame(
     };
     match message {
         ControlMessage::JoinRequest(value) => Some(FfiHostTransportEvent::JoinRequestReceived {
+            control_address: control_address.to_string(),
             device_id: value.device.device_id.into_string(),
             display_name: value.device.display_name,
             invite_code: value.invite_code,

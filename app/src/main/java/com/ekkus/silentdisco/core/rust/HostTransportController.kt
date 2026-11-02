@@ -149,9 +149,12 @@ class HostTransportController(
     internal suspend fun sendJoinRejectionForGeneration(
         expected: FfiHostTransportHandle,
         listenerId: String,
+        controlAddress: String,
         reason: String,
     ): FfiHostTransportDelivery? = withContext(callDispatcher) {
-        handleGate.withExpected(expected) { it.sendJoinRejection(listenerId, reason) }
+        handleGate.withExpected(expected) {
+            it.rejectPendingPeerAt(controlAddress, listenerId, reason)
+        }
     }
 
     suspend fun disconnectPeer(listenerId: String, reason: String): FfiHostTransportDelivery? =

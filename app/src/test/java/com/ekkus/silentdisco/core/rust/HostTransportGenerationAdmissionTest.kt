@@ -37,7 +37,7 @@ class HostTransportGenerationAdmissionTest {
         Mockito.doReturn(delivered).`when`(replacement)
             .sendJoinApproval("reused-device-id", false)
         Mockito.doReturn(delivered).`when`(replacement)
-            .sendJoinRejection("reused-device-id", "current-denial")
+            .rejectPendingPeerAt("127.0.0.1:10001", "reused-device-id", "current-denial")
         val opened = ArrayDeque(listOf(old, replacement))
         val controller = HostTransportController(
             callDispatcher = Dispatchers.Unconfined,
@@ -64,11 +64,13 @@ class HostTransportGenerationAdmissionTest {
             // Rejection is also bound to the originating native generation;
             // an old actor rejection must not kick the fresh same-ID peer.
             assertThat(controller.sendJoinRejectionForGeneration(
-                old, "reused-device-id", "stale-denial",
+                old, "reused-device-id", "127.0.0.1:10000", "stale-denial",
             )).isNull()
-            Mockito.verify(replacement, Mockito.never()).sendJoinRejection("reused-device-id", "stale-denial")
+            Mockito.verify(replacement, Mockito.never()).rejectPendingPeerAt(
+                "127.0.0.1:10000", "reused-device-id", "stale-denial",
+            )
             assertThat(controller.sendJoinRejectionForGeneration(
-                replacement, "reused-device-id", "current-denial",
+                replacement, "reused-device-id", "127.0.0.1:10001", "current-denial",
             )).isEqualTo(delivered)
         } finally {
             controller.close()

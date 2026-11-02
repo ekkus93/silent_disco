@@ -45,6 +45,9 @@ pub enum FfiHostTransportEvent {
         control_address: String,
     },
     JoinRequestReceived {
+        /// Exact TCP source of this join, used only for generation-bound
+        /// refusal. It is not a verified listener identity or trust proof.
+        control_address: String,
         device_id: String,
         display_name: String,
         invite_code: Option<String>,

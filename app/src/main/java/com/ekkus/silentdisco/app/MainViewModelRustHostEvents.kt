@@ -31,7 +31,7 @@ internal fun MainViewModel.handleHostTransportEvent(
                     "track listener join",
                     IllegalStateException("Pending listener route capacity exceeded"),
                 )
-                refuseUnprojectedHostJoin(event.deviceId, sourceHandle)
+                refuseUnprojectedHostJoin(event.deviceId, event.controlAddress, sourceHandle)
                 return
             }
             runCatching {
@@ -79,12 +79,13 @@ internal fun MainViewModel.handleHostTransportEvent(
  */
 private fun MainViewModel.refuseUnprojectedHostJoin(
     deviceId: String,
+    controlAddress: String,
     sourceHandle: FfiHostTransportHandle,
 ) {
     viewModelScope.launch(Dispatchers.IO) {
         try {
             val delivery = hostTransportController.sendJoinRejectionForGeneration(
-                sourceHandle, deviceId, "host_busy",
+                sourceHandle, deviceId, controlAddress, "host_busy",
             )
             check(delivery != null && delivery.successfulPeers > 0u) {
                 "Host join refusal was not delivered to the original listener"

@@ -167,12 +167,17 @@ fn host_transport_completes_join_request_through_approval_and_disconnect() {
         matches!(event, FfiHostTransportEvent::JoinRequestReceived { .. })
     }) {
         FfiHostTransportEvent::JoinRequestReceived {
+            control_address,
             device_id,
             display_name,
             invite_code,
             sync_port,
             audio_port,
         } => {
+            assert_eq!(
+                control_address.parse::<std::net::SocketAddr>().expect("TCP source").ip(),
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+            );
             assert_eq!(device_id, "listener-device");
             assert_eq!(display_name, "Test Listener");
             assert_eq!(invite_code, None);
