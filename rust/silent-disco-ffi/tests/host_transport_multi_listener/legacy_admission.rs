@@ -40,10 +40,14 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
     pending
         .send_join_request("Pending listener".to_owned(), None)
         .expect("request pending admission");
-    let pending_id = match poll_host_until(&host, |event| {
+    let (pending_id, pending_address) = match poll_host_until(&host, |event| {
         matches!(event, FfiHostTransportEvent::JoinRequestReceived { .. })
     }) {
-        FfiHostTransportEvent::JoinRequestReceived { device_id, .. } => device_id,
+        FfiHostTransportEvent::JoinRequestReceived {
+            device_id,
+            control_address,
+            ..
+        } => (device_id, control_address),
         other => panic!("expected pending join, got {other:?}"),
     };
     let denied = host
@@ -156,12 +160,13 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
     assert!(matches!(
         poll_host_until(&host, |event| matches!(
             event,
-            FfiHostTransportEvent::PeerDisconnected {
+            FfiHostTransportEvent::PeerDisconnectedAt {
+                control_address,
                 listener_id: Some(id),
                 ..
-            } if id == &pending_id
+            } if id == &pending_id && control_address == &pending_address
         )),
-        FfiHostTransportEvent::PeerDisconnected { .. }
+        FfiHostTransportEvent::PeerDisconnectedAt { .. }
     ));
 
     assert_eq!(

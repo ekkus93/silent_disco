@@ -1,6 +1,6 @@
 //! FFI must preserve the TCP generation when forwarding a terminal event.
-use super::map_event;
 use super::super::types::FfiHostTransportEvent;
+use super::map_event;
 use silent_disco_core::domain::{DeviceId, MonotonicMillis};
 use silent_disco_core::transport::{TransportEvent, TransportPeer};
 
