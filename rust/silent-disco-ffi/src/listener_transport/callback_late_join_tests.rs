@@ -254,15 +254,17 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
             } else {
                 amplitude
             };
-            let expected = f32::from(i16::try_from(shaped).expect("PCM16")) / 32_768.0;
+            let shaped = i16::try_from(shaped).expect("PCM16");
+            let expected_left = f32::from(shaped) / 32_768.0;
+            let expected_right = f32::from(-shaped) / 32_768.0;
             assert_eq!(
                 stereo[0].to_bits(),
-                expected.to_bits(),
+                expected_left.to_bits(),
                 "listener {index} left {frame}"
             );
             assert_eq!(
                 stereo[1].to_bits(),
-                (-expected).to_bits(),
+                expected_right.to_bits(),
                 "listener {index} right {frame}"
             );
         }
