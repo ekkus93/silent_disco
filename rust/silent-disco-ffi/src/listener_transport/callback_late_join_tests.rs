@@ -191,28 +191,47 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
             .successful_peers,
             2
         );
+        // Polling an attached PCM packet returns None: a 500 ms poll for
+        // each of two listeners would artificially advance the real-time
+        // scheduler by two seconds across this tiny two-packet stream.
+        // Use short polls with a shared deadline, not a fixed idle wait per
+        // peer. This exercises actual UDP forwarding without making the
+        // second listener's PCM late merely because the first was polled.
+        let deadline = Instant::now() + Duration::from_secs(1);
         for (index, handle) in listeners.iter().enumerate() {
-            assert!(
-                handle.poll_event(500).expect("forward PCM").is_none(),
-                "attached PCM must not enter the foreign event queue"
-            );
+            while handle.forwarded_audio_count() < sequence + 1 {
+                assert!(
+                    Instant::now() < deadline,
+                    "listener {index} never forwarded UDP packet {sequence}"
+                );
+                assert!(
+                    handle.poll_event(20).expect("forward PCM").is_none(),
+                    "attached PCM must not enter the foreign event queue"
+                );
+            }
             assert_eq!(handle.forwarded_audio_count(), sequence + 1);
             assert_eq!(runtimes[index].engine_token(), tokens[index]);
         }
     }
 
-    for (index, runtime) in runtimes.iter().enumerate() {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let prefill = loop {
-            let state = runtime.diagnostics();
-            if state.packets_emitted == 2
+    // Both independent render pumps must be ready under one deadline.
+    // Waiting up to five seconds for each in series could let the other
+    // pump pass its sample deadline and synthesize concealment before its
+    // callback is drained.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let prefills = loop {
+        let states: Vec<_> = runtimes.iter().map(|runtime| runtime.diagnostics()).collect();
+        if states.iter().all(|state| {
+            state.packets_emitted == 2
                 && state.ring_queued_frames >= state.prefill_frames + u64::from(PACKET_FRAMES) * 2
-            {
-                break state.prefill_frames;
-            }
-            assert!(Instant::now() < deadline, "listener {index} PCM: {state:?}");
-            std::thread::sleep(Duration::from_millis(5));
-        };
+        }) {
+            break states.iter().map(|state| state.prefill_frames).collect::<Vec<_>>();
+        }
+        assert!(Instant::now() < deadline, "both listener PCM rings: {states:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    for (index, runtime) in runtimes.iter().enumerate() {
+        let prefill = prefills[index];
         let engine =
             usize::try_from(tokens[index]).expect("token fits pointer") as *mut core::ffi::c_void;
         let mut silence = vec![f32::NAN; usize::try_from(prefill).expect("prefill fits") * 2];
