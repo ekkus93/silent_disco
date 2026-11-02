@@ -51,6 +51,10 @@ class HostTransportController(
     private val hostElapsedMs: () -> ULong = { SystemClock.elapsedRealtime().toULong() },
 ) : AutoCloseable {
     private val handleGate = HostNativeHandleGate<FfiHostTransportHandle>()
+    // Invalidate pending IO binds before Stop/rebind acquires the native gate.
+    // The controller remains reusable, but an old queued bind must not reopen
+    // a socket after close or replace a newer host session.
+    private val sessionGeneration = HostTransportSessionGeneration()
     private var eventLoop: Job? = null
     // The channel survives session rebinds. Tag queued events with their
     // original handle so a slow collector cannot consume previous-session
@@ -89,9 +93,13 @@ class HostTransportController(
         audioPort: Int,
         sessionId: String,
         stillRequested: () -> Boolean,
-    ): Boolean = withContext(callDispatcher) {
-        handleGate.replaceIf(
-            shouldReplace = stillRequested,
+    ): Boolean {
+        val requestedGeneration = sessionGeneration.beginBind()
+        return withContext(callDispatcher) {
+            handleGate.replaceIf(
+                shouldReplace = {
+                    sessionGeneration.isCurrent(requestedGeneration) && stillRequested()
+                },
             retire = ::retireHandle,
             open = {
                 bindHandle(
@@ -102,12 +110,13 @@ class HostTransportController(
                     sessionId,
                 )
             },
-            start = { handle ->
-                // Old-session events must not occupy the new session's bounded queue.
-                eventQueue.discardRetiredEvents()
-                startEventLoop(scope, handle)
-            },
-        )
+                start = { handle ->
+                    // Old-session events must not occupy the new session's bounded queue.
+                    eventQueue.discardRetiredEvents()
+                    startEventLoop(scope, handle)
+                },
+            )
+        }
     }
 
     suspend fun sendJoinApproval(listenerId: String, trustedForFuture: Boolean): FfiHostTransportDelivery? {
@@ -330,6 +339,9 @@ class HostTransportController(
     }
 
     override fun close() {
+        // Invalidate pending bind requests *before* waiting for an in-flight
+        // native send or bind to release the handle gate.
+        sessionGeneration.retire()
         closeExistingHandle()
     }
 
