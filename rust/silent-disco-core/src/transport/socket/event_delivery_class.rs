@@ -4,7 +4,7 @@ use crate::transport::{TransportChannel, TransportEvent};
 
 /// Only diagnostics, datagrams and optional TCP telemetry may be dropped.
 /// Admission, playback and terminal events require reliable delivery.
-pub(super) fn is_best_effort_event(event: &TransportEvent) -> bool {
+pub(crate) fn is_best_effort_event(event: &TransportEvent) -> bool {
     match event {
         TransportEvent::Rejected { .. } => true,
         TransportEvent::FrameReceived {
