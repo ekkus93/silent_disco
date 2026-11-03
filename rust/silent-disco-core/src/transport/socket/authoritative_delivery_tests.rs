@@ -5,7 +5,7 @@ use std::sync::mpsc::sync_channel;
 use std::thread;
 use std::time::Duration;
 
-use super::shared::{CounterState, send_authoritative_event};
+use super::shared::{CounterState, send_authoritative_event, send_authoritative_event_bounded};
 
 #[test]
 fn full_queue_preserves_order_until_collector_recovers() {
@@ -68,4 +68,29 @@ fn shutdown_interrupts_blocked_control_without_unbounded_wait() {
     );
     assert!(receiver.try_recv().is_err(), "retired Stop must not leak");
     assert_eq!(counters.snapshot().delivery_failures, 1);
+}
+
+#[test]
+fn timed_out_authoritative_delivery_has_distinct_failure_counter() {
+    let stop = AtomicBool::new(false);
+    let counters = CounterState::default();
+    let (sender, receiver) = sync_channel(1);
+    sender.send("Start").expect("fill bounded actor queue");
+    assert!(
+        !send_authoritative_event_bounded(
+            &sender,
+            &stop,
+            &counters,
+            "Stop",
+            Duration::from_millis(25),
+        ),
+        "blocked Stop must fail visibly after finite timeout",
+    );
+    let snapshot = counters.snapshot();
+    assert_eq!(snapshot.queue_overflows, 1);
+    assert_eq!(snapshot.delivery_failures, 1);
+    assert_eq!(snapshot.authoritative_event_failures, 1);
+    assert_eq!(snapshot.best_effort_event_drops, 0);
+    assert_eq!(receiver.try_recv().expect("prior event remains"), "Start");
+    assert!(receiver.try_recv().is_err(), "failed Stop cannot leak later");
 }

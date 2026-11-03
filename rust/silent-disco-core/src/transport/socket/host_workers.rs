@@ -73,6 +73,7 @@ pub(super) fn spawn_accept_loop(
                         let current_count =
                             peers.lock().map_or(config.max_peers, |peers| peers.len());
                         if current_count >= config.max_peers {
+                            counters.busy_admission_refusal();
                             counters.delivery_failure();
                             refusal_gate.spawn(stream, &config, &stop, &counters);
                             continue;
@@ -238,6 +239,7 @@ fn register_peer(
             global_stop,
             counters,
             clock.now(),
+
             config.operation_timeout,
             error,
         );
@@ -478,6 +480,7 @@ pub(super) fn remove_route_if_current(
     {
         routes.remove(device_id);
         true
+
     } else {
         false
     }
@@ -500,10 +503,12 @@ fn forward_join_or_refuse<T>(
         Err(TrySendError::Full(_)) => {
             counters.queue_overflow();
             counters.delivery_failure();
+            counters.busy_admission_refusal();
             refuse();
             false
         }
         Err(TrySendError::Disconnected(_)) => {
+            counters.busy_admission_refusal();
             // The actor receiver is gone. Do not silently treat an accepted
             // JoinRequest as delivered; attempt a bounded busy refusal before
             // the TCP reader tears down this provisional peer.
@@ -718,6 +723,7 @@ pub(super) fn spawn_udp_receiver(
                                 );
                             }
                         }
+
                     }
                     Err(error)
                         if matches!(

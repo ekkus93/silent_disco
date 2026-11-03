@@ -63,6 +63,7 @@ fn full_host_visibly_refuses_real_join_without_starving_playback_and_recovers() 
     });
     assert_eq!(host.counters().accepted_control_connections, 1);
     assert_eq!(host.counters().delivery_failures, 1);
+    assert_eq!(host.counters().busy_admission_refusals, 1);
 
     // Repeated real TCP joins while the slot remains occupied must not
     // accumulate admitted peers or strand an existing playback connection.
@@ -95,6 +96,7 @@ fn full_host_visibly_refuses_real_join_without_starving_playback_and_recovers() 
     }
     assert_eq!(host.counters().accepted_control_connections, 1);
     assert_eq!(host.counters().delivery_failures, 25);
+    assert_eq!(host.counters().busy_admission_refusals, 25);
     assert!(
         host.peers.lock().expect("peer registry").len() == 1,
         "refused socket must never consume a registered peer slot"

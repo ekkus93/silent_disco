@@ -238,6 +238,7 @@ impl ListenerTransportConfig {
             self.operation_timeout,
         )
     }
+
 }
 
 fn validate_common(
@@ -329,6 +330,12 @@ pub struct TransportCounters {
     pub unauthorized_frames: u64,
     pub queue_overflows: u64,
     pub delivery_failures: u64,
+    /// Best-effort telemetry or diagnostics dropped on queue pressure/closure.
+    pub best_effort_event_drops: u64,
+    /// New TCP peers refused because of capacity or actor admission pressure.
+    pub busy_admission_refusals: u64,
+    /// Critical events that could not reach the actor before timeout/shutdown.
+    pub authoritative_event_failures: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

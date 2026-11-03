@@ -39,6 +39,9 @@ pub(super) struct CounterState {
     unauthorized_frames: AtomicU64,
     queue_overflows: AtomicU64,
     delivery_failures: AtomicU64,
+    best_effort_event_drops: AtomicU64,
+    busy_admission_refusals: AtomicU64,
+    authoritative_event_failures: AtomicU64,
     worker_panicked: AtomicBool,
 }
 
@@ -60,6 +63,9 @@ impl CounterState {
             unauthorized_frames: self.unauthorized_frames.load(Ordering::Relaxed),
             queue_overflows: self.queue_overflows.load(Ordering::Relaxed),
             delivery_failures: self.delivery_failures.load(Ordering::Relaxed),
+            best_effort_event_drops: self.best_effort_event_drops.load(Ordering::Relaxed),
+            busy_admission_refusals: self.busy_admission_refusals.load(Ordering::Relaxed),
+            authoritative_event_failures: self.authoritative_event_failures.load(Ordering::Relaxed),
         }
     }
 
@@ -130,6 +136,18 @@ impl CounterState {
         self.delivery_failures.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(super) fn best_effort_drop(&self) {
+        self.best_effort_event_drops.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn busy_admission_refusal(&self) {
+        self.busy_admission_refusals.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(super) fn authoritative_event_failure(&self) {
+        self.authoritative_event_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(super) fn mark_worker_panicked(&self) {
         self.worker_panicked.store(true, Ordering::Release);
     }
@@ -158,8 +176,16 @@ pub(super) fn send_event(
     counters: &CounterState,
     event: TransportEvent,
 ) {
-    if sender.try_send(event).is_err() {
-        counters.queue_overflow();
+    match sender.try_send(event) {
+        Ok(()) => {}
+        Err(TrySendError::Full(_)) => {
+            counters.queue_overflow();
+            counters.best_effort_drop();
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            counters.delivery_failure();
+            counters.best_effort_drop();
+        }
     }
 }
 
@@ -206,6 +232,7 @@ fn send_authoritative_event_until<T>(
         if stop.load(Ordering::Acquire) {
             if congested {
                 counters.delivery_failure();
+                counters.authoritative_event_failure();
             }
             return false;
         }
@@ -218,6 +245,7 @@ fn send_authoritative_event_until<T>(
                 }
                 if timeout.is_some_and(|limit| started.elapsed() >= limit) {
                     counters.delivery_failure();
+                    counters.authoritative_event_failure();
                     return false;
                 }
                 event = pending;
@@ -225,6 +253,7 @@ fn send_authoritative_event_until<T>(
             }
             Err(TrySendError::Disconnected(_)) => {
                 counters.delivery_failure();
+                counters.authoritative_event_failure();
                 return false;
             }
         }
@@ -238,6 +267,7 @@ pub(super) struct ControlWrite {
     // the writer's backlog to be transmitted much later. In-flight kernel
     // writes remain ambiguous and are handled by session/generation policy.
     pub deadline: Option<Instant>,
+
 }
 
 #[path = "control_sender.rs"]
@@ -478,6 +508,7 @@ pub(super) fn read_control_loop<F>(
                             return;
                         }
                     };
+
                     let total = FRAME_HEADER_BYTES.saturating_add(payload_length);
                     if buffer.len() < total {
                         break;
@@ -718,6 +749,7 @@ mod terminal_event_pressure_tests {
         assert_eq!(receiver.try_recv().expect("existing event retained"), 1);
         assert!(receiver.try_recv().is_err());
     }
+
 }
 
 pub(super) fn recv_event(

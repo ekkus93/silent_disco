@@ -74,7 +74,8 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
             .expect("send real UDP sync telemetry");
     }
     wait_until(Duration::from_secs(5), || {
-        host.counters().sync_datagrams_received > 10 && host.counters().queue_overflows > 0
+        host.counters().sync_datagrams_received > 10
+            && host.counters().best_effort_event_drops > 0
     });
     let start = stream_start(&session, 1_000);
     let ControlMessage::StreamStart(ref started) = start else {
@@ -238,6 +239,7 @@ fn tcp_accept_survives_saturated_udp_telemetry_and_delivers_pcm() {
         host.counters().queue_overflows > 0
     });
     let second_id = id_device("pressure-accept-second");
+
     let mut second = SocketTransportFactory
         .connect_listener(
             ListenerTransportConfig::loopback(session.clone(), second_id.clone(), host.endpoint()),
@@ -478,6 +480,7 @@ fn real_socket_busy_join_is_refused_then_retry_rejoins_live_pcm() {
     let start = ControlMessage::StreamStart(started);
     assert_eq!(
         host.broadcast_control(&start)
+
             .expect("broadcast live start")
             .report
             .successful_peers,
