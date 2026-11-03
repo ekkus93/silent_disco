@@ -14,10 +14,9 @@ pub(crate) fn is_best_effort_event(event: &TransportEvent) -> bool {
             }
             | TransportEvent::FrameReceived {
                 channel: TransportChannel::Control,
-                frame:
-                    ProtocolFrame::Control(
-                        ControlMessage::Heartbeat(_) | ControlMessage::SynchronizationReport(_),
-                    ),
+                frame: ProtocolFrame::Control(
+                    ControlMessage::Heartbeat(_) | ControlMessage::SynchronizationReport(_),
+                ),
                 ..
             }
     )
