@@ -20,6 +20,10 @@ use super::super::{
     TransportChannel, TransportCounters, TransportError, TransportErrorKind, TransportEvent,
 };
 
+#[path = "event_delivery_class.rs"]
+mod event_delivery_class;
+pub(super) use event_delivery_class::is_best_effort_event;
+
 pub(super) const MAX_CONTROL_FRAME_BYTES: usize = FRAME_HEADER_BYTES + MAX_CONTROL_PAYLOAD_BYTES;
 
 #[derive(Debug, Default)]
@@ -177,6 +181,7 @@ pub(super) fn send_event(
     counters: &CounterState,
     event: TransportEvent,
 ) {
+    assert!(is_best_effort_event(&event), "authoritative events require reliable delivery");
     match sender.try_send(event) {
         Ok(()) => {}
         Err(TrySendError::Full(_)) => {

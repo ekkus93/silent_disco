@@ -24,7 +24,8 @@ use super::super::{
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection,
     fail_loud_on_implicit_shutdown, join_workers, read_control_loop, recv_event,
-    send_authoritative_event, send_event, shutdown_stream, spawn_control_writer,
+    is_best_effort_event, send_authoritative_event, send_event, shutdown_stream,
+    spawn_control_writer,
 };
 
 pub struct SocketListenerTransport {
@@ -356,21 +357,14 @@ fn spawn_control_reader(
                         counters.frame_received(bytes);
                         match validate_listener_inbound(&config.device_id, &frame) {
                             Ok(()) => {
-                                // Host heartbeats are telemetry, not playback commands.
-                                // A stopped actor collector must not trap the TCP
-                                // reader behind a full queue and hide a later Stop
-                                // or terminal disconnect.
-                                let lossy_heartbeat = matches!(
-                                    &frame,
-                                    ProtocolFrame::Control(ControlMessage::Heartbeat(_))
-                                );
+                                // Shared classification protects playback controls from telemetry loss.
                                 let event = TransportEvent::FrameReceived {
                                     channel: TransportChannel::Control,
                                     peer: host_peer.clone(),
                                     frame,
                                     received_at: clock.now(),
                                 };
-                                if lossy_heartbeat {
+                                if is_best_effort_event(&event) {
                                     send_event(&event_sender, &counters, event);
                                     true
                                 } else {

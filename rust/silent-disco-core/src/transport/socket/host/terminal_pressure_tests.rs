@@ -61,6 +61,8 @@ fn full_host_queue_refuses_join_and_still_reports_peer_disconnect() {
         "refused listener must never acquire a route"
     );
     assert!(host.counters().queue_overflows >= 1);
+    assert!(host.counters().busy_admission_refusals >= 1);
+    assert_eq!(host.counters().authoritative_event_failures, 0);
     listener.shutdown().expect("listener shutdown");
     host.shutdown().expect("host shutdown");
 }

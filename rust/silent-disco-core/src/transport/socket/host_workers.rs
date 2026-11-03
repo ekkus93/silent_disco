@@ -24,7 +24,8 @@ mod capacity_refusal;
 mod startup;
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
-    reap_finished_workers, send_authoritative_event, send_authoritative_event_bounded, send_event,
+    is_best_effort_event, reap_finished_workers, send_authoritative_event,
+    send_authoritative_event_bounded, send_event,
     shutdown_stream, spawn_control_writer,
 };
 use startup::rollback_failed_peer_start;
@@ -284,16 +285,7 @@ fn register_peer(
                                     }
                                     _ => None,
                                 };
-                                // Heartbeats and synchronization reports are telemetry.
-                                // Never stall the TCP reader behind a stopped collector:
-                                // doing so can trap a later authoritative Disconnect.
-                                let lossy_telemetry = matches!(
-                                    &frame,
-                                    ProtocolFrame::Control(
-                                        ControlMessage::Heartbeat(_)
-                                            | ControlMessage::SynchronizationReport(_)
-                                    )
-                                );
+                                // Shared classification protects critical controls from lossy delivery.
                                 let event = TransportEvent::FrameReceived {
                                     channel: TransportChannel::Control,
                                     peer: reader_peer.transport_peer(),
@@ -343,7 +335,7 @@ fn register_peer(
                                         ));
                                     }
                                     delivered
-                                } else if lossy_telemetry {
+                                } else if is_best_effort_event(&event) {
                                     // Drop only best-effort telemetry when the bounded
                                     // actor queue is full; critical controls stay ordered.
                                     send_event(&event_for_reader, &counters_for_reader, event);

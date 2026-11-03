@@ -112,6 +112,8 @@ fn telemetry_flood_cannot_hide_stop_disconnect_or_reconnected_play() {
     }
     assert_eq!(first.counters().delivery_failures, 0);
     assert_eq!(second.counters().delivery_failures, 0);
+    assert_eq!(first.counters().authoritative_event_failures, 0);
+    assert_eq!(second.counters().authoritative_event_failures, 0);
 
     // The terminal event must survive a saturated host queue, and retiring
     // the old TCP reader must not delete the next generation's UDP route.
