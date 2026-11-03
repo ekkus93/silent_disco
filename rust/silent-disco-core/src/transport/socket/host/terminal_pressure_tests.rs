@@ -51,8 +51,9 @@ fn full_host_queue_refuses_join_and_still_reports_peer_disconnect() {
     ));
     assert!(matches!(
         host.recv_event(Duration::from_secs(5)).expect("terminal event"),
-        TransportEvent::PeerDisconnected { peer, .. }
+        TransportEvent::PeerDisconnected { peer, error: Some(reason), .. }
             if peer.device_id.as_ref() == Some(&device)
+                && reason.kind == crate::transport::TransportErrorKind::QueueFull
     ));
     assert!(
         host.authorize_peer(&device, listener.local_routes())

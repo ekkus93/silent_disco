@@ -309,7 +309,7 @@ fn register_peer(
                                     true
 
                                 } else if let Some(listener_id) = pending_join {
-                                    forward_join_or_refuse(
+                                    let delivered = forward_join_or_refuse(
                                         &event_for_reader,
                                         &counters_for_reader,
                                         event,
@@ -329,7 +329,19 @@ fn register_peer(
                                                 drop(reader_peer.sender.send(bytes));
                                             }
                                         },
-                                    )
+                                    );
+                                    if !delivered {
+                                        // The listener received a busy refusal.
+                                        // Report the same failure to the actor's
+                                        // terminal event, not a misleading clean
+                                        // disconnect with no error.
+                                        terminal_error = Some(TransportError::new(
+                                            TransportErrorKind::QueueFull,
+                                            TransportChannel::Control,
+                                            "host join queue full; listener refused",
+                                        ));
+                                    }
+                                    delivered
                                 } else if lossy_telemetry {
                                     // Drop only best-effort telemetry when the bounded
                                     // actor queue is full; critical controls stay ordered.
