@@ -26,6 +26,8 @@ mod authorization_order_tests;
 mod bind;
 mod broadcast;
 #[cfg(test)]
+mod capacity_refusal_tests;
+#[cfg(test)]
 mod clock_reconnect_pcm_tests;
 #[cfg(test)]
 mod duplicate_join_tests;

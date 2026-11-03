@@ -18,6 +18,8 @@ use super::super::{
     TransportEvent, TransportPeer,
 };
 use super::host::{PeerRoute, PeerState};
+#[path = "host_capacity_refusal.rs"]
+mod capacity_refusal;
 #[path = "host_worker_startup.rs"]
 mod startup;
 use super::shared::{
@@ -43,6 +45,7 @@ pub(super) fn spawn_accept_loop(
     thread::Builder::new()
         .name("silent-disco-transport-accept".to_owned())
         .spawn(move || {
+            let refusal_gate = capacity_refusal::CapacityRefusalGate::default();
             while !stop.load(Ordering::Acquire) {
                 // Reap finished peer threads even when no new connections
                 // arrive, rather than retaining two handles per reconnect.
@@ -70,8 +73,8 @@ pub(super) fn spawn_accept_loop(
                         let current_count =
                             peers.lock().map_or(config.max_peers, |peers| peers.len());
                         if current_count >= config.max_peers {
-                            drop(stream.shutdown(Shutdown::Both));
                             counters.delivery_failure();
+                            refusal_gate.spawn(stream, &config, &stop, &counters, &workers);
                             continue;
                         }
                         if let Err(error) = register_peer(
