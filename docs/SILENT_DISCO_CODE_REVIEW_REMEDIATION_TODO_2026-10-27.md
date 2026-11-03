@@ -42,12 +42,12 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 
 ## 3. F3 — Never silently lose authoritative transport events (P1)
 
-- [ ] Classify Rust socket transport event types: authoritative admission/control/terminal events vs lossy audio metrics/telemetry; define bounded pressure/acknowledgement semantics.
+- [x] Classify Rust socket transport event types: authoritative admission/control/terminal events vs lossy audio metrics/telemetry; define bounded pressure/acknowledgement semantics. **Evidence:** `rust/silent-disco-core/src/transport/socket/event_delivery_class.rs`, shared send guard and both TCP reader routes, exact-head `513f75f8`, Rust quality job in [CI 41739460845](https://github.com/ekkus93/silent_disco/actions/runs/41739460845) **passed**, [Desktop Lab 41739460850](https://github.com/ekkus93/silent_disco/actions/runs/41739460850) **passed**. The umbrella Android/desktop workflows were not terminal when recorded; this closes only the Rust event-classification requirement.
 - [ ] Replace drop-on-full for accepted JoinRequestReceived and critical control events with bounded reliable delivery or an explicit busy/rejected reply and finite client retry. Do not block audio callback/decoder.
 - [ ] Add deduplication and generation-aware request IDs to prevent duplicate approvals after retry, reconnect or peer-route replacement; preserve order for Start/Pause/Stop/boundaries.
 - [ ] Expose bounded counters/status for congestion, refusals, retries and event loss, avoiding secrets in logs.
 - [ ] Deterministically saturate Rust transport events with join requests and critical controls; prove handled-or-visibly-refused, no indefinite spinner, no ghost admission and no hidden Stop.
-- [ ] Run at least one real-socket multi-peer pressure test, including disconnect/reconnect and high telemetry volume, with explicit bounds and logs.
+- [x] Run at least one real-socket multi-peer pressure test, including disconnect/reconnect and high telemetry volume, with explicit bounds and logs. **Evidence:** `host/telemetry_pressure_tests.rs`, `host/terminal_pressure_tests.rs`, `host/capacity_refusal_tests.rs`; actual loopback 2+ peers, 1,000 telemetry datagrams, bounded queues, busy rejections, Stop, disconnect/reconnect and native PCM replay; exact-head `513f75f8` Rust tests [CI 41739460845](https://github.com/ekkus93/silent_disco/actions/runs/41739460845) Rust-quality job **passed**, [Desktop Lab 41739460850](https://github.com/ekkus93/silent_disco/actions/runs/41739460850) **passed**. This does not close end-to-end F3/F5 or physical acceptance.
 
 ## 4. F4 — Serialize Android native-handle lifetime and generations (P1)
 
