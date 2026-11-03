@@ -64,10 +64,9 @@ impl CapacityRefusalGate {
         // Reap completed refusal workers on every capacity attempt. Without
         // this, repeated short-lived refusals accumulate JoinHandles for the
         // entire host lifetime despite the concurrency permit limit.
-        let (finished, active): (Vec<_>, Vec<_>) =
-            core::mem::take(&mut *handles)
-                .into_iter()
-                .partition(thread::JoinHandle::is_finished);
+        let (finished, active): (Vec<_>, Vec<_>) = core::mem::take(&mut *handles)
+            .into_iter()
+            .partition(thread::JoinHandle::is_finished);
         *handles = active;
         // A detached JoinHandle hides panics. A refusal is never authorized,
         // but a panicking worker must still be visible in host diagnostics.
