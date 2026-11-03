@@ -308,11 +308,9 @@ fn register_peer(
                                     // retransmitted JoinRequest must not create
                                     // another host-actor approval or enrollment.
                                     // A rejected first delivery closes this
-
                                     // connection; a fresh TCP generation may
                                     // submit a new request.
                                     true
-
                                 } else if let Some(listener_id) = pending_join {
                                     let delivered = forward_join_or_refuse(
                                         &event_for_reader,
@@ -320,7 +318,6 @@ fn register_peer(
                                         event,
                                         || {
                                             // Bounded native writer; a completed
-
                                             // reply precedes socket teardown.
                                             let refusal = ProtocolFrame::Control(
                                                 ControlMessage::JoinRejection(JoinRejection {
