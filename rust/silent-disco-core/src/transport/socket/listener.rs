@@ -23,9 +23,8 @@ use super::super::{
 };
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection,
-    fail_loud_on_implicit_shutdown, join_workers, read_control_loop, recv_event,
-    is_best_effort_event, send_authoritative_event, send_event, shutdown_stream,
-    spawn_control_writer,
+    fail_loud_on_implicit_shutdown, is_best_effort_event, join_workers, read_control_loop,
+    recv_event, send_authoritative_event, send_event, shutdown_stream, spawn_control_writer,
 };
 
 pub struct SocketListenerTransport {

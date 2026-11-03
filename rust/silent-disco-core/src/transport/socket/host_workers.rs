@@ -23,10 +23,9 @@ mod capacity_refusal;
 #[path = "host_worker_startup.rs"]
 mod startup;
 use super::shared::{
-    ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
-    is_best_effort_event, reap_finished_workers, send_authoritative_event,
-    send_authoritative_event_bounded, send_event,
-    shutdown_stream, spawn_control_writer,
+    ControlSender, CounterState, ReadControlOutcome, classify_rejection, is_best_effort_event,
+    read_control_loop, reap_finished_workers, send_authoritative_event,
+    send_authoritative_event_bounded, send_event, shutdown_stream, spawn_control_writer,
 };
 use startup::rollback_failed_peer_start;
 

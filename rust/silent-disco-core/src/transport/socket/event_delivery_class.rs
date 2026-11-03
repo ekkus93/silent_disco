@@ -13,9 +13,10 @@ pub(super) fn is_best_effort_event(event: &TransportEvent) -> bool {
         } => true,
         TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
-            frame: ProtocolFrame::Control(
-                ControlMessage::Heartbeat(_) | ControlMessage::SynchronizationReport(_),
-            ),
+            frame:
+                ProtocolFrame::Control(
+                    ControlMessage::Heartbeat(_) | ControlMessage::SynchronizationReport(_),
+                ),
             ..
         } => true,
         _ => false,
@@ -83,7 +84,10 @@ mod tests {
             received_at: MonotonicMillis::new(1),
         };
         let result = std::panic::catch_unwind(|| send_event(&sender, &counters, terminal));
-        assert!(result.is_err(), "critical terminal must never enter lossy delivery");
+        assert!(
+            result.is_err(),
+            "critical terminal must never enter lossy delivery"
+        );
         assert!(receiver.try_recv().is_err());
         assert_eq!(counters.snapshot().best_effort_event_drops, 0);
     }

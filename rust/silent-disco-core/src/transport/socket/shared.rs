@@ -181,7 +181,10 @@ pub(super) fn send_event(
     counters: &CounterState,
     event: TransportEvent,
 ) {
-    assert!(is_best_effort_event(&event), "authoritative events require reliable delivery");
+    assert!(
+        is_best_effort_event(&event),
+        "authoritative events require reliable delivery"
+    );
     match sender.try_send(event) {
         Ok(()) => {}
         Err(TrySendError::Full(_)) => {
@@ -195,14 +198,9 @@ pub(super) fn send_event(
     }
 }
 
-/// Deliver an authoritative TCP control event without letting UDP telemetry
-/// saturation silently consume Start/Pause/Stop or a track boundary.
-///
-/// Only the per-connection TCP reader may call this: while its bounded
-/// application event queue is full it stops reading TCP, allowing kernel
-/// backpressure. It never runs on a UDP receiver or native audio callback.
-/// Shutdown interrupts the wait, so a stopped collector cannot deadlock a
-/// native transport teardown.
+/// TCP control events use bounded backpressure instead of telemetry loss.
+/// Only the TCP reader may block this way; never UDP or a native callback.
+/// Shutdown interrupts a stopped collector without deadlocking teardown.
 pub(super) fn send_authoritative_event<T>(
     sender: &SyncSender<T>,
     stop: &AtomicBool,
