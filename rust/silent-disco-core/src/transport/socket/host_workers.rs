@@ -239,7 +239,6 @@ fn register_peer(
             global_stop,
             counters,
             clock.now(),
-
             config.operation_timeout,
             error,
         );
@@ -477,7 +476,6 @@ pub(super) fn remove_route_if_current(
     {
         routes.remove(device_id);
         true
-
     } else {
         false
     }
@@ -720,7 +718,6 @@ pub(super) fn spawn_udp_receiver(
                                 );
                             }
                         }
-
                     }
                     Err(error)
                         if matches!(

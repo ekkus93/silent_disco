@@ -145,7 +145,8 @@ impl CounterState {
     }
 
     pub(super) fn authoritative_event_failure(&self) {
-        self.authoritative_event_failures.fetch_add(1, Ordering::Relaxed);
+        self.authoritative_event_failures
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub(super) fn mark_worker_panicked(&self) {
@@ -267,7 +268,6 @@ pub(super) struct ControlWrite {
     // the writer's backlog to be transmitted much later. In-flight kernel
     // writes remain ambiguous and are handled by session/generation policy.
     pub deadline: Option<Instant>,
-
 }
 
 #[path = "control_sender.rs"]
@@ -749,7 +749,6 @@ mod terminal_event_pressure_tests {
         assert_eq!(receiver.try_recv().expect("existing event retained"), 1);
         assert!(receiver.try_recv().is_err());
     }
-
 }
 
 pub(super) fn recv_event(

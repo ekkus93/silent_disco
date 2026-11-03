@@ -92,5 +92,8 @@ fn timed_out_authoritative_delivery_has_distinct_failure_counter() {
     assert_eq!(snapshot.authoritative_event_failures, 1);
     assert_eq!(snapshot.best_effort_event_drops, 0);
     assert_eq!(receiver.try_recv().expect("prior event remains"), "Start");
-    assert!(receiver.try_recv().is_err(), "failed Stop cannot leak later");
+    assert!(
+        receiver.try_recv().is_err(),
+        "failed Stop cannot leak later"
+    );
 }

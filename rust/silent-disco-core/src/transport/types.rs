@@ -238,7 +238,6 @@ impl ListenerTransportConfig {
             self.operation_timeout,
         )
     }
-
 }
 
 fn validate_common(
