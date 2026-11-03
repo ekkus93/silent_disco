@@ -1,6 +1,6 @@
 //! A bounded, short-lived refusal path for TCP joins after the host is full.
 //! These sockets never become registered or authorized peers. Only a valid
-//! first JoinRequest supplies the listener ID needed for a v3 JoinRejection.
+//! first `JoinRequest` supplies the listener ID needed for a v3 `JoinRejection`.
 //! Silent, invalid, or excess requests are closed without blocking accept.
 use std::io::Write;
 use std::net::TcpStream;
