@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use crate::protocol::{ControlMessage, ProtocolFrame};
 use crate::transport::test_support::{
-    id_device, id_session, join_request, stream_start, wait_for_authorized,
-    wait_for_control_from, wait_for_frame, wait_for_host_event, wait_until,
+    id_device, id_session, join_request, stream_start, wait_for_authorized, wait_for_control_from,
+    wait_for_frame, wait_for_host_event, wait_until,
 };
 use crate::transport::{
     HostTransportConfig, HostTransportNode, ListenerTransportConfig, ManualTransportClock,
@@ -72,7 +72,10 @@ fn full_host_visibly_refuses_real_join_without_starving_playback_and_recovers() 
     host.broadcast_control(&start)
         .expect("existing authorized peer still receives controls");
     wait_for_frame(first.as_mut(), TransportChannel::Control, |frame| {
-        matches!(frame, ProtocolFrame::Control(ControlMessage::StreamStart(_)))
+        matches!(
+            frame,
+            ProtocolFrame::Control(ControlMessage::StreamStart(_))
+        )
     });
 
     drop(refused.shutdown());

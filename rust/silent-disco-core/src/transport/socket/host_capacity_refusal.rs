@@ -98,7 +98,11 @@ impl CapacityRefusalGate {
                                 },
                             ));
                             if let Ok(bytes) = encode_frame(&refusal) {
-                                if writer.write_all(&bytes).and_then(|()| writer.flush()).is_ok() {
+                                if writer
+                                    .write_all(&bytes)
+                                    .and_then(|()| writer.flush())
+                                    .is_ok()
+                                {
                                     counters.frame_sent(bytes.len());
                                 } else {
                                     counters.delivery_failure();
@@ -130,11 +134,20 @@ mod tests {
         let gate = CapacityRefusalGate::default();
         let first = gate.reserve().expect("first refusal slot");
         let second = gate.reserve().expect("second refusal slot");
-        assert_eq!(gate.in_flight.load(Ordering::Acquire), MAX_CONCURRENT_REFUSALS);
-        assert!(gate.reserve().is_none(), "capacity flood cannot add workers");
+        assert_eq!(
+            gate.in_flight.load(Ordering::Acquire),
+            MAX_CONCURRENT_REFUSALS
+        );
+        assert!(
+            gate.reserve().is_none(),
+            "capacity flood cannot add workers"
+        );
         drop(first);
         let replacement = gate.reserve().expect("released slot is reusable");
-        assert_eq!(gate.in_flight.load(Ordering::Acquire), MAX_CONCURRENT_REFUSALS);
+        assert_eq!(
+            gate.in_flight.load(Ordering::Acquire),
+            MAX_CONCURRENT_REFUSALS
+        );
         drop(second);
         drop(replacement);
         assert_eq!(gate.in_flight.load(Ordering::Acquire), 0);
