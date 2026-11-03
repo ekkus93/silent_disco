@@ -74,7 +74,7 @@ pub(super) fn spawn_accept_loop(
                             peers.lock().map_or(config.max_peers, |peers| peers.len());
                         if current_count >= config.max_peers {
                             counters.delivery_failure();
-                            refusal_gate.spawn(stream, &config, &stop, &counters, &workers);
+                            refusal_gate.spawn(stream, &config, &stop, &counters);
                             continue;
                         }
                         if let Err(error) = register_peer(

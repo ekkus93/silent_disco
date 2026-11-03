@@ -20,6 +20,7 @@ const REFUSAL_DEADLINE: Duration = Duration::from_millis(300);
 #[derive(Default)]
 pub(super) struct CapacityRefusalGate {
     in_flight: Arc<AtomicUsize>,
+    handles: Mutex<Vec<thread::JoinHandle<()>>>,
 }
 
 struct RefusalPermit(Arc<AtomicUsize>);
@@ -48,7 +49,6 @@ impl CapacityRefusalGate {
         config: &HostTransportConfig,
         stop: &Arc<AtomicBool>,
         counters: &Arc<CounterState>,
-        workers: &Mutex<Vec<thread::JoinHandle<()>>>,
     ) -> bool {
         let Some(permit) = self.reserve() else {
             return false; // Dropping stream immediately closes excess probes.
@@ -58,9 +58,13 @@ impl CapacityRefusalGate {
         let session = config.session_id.clone();
         let stop = stop.clone();
         let counters = counters.clone();
-        let Ok(mut handles) = workers.lock() else {
+        let Ok(mut handles) = self.handles.lock() else {
             return false;
         };
+        // Reap completed refusal workers on every capacity attempt. Without
+        // this, repeated short-lived refusals accumulate JoinHandles for the
+        // entire host lifetime despite the concurrency permit limit.
+        handles.retain(|handle| !handle.is_finished());
         let worker = thread::Builder::new()
             .name("silent-disco-capacity-refusal".to_owned())
             .spawn(move || {
@@ -151,5 +155,6 @@ mod tests {
         drop(second);
         drop(replacement);
         assert_eq!(gate.in_flight.load(Ordering::Acquire), 0);
+        assert!(gate.handles.lock().expect("refusal handles").is_empty());
     }
 }
