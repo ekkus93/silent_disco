@@ -64,7 +64,18 @@ impl CapacityRefusalGate {
         // Reap completed refusal workers on every capacity attempt. Without
         // this, repeated short-lived refusals accumulate JoinHandles for the
         // entire host lifetime despite the concurrency permit limit.
-        handles.retain(|handle| !handle.is_finished());
+        let (finished, active): (Vec<_>, Vec<_>) =
+            core::mem::take(&mut *handles)
+                .into_iter()
+                .partition(thread::JoinHandle::is_finished);
+        *handles = active;
+        // A detached JoinHandle hides panics. A refusal is never authorized,
+        // but a panicking worker must still be visible in host diagnostics.
+        for handle in finished {
+            if handle.join().is_err() {
+                counters.mark_worker_panicked();
+            }
+        }
         let worker = thread::Builder::new()
             .name("silent-disco-capacity-refusal".to_owned())
             .spawn(move || {
@@ -124,6 +135,25 @@ impl CapacityRefusalGate {
             true
         } else {
             false
+        }
+    }
+}
+
+impl Drop for CapacityRefusalGate {
+    fn drop(&mut self) {
+        // The accept loop has already observed shutdown. Refusal workers
+        // have bounded reads/writes and must not outlive the host transport.
+        // Joining also makes any worker panic observable before teardown.
+        if let Ok(handles) = self.handles.get_mut() {
+            for handle in handles.drain(..) {
+                if handle.join().is_err() {
+                    // No counters are owned by the gate on shutdown. A panic
+                    // is a lifecycle violation rather than a detached thread.
+                    if !thread::panicking() {
+                        eprintln!("capacity refusal worker panicked during shutdown");
+                    }
+                }
+            }
         }
     }
 }
