@@ -22,7 +22,7 @@ use super::host::{PeerRoute, PeerState};
 mod startup;
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, read_control_loop,
-    reap_finished_workers, send_authoritative_event, send_authoritative_event_bounded, send_event,
+    reap_finished_workers, send_authoritative_event_bounded, send_event,
     shutdown_stream, spawn_control_writer,
 };
 use startup::rollback_failed_peer_start;
@@ -407,8 +407,12 @@ fn register_peer(
                 let _ = remove_route_if_current(&routes_for_reader, &device_id, reader_peer.number);
             }
             counters_for_reader.closed();
-            // Preserve terminal disconnect until delivered or shutdown.
-            send_authoritative_event(
+            // A permanently stalled actor must not retain an unbounded
+            // population of retired TCP workers and exhaust peer capacity.
+            // Give the terminal event a bounded delivery window; if the actor
+            // never drains, record the explicit delivery failure and release
+            // the disconnected peer's slot. No native audio callback waits.
+            send_authoritative_event_bounded(
                 &event_for_reader,
                 &shutdown_for_reader,
                 &counters_for_reader,
@@ -417,8 +421,9 @@ fn register_peer(
                     error: terminal_error,
                     received_at: clock_for_reader.now(),
                 },
+                join_timeout,
             );
-            // Release the admission slot only after terminal delivery.
+            // Release the admission slot after delivery or its deadline.
             drop(
                 peers_for_reader
                     .lock()
