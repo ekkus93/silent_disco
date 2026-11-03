@@ -63,6 +63,38 @@ fn full_host_visibly_refuses_real_join_without_starving_playback_and_recovers() 
     });
     assert_eq!(host.counters().accepted_control_connections, 1);
     assert_eq!(host.counters().delivery_failures, 1);
+
+    // Repeated real TCP joins while the slot remains occupied must not
+    // accumulate admitted peers or strand an existing playback connection.
+    // Every attempt waits for its own refusal before starting the next one,
+    // so this also exercises worker-permit reuse and finished-handle reaping.
+    for attempt in 0..24 {
+        let churn_id = id_device(&format!("capacity-churn-{attempt}"));
+        let mut churn = factory
+            .connect_listener(
+                ListenerTransportConfig::loopback(
+                    session.clone(),
+                    churn_id.clone(),
+                    host.endpoint(),
+                ),
+                clock.clone(),
+            )
+            .expect("connect excess TCP listener");
+        churn
+            .send_control(&join_request(&session, &churn_id, "Excess listener"))
+            .expect("send excess join");
+        wait_for_frame(churn.as_mut(), TransportChannel::Control, |frame| {
+            matches!(
+                frame,
+                ProtocolFrame::Control(ControlMessage::JoinRejection(rejection))
+                    if rejection.listener_id == churn_id
+                        && rejection.reason.contains("capacity")
+            )
+        });
+        drop(churn.shutdown());
+    }
+    assert_eq!(host.counters().accepted_control_connections, 1);
+    assert_eq!(host.counters().delivery_failures, 25);
     assert!(
         host.peers.lock().expect("peer registry").len() == 1,
         "refused socket must never consume a registered peer slot"
