@@ -71,10 +71,7 @@ pub(super) fn spawn_accept_loop(
                             drop(stream.shutdown(Shutdown::Both));
                             break;
                         }
-                        // A disconnected peer's terminal event retains a bounded
-                        // admission slot until the actor consumes it. Otherwise
-                        // reconnect churn with a stopped collector could silently
-                        // erase disconnects or grow an unbounded backlog.
+                        // Retained terminals consume admission slots until collected.
                         let current_count = peers.lock().map_or(config.max_peers, |peers| peers.len());
                         if current_count.saturating_add(terminal_mailbox.pending()) >= config.max_peers {
                             counters.busy_admission_refusal();
@@ -419,9 +416,7 @@ fn register_peer(
                 let _ = remove_route_if_current(&routes_for_reader, &device_id, reader_peer.number);
             }
             counters_for_reader.closed();
-            // A stopped actor must not park this TCP reader indefinitely
-            // behind its full event queue. The separate, admission-budgeted
-            // mailbox retains this terminal until the collector resumes.
+            // Preserve disconnect without parking the peer worker on a stalled actor.
             if !terminal_mailbox_for_reader.push(
                 TransportEvent::PeerDisconnected {
                     peer: reader_peer.transport_peer(),
@@ -430,8 +425,7 @@ fn register_peer(
                 },
                 terminal_capacity,
             ) {
-                // The accept gate reserves one mailbox slot per live peer.
-                // Exhaustion therefore indicates an invariant violation.
+                // Mailbox overflow violates the joint admission budget.
                 counters_for_reader.delivery_failure();
                 counters_for_reader.authoritative_event_failure();
                 counters_for_reader.mark_worker_panicked();
