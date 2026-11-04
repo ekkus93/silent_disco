@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -22,6 +22,9 @@ use super::host::{PeerRoute, PeerState, terminal_mailbox::TerminalEventMailbox};
 mod capacity_refusal;
 #[path = "host_worker_startup.rs"]
 mod startup;
+#[path = "host_join_delivery.rs"]
+mod join_delivery;
+use join_delivery::forward_join_or_refuse;
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, is_best_effort_event,
     read_control_loop, reap_finished_workers, send_authoritative_event_bounded, send_event,
@@ -310,13 +313,13 @@ fn register_peer(
                                     // submit a new request.
                                     true
                                 } else if let Some(listener_id) = pending_join {
-                                    let delivered = forward_join_or_refuse(
+                                    match forward_join_or_refuse(
                                         &event_for_reader,
                                         &counters_for_reader,
                                         event,
                                         || {
-                                            // Bounded native writer; a completed
-                                            // reply precedes socket teardown.
+                                            // A completed writer acknowledgement, not
+                                            // merely an attempted send, is a refusal.
                                             let refusal = ProtocolFrame::Control(
                                                 ControlMessage::JoinRejection(JoinRejection {
                                                     session_id: session_id.clone(),
@@ -325,23 +328,28 @@ fn register_peer(
                                                         .to_owned(),
                                                 }),
                                             );
-                                            if let Ok(bytes) = encode_frame(&refusal) {
-                                                drop(reader_peer.sender.send(bytes));
-                                            }
+                                            let bytes = encode_frame(&refusal).map_err(|error| {
+                                                TransportError::protocol(TransportChannel::Control, &error)
+                                            })?;
+                                            reader_peer.sender.send(bytes).map(|_| ())
                                         },
-                                    );
-                                    if !delivered {
-                                        // The listener received a busy refusal.
-                                        // Report the same failure to the actor's
-                                        // terminal event, not a misleading clean
-                                        // disconnect with no error.
-                                        terminal_error = Some(TransportError::new(
-                                            TransportErrorKind::QueueFull,
-                                            TransportChannel::Control,
-                                            "host join queue full; listener refused",
-                                        ));
+                                    ) {
+                                        Ok(true) => true,
+                                        Ok(false) => {
+                                            terminal_error = Some(TransportError::new(
+                                                TransportErrorKind::QueueFull,
+                                                TransportChannel::Control,
+                                                "host join queue full; busy rejection delivered",
+                                            ));
+                                            false
+                                        }
+                                        Err(error) => {
+                                            // Closed or congested writer: do not claim the
+                                            // listener received a retryable busy response.
+                                            terminal_error = Some(error);
+                                            false
+                                        }
                                     }
-                                    delivered
                                 } else if is_best_effort_event(&event) {
                                     // Drop only best-effort telemetry when the bounded
                                     // actor queue is full; critical controls stay ordered.
@@ -481,39 +489,6 @@ pub(super) fn remove_route_if_current(
         true
     } else {
         false
-    }
-}
-
-/**
- * Preserve the host actor's bounded event queue without silently accepting
- * an admission request the actor will never see. Only join requests use this
- * path; other control/telemetry events retain their existing classification.
- * The refusal callback runs on the TCP worker, never the audio callback.
- */
-fn forward_join_or_refuse<T>(
-    sender: &SyncSender<T>,
-    counters: &CounterState,
-    event: T,
-    refuse: impl FnOnce(),
-) -> bool {
-    match sender.try_send(event) {
-        Ok(()) => true,
-        Err(TrySendError::Full(_)) => {
-            counters.queue_overflow();
-            counters.delivery_failure();
-            counters.busy_admission_refusal();
-            refuse();
-            false
-        }
-        Err(TrySendError::Disconnected(_)) => {
-            counters.busy_admission_refusal();
-            // The actor receiver is gone. Do not silently treat an accepted
-            // JoinRequest as delivered; attempt a bounded busy refusal before
-            // the TCP reader tears down this provisional peer.
-            counters.delivery_failure();
-            refuse();
-            false
-        }
     }
 }
 

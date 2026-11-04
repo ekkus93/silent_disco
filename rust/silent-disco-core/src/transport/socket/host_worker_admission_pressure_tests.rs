@@ -82,7 +82,8 @@ fn saturated_join_queue_is_refused_without_silent_acceptance() {
     let refused = AtomicBool::new(false);
     assert!(!forward_join_or_refuse(&sender, &counters, 2_u8, || {
         refused.store(true, Ordering::Release);
-    }));
+        Ok(())
+    }).expect("writer acknowledged busy refusal"));
     assert!(refused.load(Ordering::Acquire));
     assert_eq!(receiver.try_recv().expect("original event"), 1);
     assert!(receiver.try_recv().is_err());
@@ -98,7 +99,8 @@ fn disconnected_join_collector_refuses_instead_of_silent_acceptance() {
     let refused = AtomicBool::new(false);
     assert!(!forward_join_or_refuse(&sender, &counters, 2, || {
         refused.store(true, Ordering::Release);
-    }));
+        Ok(())
+    }).expect("writer acknowledged disconnected collector refusal"));
     assert!(refused.load(Ordering::Acquire));
     assert_eq!(counters.snapshot().delivery_failures, 1);
 }
@@ -110,8 +112,48 @@ fn open_join_queue_delivers_once_without_refusing() {
 
     assert!(forward_join_or_refuse(&sender, &counters, 17_u8, || {
         panic!("join was delivered, must not send busy response");
-    }));
+    }).expect("join reaches actor"));
     assert_eq!(receiver.try_recv().expect("delivered join"), 17);
     assert_eq!(counters.snapshot().queue_overflows, 0);
     assert_eq!(counters.snapshot().delivery_failures, 0);
+}
+
+#[test]
+fn failed_tcp_busy_reply_is_reported_not_counted_as_delivered() {
+    let (sender, receiver) = sync_channel(1);
+    let counters = CounterState::default();
+    sender.send(1_u8).expect("fill actor queue");
+    let error = forward_join_or_refuse(&sender, &counters, 2_u8, || {
+        Err(TransportError::new(
+            TransportErrorKind::Timeout,
+            TransportChannel::Control,
+            "TCP control writer did not acknowledge busy reply",
+        ))
+    })
+    .expect_err("failed writer cannot be treated as delivered refusal");
+    assert_eq!(error.kind, TransportErrorKind::Delivery);
+    assert!(error.message.contains("busy refusal"));
+    assert_eq!(receiver.try_recv().expect("previous event retained"), 1);
+    assert!(receiver.try_recv().is_err(), "join was never admitted");
+    assert_eq!(counters.snapshot().queue_overflows, 1);
+    assert_eq!(counters.snapshot().busy_admission_refusals, 1);
+    assert_eq!(counters.snapshot().delivery_failures, 2);
+}
+
+#[test]
+fn failed_tcp_busy_reply_after_actor_disconnect_is_visible() {
+    let (sender, receiver) = sync_channel::<u8>(1);
+    drop(receiver);
+    let counters = CounterState::default();
+    let result = forward_join_or_refuse(&sender, &counters, 9, || {
+        Err(TransportError::new(
+            TransportErrorKind::ShuttingDown,
+            TransportChannel::Control,
+            "control socket retired",
+        ))
+    });
+    assert_eq!(result.expect_err("refusal failed").kind, TransportErrorKind::Delivery);
+    assert_eq!(counters.snapshot().queue_overflows, 0);
+    assert_eq!(counters.snapshot().delivery_failures, 2);
+    assert_eq!(counters.snapshot().busy_admission_refusals, 1);
 }
