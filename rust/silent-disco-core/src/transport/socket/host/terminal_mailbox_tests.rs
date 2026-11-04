@@ -6,7 +6,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::transport::test_support::id_session;
-use crate::transport::{HostTransportConfig, HostTransportNode, ManualTransportClock, TransportEvent};
+use crate::transport::{
+    HostTransportConfig, HostTransportNode, ManualTransportClock, TransportEvent,
+};
 
 use super::SocketHostTransport;
 
@@ -38,21 +40,24 @@ fn wait_for(label: &str, predicate: impl Fn() -> bool) {
 fn full_actor_queue_retains_terminal_and_reclaims_slot_without_polling() {
     let mut host = one_peer_host();
     let raw = connect(&host);
-    wait_for("peer accepted", || host.counters().accepted_control_connections == 1);
+    wait_for("peer accepted", || {
+        host.counters().accepted_control_connections == 1
+    });
     drop(raw);
     // The PeerAccepted event still occupies the ONLY normal event slot.
     // No collector is running; a blocking terminal send would deadlock
     // teardown and keep the host's max_peers=1 admission slot forever.
     wait_for("retired peer slot", || {
-        host.peers.lock().expect("peer registry").is_empty()
-            && host.terminal_mailbox.pending() == 1
+        host.peers.lock().expect("peer registry").is_empty() && host.terminal_mailbox.pending() == 1
     });
     assert!(matches!(
-        host.recv_event(Duration::from_secs(1)).expect("first event"),
+        host.recv_event(Duration::from_secs(1))
+            .expect("first event"),
         TransportEvent::PeerAccepted { .. }
     ));
     assert!(matches!(
-        host.recv_event(Duration::from_secs(1)).expect("retained disconnect"),
+        host.recv_event(Duration::from_secs(1))
+            .expect("retained disconnect"),
         TransportEvent::PeerDisconnected { .. }
     ));
     assert_eq!(host.counters().authoritative_event_failures, 0);
@@ -64,13 +69,19 @@ fn full_actor_queue_retains_terminal_and_reclaims_slot_without_polling() {
 fn terminal_backlog_caps_reconnect_churn_and_drains_before_new_admission() {
     let mut host = one_peer_host();
     let first = connect(&host);
-    wait_for("first peer accepted", || host.counters().accepted_control_connections == 1);
+    wait_for("first peer accepted", || {
+        host.counters().accepted_control_connections == 1
+    });
     drop(first);
-    wait_for("first terminal retained", || host.terminal_mailbox.pending() == 1);
+    wait_for("first terminal retained", || {
+        host.terminal_mailbox.pending() == 1
+    });
     let refused = connect(&host);
     // With the collector stopped, the retired terminal consumes the
     // admission budget, preventing infinitely many new workers/tombstones.
-    wait_for("busy capacity refusal", || host.counters().busy_admission_refusals > 0);
+    wait_for("busy capacity refusal", || {
+        host.counters().busy_admission_refusals > 0
+    });
     assert_eq!(host.counters().accepted_control_connections, 1);
     drop(refused);
     assert!(matches!(
@@ -82,14 +93,18 @@ fn terminal_backlog_caps_reconnect_churn_and_drains_before_new_admission() {
         TransportEvent::PeerDisconnected { .. }
     ));
     let second = connect(&host);
-    wait_for("new admission after drain", || host.counters().accepted_control_connections == 2);
+    wait_for("new admission after drain", || {
+        host.counters().accepted_control_connections == 2
+    });
     assert!(matches!(
-        host.recv_event(Duration::from_secs(1)).expect("second accepted"),
+        host.recv_event(Duration::from_secs(1))
+            .expect("second accepted"),
         TransportEvent::PeerAccepted { .. }
     ));
     drop(second);
     assert!(matches!(
-        host.recv_event(Duration::from_secs(2)).expect("second terminal"),
+        host.recv_event(Duration::from_secs(2))
+            .expect("second terminal"),
         TransportEvent::PeerDisconnected { .. }
     ));
     assert_eq!(host.counters().authoritative_event_failures, 0);

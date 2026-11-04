@@ -24,8 +24,8 @@ mod capacity_refusal;
 mod startup;
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, is_best_effort_event,
-    read_control_loop, reap_finished_workers, send_authoritative_event,
-    send_authoritative_event_bounded, send_event, shutdown_stream, spawn_control_writer,
+    read_control_loop, reap_finished_workers, send_authoritative_event_bounded, send_event,
+    shutdown_stream, spawn_control_writer,
 };
 use startup::rollback_failed_peer_start;
 
@@ -72,8 +72,11 @@ pub(super) fn spawn_accept_loop(
                             break;
                         }
                         // Retained terminals consume admission slots until collected.
-                        let current_count = peers.lock().map_or(config.max_peers, |peers| peers.len());
-                        if current_count.saturating_add(terminal_mailbox.pending()) >= config.max_peers {
+                        let current_count =
+                            peers.lock().map_or(config.max_peers, |peers| peers.len());
+                        if current_count.saturating_add(terminal_mailbox.pending())
+                            >= config.max_peers
+                        {
                             counters.busy_admission_refusal();
                             counters.delivery_failure();
                             refusal_gate.spawn(stream, &config, &stop, &counters);

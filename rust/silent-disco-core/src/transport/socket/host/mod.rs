@@ -42,9 +42,6 @@ mod lookup;
 mod multi_peer_control_pressure_tests;
 mod node;
 mod peer;
-pub(super) mod terminal_mailbox;
-#[cfg(test)]
-mod terminal_mailbox_tests;
 #[cfg(test)]
 mod reconnect_snapshot_tests;
 #[cfg(test)]
@@ -59,6 +56,9 @@ mod targeted_admission_isolation_tests;
 mod targeted_sync_tests;
 #[cfg(test)]
 mod telemetry_pressure_tests;
+pub(super) mod terminal_mailbox;
+#[cfg(test)]
+mod terminal_mailbox_tests;
 #[cfg(test)]
 mod terminal_pressure_tests;
 #[cfg(test)]

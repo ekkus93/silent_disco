@@ -14,7 +14,10 @@ pub(super) struct TerminalEventMailbox {
 
 impl TerminalEventMailbox {
     pub(super) fn pending(&self) -> usize {
-        self.pending.lock().expect("terminal mailbox lock poisoned").len()
+        self.pending
+            .lock()
+            .expect("terminal mailbox lock poisoned")
+            .len()
     }
 
     pub(super) fn push(&self, event: TransportEvent, capacity: usize) -> bool {
@@ -27,6 +30,9 @@ impl TerminalEventMailbox {
     }
 
     pub(super) fn pop(&self) -> Option<TransportEvent> {
-        self.pending.lock().expect("terminal mailbox lock poisoned").pop_front()
+        self.pending
+            .lock()
+            .expect("terminal mailbox lock poisoned")
+            .pop_front()
     }
 }

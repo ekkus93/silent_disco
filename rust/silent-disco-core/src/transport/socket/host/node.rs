@@ -527,7 +527,10 @@ impl HostTransportNode for SocketHostTransport {
             }
             // A terminal may arrive while the application blocks waiting for
             // a control event. Recheck the mailbox at a bounded cadence.
-            match recv_event(&self.event_receiver, remaining.min(Duration::from_millis(10))) {
+            match recv_event(
+                &self.event_receiver,
+                remaining.min(Duration::from_millis(10)),
+            ) {
                 Ok(event) => return Ok(event),
                 Err(error) if error.kind == TransportErrorKind::Timeout => {}
                 Err(error) => return Err(error),
