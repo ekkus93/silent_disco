@@ -20,16 +20,16 @@ use super::super::{
 use super::host::{PeerRoute, PeerState, terminal_mailbox::TerminalEventMailbox};
 #[path = "host_capacity_refusal.rs"]
 mod capacity_refusal;
-#[path = "host_worker_startup.rs"]
-mod startup;
 #[path = "host_join_delivery.rs"]
 mod join_delivery;
-use join_delivery::forward_join_or_refuse;
+#[path = "host_worker_startup.rs"]
+mod startup;
 use super::shared::{
     ControlSender, CounterState, ReadControlOutcome, classify_rejection, is_best_effort_event,
     read_control_loop, reap_finished_workers, send_authoritative_event_bounded, send_event,
     shutdown_stream, spawn_control_writer,
 };
+use join_delivery::forward_join_or_refuse;
 use startup::rollback_failed_peer_start;
 
 #[allow(clippy::too_many_arguments)]

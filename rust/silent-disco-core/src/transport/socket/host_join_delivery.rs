@@ -4,9 +4,9 @@
 //! and surfaces its failure on the terminal event.
 use std::sync::mpsc::{SyncSender, TrySendError};
 
-use crate::transport::{TransportError, TransportChannel, TransportErrorKind};
+use crate::transport::{TransportChannel, TransportError, TransportErrorKind};
 
-use super::shared::CounterState;
+use super::super::shared::CounterState;
 
 /// `Ok(true)` means forwarded to actor, `Ok(false)` means busy refusal
 /// confirmed by the TCP writer. `Err` means neither was delivered.
