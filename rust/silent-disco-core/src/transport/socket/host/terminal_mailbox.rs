@@ -20,7 +20,11 @@ impl TerminalEventMailbox {
             .len()
     }
 
-    pub(in crate::transport::socket) fn push(&self, event: TransportEvent, capacity: usize) -> bool {
+    pub(in crate::transport::socket) fn push(
+        &self,
+        event: TransportEvent,
+        capacity: usize,
+    ) -> bool {
         let mut pending = self.pending.lock().expect("terminal mailbox lock poisoned");
         if pending.len() >= capacity {
             return false;
