@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use crate::transport::TransportEvent;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(in crate::transport::socket) struct TerminalEventMailbox {
     pending: Mutex<VecDeque<TransportEvent>>,
 }
