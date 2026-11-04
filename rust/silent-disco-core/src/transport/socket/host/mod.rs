@@ -42,6 +42,9 @@ mod lookup;
 mod multi_peer_control_pressure_tests;
 mod node;
 mod peer;
+pub(super) mod terminal_mailbox;
+#[cfg(test)]
+mod terminal_mailbox_tests;
 #[cfg(test)]
 mod reconnect_snapshot_tests;
 #[cfg(test)]
@@ -483,6 +486,7 @@ pub struct SocketHostTransport {
     stop: Arc<AtomicBool>,
     counters: Arc<CounterState>,
     peers: Arc<Mutex<HashMap<u64, Arc<PeerState>>>>,
+    terminal_mailbox: Arc<terminal_mailbox::TerminalEventMailbox>,
     routes: Arc<Mutex<HashMap<DeviceId, PeerRoute>>>,
     // Serializes control broadcasts with authorization replay. The new peer
     // must receive its cached StreamStart before any live TrackBoundary.

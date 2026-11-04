@@ -17,7 +17,7 @@ use super::super::{
     HostTransportConfig, TransportChannel, TransportClock, TransportError, TransportErrorKind,
     TransportEvent, TransportPeer,
 };
-use super::host::{PeerRoute, PeerState};
+use super::host::{PeerRoute, PeerState, terminal_mailbox::TerminalEventMailbox};
 #[path = "host_capacity_refusal.rs"]
 mod capacity_refusal;
 #[path = "host_worker_startup.rs"]
@@ -36,6 +36,7 @@ pub(super) fn spawn_accept_loop(
     stop: Arc<AtomicBool>,
     counters: Arc<CounterState>,
     peers: Arc<Mutex<HashMap<u64, Arc<PeerState>>>>,
+    terminal_mailbox: Arc<TerminalEventMailbox>,
     routes: Arc<Mutex<HashMap<DeviceId, PeerRoute>>>,
     workers: Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
     event_sender: SyncSender<TransportEvent>,
@@ -70,9 +71,12 @@ pub(super) fn spawn_accept_loop(
                             drop(stream.shutdown(Shutdown::Both));
                             break;
                         }
-                        let current_count =
-                            peers.lock().map_or(config.max_peers, |peers| peers.len());
-                        if current_count >= config.max_peers {
+                        // A disconnected peer's terminal event retains a bounded
+                        // admission slot until the actor consumes it. Otherwise
+                        // reconnect churn with a stopped collector could silently
+                        // erase disconnects or grow an unbounded backlog.
+                        let current_count = peers.lock().map_or(config.max_peers, |peers| peers.len());
+                        if current_count.saturating_add(terminal_mailbox.pending()) >= config.max_peers {
                             counters.busy_admission_refusal();
                             counters.delivery_failure();
                             refusal_gate.spawn(stream, &config, &stop, &counters);
@@ -85,6 +89,7 @@ pub(super) fn spawn_accept_loop(
                             &stop,
                             &counters,
                             &peers,
+                            &terminal_mailbox,
                             &routes,
                             &workers,
                             &event_sender,
@@ -145,6 +150,7 @@ fn register_peer(
     global_stop: &Arc<AtomicBool>,
     counters: &Arc<CounterState>,
     peers: &Arc<Mutex<HashMap<u64, Arc<PeerState>>>>,
+    terminal_mailbox: &Arc<TerminalEventMailbox>,
     routes: &Arc<Mutex<HashMap<DeviceId, PeerRoute>>>,
     workers: &Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
     event_sender: &SyncSender<TransportEvent>,
@@ -255,6 +261,8 @@ fn register_peer(
     let io_timeout = config.io_timeout;
     let join_timeout = config.operation_timeout;
     let shutdown_for_reader = global_stop.clone();
+    let terminal_mailbox_for_reader = terminal_mailbox.clone();
+    let terminal_capacity = config.max_peers;
     let reader = thread::Builder::new()
         .name(format!("silent-disco-control-reader-{number}"))
         .spawn(move || {
@@ -411,17 +419,24 @@ fn register_peer(
                 let _ = remove_route_if_current(&routes_for_reader, &device_id, reader_peer.number);
             }
             counters_for_reader.closed();
-            // Preserve terminal disconnect until delivered or shutdown.
-            send_authoritative_event(
-                &event_for_reader,
-                &shutdown_for_reader,
-                &counters_for_reader,
+            // A stopped actor must not park this TCP reader indefinitely
+            // behind its full event queue. The separate, admission-budgeted
+            // mailbox retains this terminal until the collector resumes.
+            if !terminal_mailbox_for_reader.push(
                 TransportEvent::PeerDisconnected {
                     peer: reader_peer.transport_peer(),
                     error: terminal_error,
                     received_at: clock_for_reader.now(),
                 },
-            );
+                terminal_capacity,
+            ) {
+                // The accept gate reserves one mailbox slot per live peer.
+                // Exhaustion therefore indicates an invariant violation.
+                counters_for_reader.delivery_failure();
+                counters_for_reader.authoritative_event_failure();
+                counters_for_reader.mark_worker_panicked();
+                shutdown_for_reader.store(true, Ordering::Release);
+            }
             // Release the admission slot only after terminal delivery.
             drop(
                 peers_for_reader

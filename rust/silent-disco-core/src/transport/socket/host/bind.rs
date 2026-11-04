@@ -13,6 +13,7 @@ use super::super::super::{
 use super::super::host_workers::{spawn_accept_loop, spawn_udp_receiver, worker_registry_error};
 use super::super::shared::CounterState;
 use super::SocketHostTransport;
+use super::terminal_mailbox::TerminalEventMailbox;
 
 /// Bounds how long a single UDP `send_to` may block on `sync_socket`/
 /// `audio_socket`. Neither socket is ever set non-blocking, because
@@ -165,6 +166,7 @@ impl SocketHostTransport {
         let stop = Arc::new(AtomicBool::new(false));
         let counters = Arc::new(CounterState::default());
         let peers = Arc::new(Mutex::new(HashMap::new()));
+        let terminal_mailbox = Arc::new(TerminalEventMailbox::default());
         let routes = Arc::new(Mutex::new(HashMap::new()));
         let workers = Arc::new(Mutex::new(Vec::new()));
         let (event_sender, event_receiver) = sync_channel(config.event_queue_capacity);
@@ -176,6 +178,7 @@ impl SocketHostTransport {
             stop.clone(),
             counters.clone(),
             peers.clone(),
+            terminal_mailbox.clone(),
             routes.clone(),
             workers.clone(),
             event_sender.clone(),
@@ -228,6 +231,7 @@ impl SocketHostTransport {
             stop,
             counters,
             peers,
+            terminal_mailbox,
             routes,
             control_delivery: Arc::new(Mutex::new(())),
             playback_controls: Mutex::new(super::PlaybackControls::default()),

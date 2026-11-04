@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::domain::DeviceId;
 use crate::protocol::{ControlMessage, ProtocolFrame, encode_frame};
@@ -511,7 +511,28 @@ impl HostTransportNode for SocketHostTransport {
     }
 
     fn recv_event(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError> {
-        recv_event(&self.event_receiver, timeout)
+        let started = Instant::now();
+        loop {
+            // Drain older accepted/control events before a terminal whose
+            // reader has already exited. Preserve per-peer causal order.
+            if let Ok(event) = self.event_receiver.try_recv() {
+                return Ok(event);
+            }
+            if let Some(event) = self.terminal_mailbox.pop() {
+                return Ok(event);
+            }
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return recv_event(&self.event_receiver, Duration::ZERO);
+            }
+            // A terminal may arrive while the application blocks waiting for
+            // a control event. Recheck the mailbox at a bounded cadence.
+            match recv_event(&self.event_receiver, remaining.min(Duration::from_millis(10))) {
+                Ok(event) => return Ok(event),
+                Err(error) if error.kind == TransportErrorKind::Timeout => {}
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     fn counters(&self) -> TransportCounters {
