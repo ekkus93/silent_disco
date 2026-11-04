@@ -8,19 +8,19 @@ use std::sync::Mutex;
 use crate::transport::TransportEvent;
 
 #[derive(Debug, Default)]
-pub(super) struct TerminalEventMailbox {
+pub(in crate::transport::socket) struct TerminalEventMailbox {
     pending: Mutex<VecDeque<TransportEvent>>,
 }
 
 impl TerminalEventMailbox {
-    pub(super) fn pending(&self) -> usize {
+    pub(in crate::transport::socket) fn pending(&self) -> usize {
         self.pending
             .lock()
             .expect("terminal mailbox lock poisoned")
             .len()
     }
 
-    pub(super) fn push(&self, event: TransportEvent, capacity: usize) -> bool {
+    pub(in crate::transport::socket) fn push(&self, event: TransportEvent, capacity: usize) -> bool {
         let mut pending = self.pending.lock().expect("terminal mailbox lock poisoned");
         if pending.len() >= capacity {
             return false;
@@ -29,7 +29,7 @@ impl TerminalEventMailbox {
         true
     }
 
-    pub(super) fn pop(&self) -> Option<TransportEvent> {
+    pub(in crate::transport::socket) fn pop(&self) -> Option<TransportEvent> {
         self.pending
             .lock()
             .expect("terminal mailbox lock poisoned")
