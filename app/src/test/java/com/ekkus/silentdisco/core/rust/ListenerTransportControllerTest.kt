@@ -35,6 +35,35 @@ class ListenerTransportControllerTest {
     }
 
     @Test
+    fun leaveBeforeConnectFailsInsteadOfReportingDeliveredControl() = runTest {
+        val controller = ListenerTransportController()
+        try {
+            val failure = runCatching {
+                controller.sendDisconnect("leaving")
+            }.exceptionOrNull()
+            assertThat(failure).isInstanceOf(IllegalStateException::class.java)
+            assertThat(failure?.message).contains("disconnected before Leave control delivery")
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun leaveAfterDisconnectCannotBeReportedAsDelivered() = runTest {
+        val controller = ListenerTransportController()
+        try {
+            controller.disconnect("session ended")
+            val failure = runCatching {
+                controller.sendDisconnect("stale Leave")
+            }.exceptionOrNull()
+            assertThat(failure).isInstanceOf(IllegalStateException::class.java)
+            assertThat(failure?.message).contains("disconnected before Leave control delivery")
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun syncBeforeConnectFailsInsteadOfSilentlyWaitingForClockResponse() = runTest {
         val controller = ListenerTransportController()
         try {

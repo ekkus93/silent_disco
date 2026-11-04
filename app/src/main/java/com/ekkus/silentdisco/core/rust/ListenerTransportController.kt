@@ -126,7 +126,11 @@ class ListenerTransportController : ListenerTransport {
     }
 
     override suspend fun sendDisconnect(reason: String) {
-        withHandle { it.sendDisconnect(reason) }
+        // A Leave control queued behind Stop/rebind must not report success
+        // when its original native generation has already been retired.
+        checkNotNull(withHandle { it.sendDisconnect(reason) }) {
+            "Listener transport disconnected before Leave control delivery"
+        }
     }
 
     override suspend fun sendSyncRequest(correlationId: ULong, localSendElapsedMs: ULong) {
