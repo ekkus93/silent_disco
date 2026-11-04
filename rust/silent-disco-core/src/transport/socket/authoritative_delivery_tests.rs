@@ -97,3 +97,20 @@ fn timed_out_authoritative_delivery_has_distinct_failure_counter() {
         "failed Stop cannot leak later"
     );
 }
+
+#[test]
+fn already_stopped_collector_reports_authoritative_loss_without_queue_pressure() {
+    let stop = AtomicBool::new(true);
+    let counters = CounterState::default();
+    let (sender, receiver) = sync_channel(1);
+    assert!(
+        !send_authoritative_event(&sender, &stop, &counters, "Stop"),
+        "shutdown must reject a new authoritative event",
+    );
+    let snapshot = counters.snapshot();
+    assert_eq!(snapshot.queue_overflows, 0);
+    assert_eq!(snapshot.delivery_failures, 1);
+    assert_eq!(snapshot.authoritative_event_failures, 1);
+    assert_eq!(snapshot.best_effort_event_drops, 0);
+    assert!(receiver.try_recv().is_err());
+}

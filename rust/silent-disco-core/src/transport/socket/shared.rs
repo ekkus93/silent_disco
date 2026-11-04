@@ -234,10 +234,10 @@ fn send_authoritative_event_until<T>(
     let mut congested = false;
     loop {
         if stop.load(Ordering::Acquire) {
-            if congested {
-                counters.delivery_failure();
-                counters.authoritative_event_failure();
-            }
+            // Even an immediately cancelled authoritative event is a failed
+            // delivery. Do not hide it merely because the queue was empty.
+            counters.delivery_failure();
+            counters.authoritative_event_failure();
             return false;
         }
         match sender.try_send(event) {
