@@ -1408,3 +1408,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Ran manual_real_android_listener_plays_a_song_change (ADB serial R5CW31AX4FL, ALLOW_SHARED_ADDRESS_SPACE=1, PAUSE_SECS=90): PASSED, 7,119/7,119 packets, owner heard the scale. Logcat SilentDiscoOboe: open #1 only; at resume "rebind #1 onto the existing stream (opens=1)". No reopen.
 - Harness fixes: the ADB automation waited for a "Protocol version: " line the UI no longer shows; changed to the "Host: " summary line (automation.rs). The first two failed runs were a launcher overlay and that stale check; logcat `SilentDiscoOboe` is a cheap way to count output opens without the Diagnostics screen.
 - Not covered: leaked poll jobs, duplicate listener. Item 6 stays unchecked (no CI evidence for this check).
+
+## 2026-11-05T22:03:00Z - Sonnet 5.5 - Ralph loop iteration 14: F4 item 6 leaked-poll and duplicate-poller tests
+- Host and listener poll loops each exit via THREE independent guards (isActive, handle identity, poll lease), so single-guard mutations never fail any test. Wrote property tests instead (host VM-level and listener, 8 cycles): record close-while-polling, poll-after-close, two concurrent pollers on one handle. Killed by: awaitPoll={true}; and all three loop guards removed together (M2 also fails an existing listener test).
+- Gate: Android test lintDebug OK, line counts OK. Item 6 stays UNCHECKED until hosted CI covers the new tests. Next: F6 backup/restore.

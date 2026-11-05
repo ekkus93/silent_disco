@@ -173,6 +173,61 @@ class MainViewModelHostRebindRaceTest {
         }
     }
 
+    @Test
+    fun noHandleIsClosedWhilePolledAndNoPollerOutlivesItsHandleAcrossSessionSwitches() = runTest(dispatcher) {
+        val violations = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val handles = List(CYCLES) { index ->
+            val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+            val active = java.util.concurrent.atomic.AtomicInteger(0)
+            val native = Mockito.mock(FfiHostTransportHandle::class.java)
+            Mockito.doAnswer {
+                if (closed.get()) violations += "handle $index polled after close"
+                if (active.incrementAndGet() > 1) violations += "handle $index has two concurrent pollers"
+                try {
+                    Thread.sleep(5)
+                } finally {
+                    active.decrementAndGet()
+                }
+                null
+            }.`when`(native).pollEvent(500uL)
+            Mockito.doAnswer {
+                if (active.get() > 0) violations += "handle $index closed while a poll was in flight"
+                closed.set(true)
+                null
+            }.`when`(native).close()
+            native
+        }
+        val queue = ArrayDeque(handles)
+        val transport = HostTransportController(
+            callDispatcher = Dispatchers.IO,
+            bindHandle = { _, _, _, _, _ -> queue.removeFirst() },
+        )
+        val harness = newTestMainViewModelHarness(hostTransportController = transport)
+        try {
+            harness.viewModel.ensureRustHostCore()
+            advanceUntilIdle()
+            repeat(CYCLES) { cycle ->
+                startHosting(harness, "session-$cycle", "op-$cycle")
+                awaitRealDispatchHop {
+                    harness.hostCoreController.platformOperationSucceededCalls.size == cycle + 1
+                }
+                Thread.sleep(20)
+            }
+            harness.hostCoreController.emit(
+                FfiCoreNotification.PlatformEffect(FfiPlatformEffect.StopAdvertising("op-final")),
+            )
+            awaitRealDispatchHop {
+                harness.hostCoreController.platformOperationSucceededCalls.size == CYCLES + 1
+            }
+            // Give a leaked poller time to show itself.
+            Thread.sleep(300)
+            assertThat(violations).isEmpty()
+            handles.forEach { Mockito.verify(it, Mockito.atLeastOnce()).pollEvent(500uL) }
+        } finally {
+            transport.close()
+        }
+    }
+
     private companion object {
         const val CYCLES = 8
     }

@@ -92,4 +92,44 @@ class ListenerTransportControllerIdempotentCloseTest {
         Mockito.verify(second, Mockito.times(1)).shutdown()
         Mockito.verify(second, Mockito.times(1)).close()
     }
+
+    @Test
+    fun repeatedReconnectsNeverCloseAPolledHandleOrLeaveAPollerOnARetiredOne() = runTest(StandardTestDispatcher()) {
+        val violations = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val handles = List(8) { index ->
+            val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+            val active = java.util.concurrent.atomic.AtomicInteger(0)
+            val native = Mockito.mock(FfiListenerTransportHandle::class.java)
+            Mockito.doAnswer {
+                if (closed.get()) violations += "handle $index polled after close"
+                if (active.incrementAndGet() > 1) violations += "handle $index has two concurrent pollers"
+                try {
+                    Thread.sleep(5)
+                } finally {
+                    active.decrementAndGet()
+                }
+                null
+            }.`when`(native).pollEvent(500uL)
+            Mockito.doAnswer {
+                if (active.get() > 0) violations += "handle $index closed while a poll was in flight"
+                closed.set(true)
+                null
+            }.`when`(native).close()
+            native
+        }
+        val controller = controllerOpening(*handles.toTypedArray())
+        handles.forEach { _ ->
+            controller.connect(backgroundScope, "endpoint", "device", "127.0.0.1")
+            Thread.sleep(20)
+        }
+        controller.close()
+        // Give a leaked poller time to show itself.
+        Thread.sleep(300)
+
+        assertThat(violations).isEmpty()
+        handles.forEach {
+            Mockito.verify(it, Mockito.atLeastOnce()).pollEvent(500uL)
+            Mockito.verify(it, Mockito.times(1)).close()
+        }
+    }
 }
