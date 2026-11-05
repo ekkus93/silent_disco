@@ -1385,3 +1385,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - F5 item 5: added HostBridgeSaturationInstrumentedTest (real native host, collector stopped, connect/join/disconnect cycles). First refusal after 83 accepted joins (Android 64 + Rust 256 chain). Asserts late joiner refused, Stop still reaches live listener, accepted joins arrive in order with no gaps after resume. Mutation (joins via tryEmit) fails with missing 7..47. Ran on API29 emulator (pinned ANDROID_SERIAL), not CI. Required MIN_ABSORBED_JOINS=30 so it cannot pass vacuously.
 - Items 4 and 5 left UNCHECKED pending hosted CI (and for item 5 the UI-spinner half is unproven). Single push to keep CI evidence on one commit.
 - The loop pattern that worked: do not push while a CI run is in progress (cancel-in-progress); prepare locally, push once.
+
+## 2026-11-05T20:11:30Z - Sonnet 5.5 - CI green at 761fe0da; F5 items 4 and 5 checked
+- CI 42084218903 at 761fe0da: all four jobs + source-line success (the background watcher had been killed for low memory; result found by one `gh run list`).
+- CHECKED §5 item 4 (retention) and item 5 (cross-layer saturation, transport level). Item 5's permanent-UI-spinner half (listener UI rendering of JoinRejected) is NOT tested; noted in the TODO as an open gap.
+- Still open: §0.2, §3 item 2 (owner decision), §4 items 5 and 6, later sections.
