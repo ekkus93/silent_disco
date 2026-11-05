@@ -1324,3 +1324,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join` asserts exact counts 4/8/9; removing the production call fails it (left 0, right 4).
 - Local gates passed: check-rust.sh (752 passed, 0 failed), desktop `npm run check` + clippy + 386 tests, Android `test lintDebug`. No exact-head CI; §3 item 4 stays UNCHECKED (no UI/diagnostics surface yet).
 - Also committed with this: CLAUDE.md 800-line guideline note and the earlier memory.md entry.
+
+## 2026-11-05T15:17:22Z - Sonnet 5.5 - Ralph loop iteration 4: F3 items 3 and 5 audit
+- Audited F3 item 5 against existing Rust transport tests; every clause (visible refusal, no ghost admission, no hidden Stop, bounded waits) has a named test. CHECKED item 5, scoped to the Rust transport boundary, citing exact-head Rust job on acc29010 (CI 42050844898 success). Android bridge/UI spinner stays under F5; saturation is UDP-telemetry/stalled-actor/unit-level, not a concurrent real-socket join flood.
+- Found a real gap in item 3: desktop `effects.rs` rejects approvals with a stale request ID but no test exercised it. Added `host_transport_stale_approval_tests.rs` (sibling module; shared fixtures in `host_transport_admission_tests.rs` made `pub(super)` plus `RecordingSink::new`). Mutation (guard disabled) delivers the stale approval and fails the test. Desktop: npm run check, clippy, 387 tests pass.
+- Item 3 left UNCHECKED: Android `executeRustTransportEffect` stale-approval refusal (`pendingListenerDatagramPorts.take`) has no JVM test because the function is file-private; fold into the F4 "reject stale approvals" item.
+- Item 2 still open: automatic finite client retry on a busy reply is not implemented (user-driven retry exists); needs an owner decision.
+- `gh run list` / `gh run view <id> --json jobs` gives per-job exact-head CI status; Rust quality passes before Android jobs finish.

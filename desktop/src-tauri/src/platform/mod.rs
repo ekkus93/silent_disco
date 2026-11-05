@@ -69,6 +69,8 @@ mod host_transport_disconnect_tests;
 #[cfg(test)]
 mod host_transport_failure_tests;
 #[cfg(test)]
+mod host_transport_stale_approval_tests;
+#[cfg(test)]
 mod host_transport_tests;
 #[cfg(test)]
 mod monitor_tests;

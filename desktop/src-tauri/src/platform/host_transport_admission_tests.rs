@@ -18,11 +18,20 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
-struct RecordingSink {
+pub(super) struct RecordingSink {
     snapshot: Mutex<CoreSnapshot>,
     sender: mpsc::Sender<CoreTransportEvent>,
+}
+
+impl RecordingSink {
+    pub(super) fn new(sender: mpsc::Sender<CoreTransportEvent>) -> Arc<Self> {
+        Arc::new(Self {
+            snapshot: Mutex::new(CoreSnapshot::default()),
+            sender,
+        })
+    }
 }
 
 impl DesktopHostTransportEventSink for RecordingSink {
@@ -495,7 +504,7 @@ fn missing_pending_peer_reports_failed_delivery_without_stopping_worker() {
     runtime.shutdown().expect("runtime shutdown");
 }
 
-fn advertisement(session_id: &SessionId, host_id: &DeviceId) -> SessionAdvertisement {
+pub(super) fn advertisement(session_id: &SessionId, host_id: &DeviceId) -> SessionAdvertisement {
     SessionAdvertisement::new(
         session_id.clone(),
         host_id.clone(),
@@ -507,7 +516,7 @@ fn advertisement(session_id: &SessionId, host_id: &DeviceId) -> SessionAdvertise
     .expect("advertisement")
 }
 
-fn connect_listener(
+pub(super) fn connect_listener(
     factory: &dyn TransportFactory,
     session_id: &SessionId,
     listener_id: &DeviceId,
@@ -521,7 +530,11 @@ fn connect_listener(
         .expect("connect listener")
 }
 
-fn send_join(listener: &dyn ListenerTransportNode, session_id: &SessionId, listener_id: &DeviceId) {
+pub(super) fn send_join(
+    listener: &dyn ListenerTransportNode,
+    session_id: &SessionId,
+    listener_id: &DeviceId,
+) {
     let routes = listener.local_routes();
     listener
         .send_control(&ControlMessage::JoinRequest(JoinRequest {
@@ -554,7 +567,7 @@ fn wait_for_delivery(receiver: &mpsc::Receiver<CoreTransportEvent>) -> CoreTrans
     }
 }
 
-fn wait_for_control(
+pub(super) fn wait_for_control(
     listener: &mut dyn ListenerTransportNode,
     predicate: impl Fn(&ControlMessage) -> bool,
 ) {
