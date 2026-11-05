@@ -333,6 +333,8 @@ pub struct TransportCounters {
     pub best_effort_event_drops: u64,
     /// New TCP peers refused because of capacity or actor admission pressure.
     pub busy_admission_refusals: u64,
+    /// Repeated joins on an already-admitted TCP generation that were ignored.
+    pub duplicate_join_suppressions: u64,
     /// Critical events that could not reach the actor before timeout/shutdown.
     pub authoritative_event_failures: u64,
 }

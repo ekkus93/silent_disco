@@ -37,6 +37,16 @@ fn assert_no_repeated_join(host: &mut SocketHostTransport) {
     }
 }
 
+/// The counter is the operator-visible evidence of join retries; it must
+/// account for each suppressed duplicate exactly, not just "some".
+fn wait_for_suppressed_duplicates(host: &SocketHostTransport, expected: u64) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while host.counters().duplicate_join_suppressions < expected && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(host.counters().duplicate_join_suppressions, expected);
+}
+
 #[test]
 fn duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join() {
     let session = id_session("duplicate-join-generation");
@@ -64,6 +74,7 @@ fn duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join() {
         first.send_control(&join).expect("pending retry");
     }
     assert_no_repeated_join(&mut host);
+    wait_for_suppressed_duplicates(&host, 4);
     host.authorize_peer(&device, first.local_routes())
         .expect("authorize initial TCP generation");
     wait_for_authorized(&mut host, &device);
@@ -71,6 +82,7 @@ fn duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join() {
         first.send_control(&join).expect("authorized retry");
     }
     assert_no_repeated_join(&mut host);
+    wait_for_suppressed_duplicates(&host, 8);
 
     // A replaced TCP connection has its own admission generation; suppressing
     // duplicates must not suppress a legitimate reconnect request.
@@ -93,6 +105,8 @@ fn duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join() {
         .send_control(&join)
         .expect("reconnected duplicate");
     assert_no_repeated_join(&mut host);
+    // The legitimate replacement join was admitted, not counted as a duplicate.
+    wait_for_suppressed_duplicates(&host, 9);
 
     first.shutdown().expect("close retired TCP");
     replacement.shutdown().expect("close current TCP");

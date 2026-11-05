@@ -23,6 +23,8 @@ pub struct FfiHostTransportCounters {
     pub best_effort_event_drops: u64,
     /// New TCP peers refused with a busy reply (capacity or actor pressure).
     pub busy_admission_refusals: u64,
+    /// Repeated joins on an already-admitted TCP generation that were ignored.
+    pub duplicate_join_suppressions: u64,
     /// Critical events that could not reach the actor before timeout/shutdown.
     pub authoritative_event_failures: u64,
 }
@@ -47,6 +49,7 @@ impl From<TransportCounters> for FfiHostTransportCounters {
             delivery_failures: counters.delivery_failures,
             best_effort_event_drops: counters.best_effort_event_drops,
             busy_admission_refusals: counters.busy_admission_refusals,
+            duplicate_join_suppressions: counters.duplicate_join_suppressions,
             authoritative_event_failures: counters.authoritative_event_failures,
         }
     }
@@ -201,6 +204,7 @@ mod counter_mapping_tests {
             best_effort_event_drops: 16,
             busy_admission_refusals: 17,
             authoritative_event_failures: 18,
+            duplicate_join_suppressions: 19,
         };
         let ffi = FfiHostTransportCounters::from(core);
         assert_eq!(ffi.accepted_control_connections, 1);
@@ -221,5 +225,6 @@ mod counter_mapping_tests {
         assert_eq!(ffi.best_effort_event_drops, 16);
         assert_eq!(ffi.busy_admission_refusals, 17);
         assert_eq!(ffi.authoritative_event_failures, 18);
+        assert_eq!(ffi.duplicate_join_suppressions, 19);
     }
 }

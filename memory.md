@@ -1314,3 +1314,13 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Local gates passed: check-rust.sh (752 passed, 0 failed), Android `test lintDebug`, line-count policy. No exact-head CI yet; §3 item 4 left UNCHECKED.
 - Blocker for a duplicate-join/retry counter: `rust/silent-disco-core/src/transport/socket/shared.rs` is 796/800 lines; split it before adding fields. `host_workers.rs` is 772.
 - F3 survey: item 3 per-TCP-generation join dedup exists (`host/duplicate_join_tests.rs`); item 2 host busy-reply exists (`host_join_delivery.rs`), automatic finite client retry is NOT implemented (retry is user-driven via actor retry command); item 5 saturation evidence largely exists in `host_worker_admission_pressure_tests.rs`, `terminal_pressure_tests.rs`, `capacity_refusal_tests.rs` but has not been audited against the item wording.
+
+## 2026-11-05T14:48:45Z - Sonnet 5.5 - 800-line source limit relaxed to a guideline
+- Owner decision: 800 lines per source file is a guideline, not a hard limit; the rule is no God files, and Claude decides when to refactor. CLAUDE.md gotcha updated (uncommitted).
+- `scripts/check-source-file-line-counts.sh` and `.github/workflows/source-file-line-limit.yml` still fail at 800 until changed; not modified. The `shared.rs` split (796 lines) is no longer a hard blocker for the duplicate-join counter, but the file mixes counters, delivery and classification, so a responsibility-based split is still worth considering.
+
+## 2026-11-05T15:02:04Z - Sonnet 5.5 - Ralph loop iteration 3: F3 duplicate-join counter + CounterState split
+- Added `duplicate_join_suppressions` to core `TransportCounters`, `CounterState` (now in `socket/counters.rs`, re-exported from `shared.rs`; `shared.rs` 796 -> 648 lines) and `FfiHostTransportCounters`. Host reader calls it when a repeated JoinRequest arrives on an admitted TCP generation. Child-module visibility must be `pub(in crate::transport::socket)`, not `pub(super)`.
+- `duplicate_join_frames_never_reenroll_but_new_tcp_generation_can_join` asserts exact counts 4/8/9; removing the production call fails it (left 0, right 4).
+- Local gates passed: check-rust.sh (752 passed, 0 failed), desktop `npm run check` + clippy + 386 tests, Android `test lintDebug`. No exact-head CI; §3 item 4 stays UNCHECKED (no UI/diagnostics surface yet).
+- Also committed with this: CLAUDE.md 800-line guideline note and the earlier memory.md entry.

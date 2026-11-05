@@ -311,6 +311,7 @@ fn register_peer(
                                     // A rejected first delivery closes this
                                     // connection; a fresh TCP generation may
                                     // submit a new request.
+                                    counters_for_reader.duplicate_join_suppression();
                                     true
                                 } else if let Some(listener_id) = pending_join {
                                     match forward_join_or_refuse(

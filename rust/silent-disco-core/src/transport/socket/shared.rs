@@ -5,7 +5,7 @@
 )]
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -16,165 +16,17 @@ use crate::protocol::{
     decode_header,
 };
 
-use super::super::{
-    TransportChannel, TransportCounters, TransportError, TransportErrorKind, TransportEvent,
-};
+use super::super::{TransportChannel, TransportError, TransportErrorKind, TransportEvent};
 
 #[path = "event_delivery_class.rs"]
 mod event_delivery_class;
 pub(super) use event_delivery_class::is_best_effort_event;
 
+#[path = "counters.rs"]
+mod counters;
+pub(super) use counters::CounterState;
+
 pub(super) const MAX_CONTROL_FRAME_BYTES: usize = FRAME_HEADER_BYTES + MAX_CONTROL_PAYLOAD_BYTES;
-
-#[derive(Debug, Default)]
-pub(super) struct CounterState {
-    accepted_control_connections: AtomicU64,
-    closed_control_connections: AtomicU64,
-    control_frames_sent: AtomicU64,
-    control_frames_received: AtomicU64,
-    sync_datagrams_sent: AtomicU64,
-    sync_datagrams_received: AtomicU64,
-    audio_datagrams_sent: AtomicU64,
-    audio_datagrams_received: AtomicU64,
-    bytes_sent: AtomicU64,
-    bytes_received: AtomicU64,
-    malformed_frames: AtomicU64,
-    oversized_frames: AtomicU64,
-    unauthorized_frames: AtomicU64,
-    queue_overflows: AtomicU64,
-    delivery_failures: AtomicU64,
-    best_effort_event_drops: AtomicU64,
-    busy_admission_refusals: AtomicU64,
-    authoritative_event_failures: AtomicU64,
-    worker_panicked: AtomicBool,
-}
-
-impl CounterState {
-    pub(super) fn snapshot(&self) -> TransportCounters {
-        TransportCounters {
-            accepted_control_connections: self.accepted_control_connections.load(Ordering::Relaxed),
-            closed_control_connections: self.closed_control_connections.load(Ordering::Relaxed),
-            control_frames_sent: self.control_frames_sent.load(Ordering::Relaxed),
-            control_frames_received: self.control_frames_received.load(Ordering::Relaxed),
-            sync_datagrams_sent: self.sync_datagrams_sent.load(Ordering::Relaxed),
-            sync_datagrams_received: self.sync_datagrams_received.load(Ordering::Relaxed),
-            audio_datagrams_sent: self.audio_datagrams_sent.load(Ordering::Relaxed),
-            audio_datagrams_received: self.audio_datagrams_received.load(Ordering::Relaxed),
-            bytes_sent: self.bytes_sent.load(Ordering::Relaxed),
-            bytes_received: self.bytes_received.load(Ordering::Relaxed),
-            malformed_frames: self.malformed_frames.load(Ordering::Relaxed),
-            oversized_frames: self.oversized_frames.load(Ordering::Relaxed),
-            unauthorized_frames: self.unauthorized_frames.load(Ordering::Relaxed),
-            queue_overflows: self.queue_overflows.load(Ordering::Relaxed),
-            delivery_failures: self.delivery_failures.load(Ordering::Relaxed),
-            best_effort_event_drops: self.best_effort_event_drops.load(Ordering::Relaxed),
-            busy_admission_refusals: self.busy_admission_refusals.load(Ordering::Relaxed),
-            authoritative_event_failures: self.authoritative_event_failures.load(Ordering::Relaxed),
-        }
-    }
-
-    pub(super) fn accepted(&self) {
-        self.accepted_control_connections
-            .fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn closed(&self) {
-        self.closed_control_connections
-            .fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn frame_sent(&self, bytes: usize) {
-        self.control_frames_sent.fetch_add(1, Ordering::Relaxed);
-        self.add_sent(bytes);
-    }
-
-    pub(super) fn frame_received(&self, bytes: usize) {
-        self.control_frames_received.fetch_add(1, Ordering::Relaxed);
-        self.add_received(bytes);
-    }
-
-    pub(super) fn datagram_sent(&self, channel: TransportChannel, bytes: usize) {
-        match channel {
-            TransportChannel::Synchronization => {
-                self.sync_datagrams_sent.fetch_add(1, Ordering::Relaxed);
-            }
-            TransportChannel::Audio => {
-                self.audio_datagrams_sent.fetch_add(1, Ordering::Relaxed);
-            }
-            TransportChannel::Control | TransportChannel::Runtime => {}
-        }
-        self.add_sent(bytes);
-    }
-
-    pub(super) fn datagram_received(&self, channel: TransportChannel, bytes: usize) {
-        match channel {
-            TransportChannel::Synchronization => {
-                self.sync_datagrams_received.fetch_add(1, Ordering::Relaxed);
-            }
-            TransportChannel::Audio => {
-                self.audio_datagrams_received
-                    .fetch_add(1, Ordering::Relaxed);
-            }
-            TransportChannel::Control | TransportChannel::Runtime => {}
-        }
-        self.add_received(bytes);
-    }
-
-    pub(super) fn malformed(&self) {
-        self.malformed_frames.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn oversized(&self) {
-        self.oversized_frames.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn unauthorized(&self) {
-        self.unauthorized_frames.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn queue_overflow(&self) {
-        self.queue_overflows.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn delivery_failure(&self) {
-        self.delivery_failures.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn best_effort_drop(&self) {
-        self.best_effort_event_drops.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn busy_admission_refusal(&self) {
-        self.busy_admission_refusals.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn authoritative_event_failure(&self) {
-        self.authoritative_event_failures
-            .fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn mark_worker_panicked(&self) {
-        self.worker_panicked.store(true, Ordering::Release);
-    }
-
-    pub(super) fn has_worker_panic(&self) -> bool {
-        self.worker_panicked.load(Ordering::Acquire)
-    }
-
-    fn add_sent(&self, bytes: usize) {
-        self.bytes_sent
-            .fetch_add(saturating_u64(bytes), Ordering::Relaxed);
-    }
-
-    fn add_received(&self, bytes: usize) {
-        self.bytes_received
-            .fetch_add(saturating_u64(bytes), Ordering::Relaxed);
-    }
-}
-
-fn saturating_u64(value: usize) -> u64 {
-    u64::try_from(value).unwrap_or(u64::MAX)
-}
 
 pub(super) fn send_event(
     sender: &SyncSender<TransportEvent>,

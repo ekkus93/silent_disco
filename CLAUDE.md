@@ -72,7 +72,7 @@ Kotlin UniFFI bindings are generated separately by `scripts/generate-uniffi-kotl
 
 Other gotchas:
 - Desktop: Node must be `>=22.13.0 <23`. Lab Mode (`build:lab`, `--features lab-mode`) must never be in release builds; `npm run build` runs `verify-production-lab-absence.mjs`.
-- Every tracked source file must stay under 800 lines: `bash scripts/check-source-file-line-counts.sh`.
+- 800 lines per source file is a guideline, not a hard limit (owner decision, 2026-11-05). Avoid God files: when a file mixes responsibilities or keeps growing, split it by responsibility, but do not split purely to dodge the count. `scripts/check-source-file-line-counts.sh` and its CI workflow still enforce 800 until they are changed.
 - Full Android gate: `./gradlew assembleDebug assemblePocDebug assembleRelease assembleDebugAndroidTest test lintDebug`. Needs JDK 17, SDK 36, NDK 28.2.13676358; `scripts/install-android-sdk-packages.sh` installs them.
 
 `app/build.gradle.kts` also wires custom Gradle `Exec` tasks (`buildRustAndroidDebug`, `buildRustAndroidRelease`, via `cargo-ndk` for 4 ABIs) into `mergeXJniLibFolders`/`clean` — Android builds invoke the Rust build automatically.
