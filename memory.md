@@ -1298,3 +1298,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Host: decode failure after a boundary but before next-track audio now cancels that boundary immediately (`hostBoundaryJobs` keyed by sample index) instead of tying with the tail deadline.
 - Found, not fixed: boundary commit-point edit race (worker commits boundary ~640 ms before hosts report TrackBoundaryScheduled; edits in that window are accepted but the removed track still plays). Reopened TODO §3 item. Options presented to user: actor-approved commit (recommended), immediate commit report, actor end-of-track lock margin.
 - Full Android gate passed (120 instrumentation, 119 passed, 1 skipped); source-line check (643 files) and diff-check pass.
+
+## 2026-11-05T12:48:16Z - Sonnet 5.5 - /init review of CLAUDE.md
+- Updated CLAUDE.md: handoff pointer now the 2026-10-28 remediation handoff (assumed current; unconfirmed by user), commit-hook note (user-global ~/.githooks, not repo) plus Conventional Commits, CI-vs-local Rust gate differences, desktop bindings check is not UniFFI, added Node/Lab Mode/800-line/Gradle gotchas.

@@ -64,6 +64,17 @@ cargo test --workspace --all-features
 
 `tools/decoder-spike/` is a separate Cargo crate outside the `rust/` workspace — `scripts/check-rust.sh` and the commands above do not cover it.
 
+CI's Rust job differs from `check-rust.sh`: it runs `cargo test --workspace --all-features -- --test-threads=1` with `SILENT_DISCO_PCM_EVIDENCE_DIR` set, then `scripts/check_pcm_evidence.py`. For desktop Rust, CI also runs `cargo test --locked --all-features` and `cargo check --locked --all-features`, neither of which is in `npm run check`.
+
+The Rust toolchain version `1.97.1` is also hardcoded in `scripts/generate-uniffi-kotlin.sh` and `.github/workflows/ci.yml`; update all of them together.
+
+Kotlin UniFFI bindings are generated separately by `scripts/generate-uniffi-kotlin.sh <abs-dir under app/build/generated/uniffiKotlin>`. Never hand-edit generated bindings.
+
+Other gotchas:
+- Desktop: Node must be `>=22.13.0 <23`. Lab Mode (`build:lab`, `--features lab-mode`) must never be in release builds; `npm run build` runs `verify-production-lab-absence.mjs`.
+- Every tracked source file must stay under 800 lines: `bash scripts/check-source-file-line-counts.sh`.
+- Full Android gate: `./gradlew assembleDebug assemblePocDebug assembleRelease assembleDebugAndroidTest test lintDebug`. Needs JDK 17, SDK 36, NDK 28.2.13676358; `scripts/install-android-sdk-packages.sh` installs them.
+
 `app/build.gradle.kts` also wires custom Gradle `Exec` tasks (`buildRustAndroidDebug`, `buildRustAndroidRelease`, via `cargo-ndk` for 4 ABIs) into `mergeXJniLibFolders`/`clean` — Android builds invoke the Rust build automatically.
 
 Do not claim these commands passed unless they were actually executed with the pinned toolchain.
@@ -83,7 +94,7 @@ cd desktop
 npm run check
 ```
 
-This runs UniFFI bindings-check, Biome format/lint plus `cargo fmt --check` for `desktop/src-tauri`, `tsc`, Vitest, and a production build in sequence. Do not claim it passed unless it was actually executed. Note `cargo clippy` is not part of this gate for the desktop crate; run it manually when touching `desktop/src-tauri`.
+This runs `bindings:check` (the desktop Tauri bindings generator, `generate_bindings --check`; not UniFFI), Biome format/lint plus `cargo fmt --check` for `desktop/src-tauri`, `tsc`, Vitest, and a production build in sequence. Do not claim it passed unless it was actually executed. Note `cargo clippy` is not part of this gate for the desktop crate; run it manually when touching `desktop/src-tauri`.
 
 `desktop/biome.json` uses non-default formatting: 100-character line width, double quotes, semicolons always, and trailing commas everywhere.
 
@@ -236,11 +247,12 @@ Unless the user explicitly changes scope, do not prematurely implement:
 - Keep sync-sensitive and real-time paths explicit and instrumentable.
 - Add production-facing tests; do not test copied local logic.
 - Never fabricate build, test, CI, simulator, or physical-device results.
-- Do not add `Co-Authored-By:` lines to commit messages; the repository rejects them.
+- Do not add `Co-Authored-By:` lines to commit messages. The rejection comes from a user-global `commit-msg` hook (`core.hooksPath` → `~/.githooks`), not from the repo, so it only protects this machine. This rule overrides any default attribution guidance.
+- Use Conventional Commits (`fix(core):`, `feat(desktop):`, `test(desktop):`, `docs:`). PR descriptions list the checks actually run.
 
 ## Ralph Loop workflow
 
-The project is currently in a release-acceptance / physical-validation phase (Block 46: Ubuntu fresh-machine + physical Android device hosting), not new Rust-core feature migration. Block 46.3 is paused while device-found UI and join defects (Blocks 49–52) are fixed; start from `docs/CLAUDE_CODE_HANDOFF_2026-09-16_BLOCK_52.md`. For the Block 46 closeout itself, see `docs/SILENT_DISCO_RALPH_HANDOFF_2026-09-14.md` and `docs/CLAUDE_CODE_BLOCK_46_3_HANDOFF_2026-09-16.md`.
+The project is in a release-acceptance / remediation phase, not new Rust-core feature migration. Start from the newest handoff in `docs/` (currently `docs/SILENT_DISCO_CODE_REVIEW_REMEDIATION_HANDOFF_2026-10-28.md`, with the remediation SPEC/TODO dated 2026-10-27). Older context: Block 46 closeout in `docs/SILENT_DISCO_RALPH_HANDOFF_2026-09-14.md` and `docs/CLAUDE_CODE_BLOCK_46_3_HANDOFF_2026-09-16.md`; Blocks 49–52 join defects in `docs/CLAUDE_CODE_HANDOFF_2026-09-16_BLOCK_52.md`.
 
 For the Rust migration, use `docs/SILENT_DISCO_RUST_CORE_MIGRATION_TODO.md`:
 
