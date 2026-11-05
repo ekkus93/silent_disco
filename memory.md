@@ -1402,3 +1402,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-05T20:36:00Z - Sonnet 5.5 - Ralph loop iteration 13: F4 item 6 audit
 - CI on 2e84a938 green, item 5 checked (754679a5). Audited item 6's remaining checks: same-stream resume coverage is policy/label/parser level only; no test observes an output reopen through the listener runtime (needs device/instrumented test). Leaked-poll and duplicate-listener have no mutation-sensitive test yet. Item 6 stays open, noted in TODO.
+
+## 2026-11-05T20:58:00Z - Sonnet 5.5 - A54 + desktop host: same-stream resume has no output reopen (F4 item 6, local)
+- Owner approved using the desktop host together with the Android device. A54 joined "Revival Hall" Wi-Fi (same 100.64.64.0/22 as the host wlo1 100.64.67.71). Owner also turned battery saver off (low_power was 0 at the end; I had set it to 0 as well; the earlier note about restoring it to 1 is still the owner's call).
+- Ran manual_real_android_listener_plays_a_song_change (ADB serial R5CW31AX4FL, ALLOW_SHARED_ADDRESS_SPACE=1, PAUSE_SECS=90): PASSED, 7,119/7,119 packets, owner heard the scale. Logcat SilentDiscoOboe: open #1 only; at resume "rebind #1 onto the existing stream (opens=1)". No reopen.
+- Harness fixes: the ADB automation waited for a "Protocol version: " line the UI no longer shows; changed to the "Host: " summary line (automation.rs). The first two failed runs were a launcher overlay and that stale check; logcat `SilentDiscoOboe` is a cheap way to count output opens without the Diagnostics screen.
+- Not covered: leaked poll jobs, duplicate listener. Item 6 stays unchecked (no CI evidence for this check).

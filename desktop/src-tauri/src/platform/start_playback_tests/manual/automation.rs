@@ -186,12 +186,12 @@ echo "[$SERIAL] waiting for the payload validation summary to render"
 deadline=$((SECONDS + 10))
 while [ $SECONDS -lt $deadline ]; do
   dump_ui
-  if grep -q 'text="Protocol version: ' "$DUMP"; then
+  if grep -q 'text="Host: ' "$DUMP"; then
     break
   fi
   sleep 1
 done
-if ! grep -q 'text="Protocol version: ' "$DUMP"; then
+if ! grep -q 'text="Host: ' "$DUMP"; then
   echo "[$SERIAL] connection payload did not validate; refusing to tap Connect"
   exit 1
 fi
