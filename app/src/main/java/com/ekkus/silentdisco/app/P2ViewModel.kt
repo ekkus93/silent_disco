@@ -3,6 +3,7 @@ package com.ekkus.silentdisco.app
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.ekkus.silentdisco.core.identity.FileHostKeyRecord
 import com.ekkus.silentdisco.core.identity.HostIdentityManager
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
@@ -15,6 +16,7 @@ import com.ekkus.silentdisco.core.rust.P2SessionRole
 import com.ekkus.silentdisco.core.rust.P2TrustedHost
 import com.ekkus.silentdisco.core.rust.P2ValidatedInvitation
 import com.ekkus.silentdisco.platform.persistence.AndroidP2Store
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,7 +71,9 @@ private fun List<P2TrustedHost>.matches(invitation: P2ValidatedInvitation): Bool
 class P2ViewModel @JvmOverloads constructor(
     application: Application,
     private val store: AndroidP2Store = AndroidP2Store(application),
-    private val hostIdentity: HostIdentityManager = HostIdentityManager(),
+    private val hostIdentity: HostIdentityManager = HostIdentityManager(
+        record = FileHostKeyRecord(File(application.noBackupFilesDir, "host-key-fingerprint.txt")),
+    ),
 ) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(P2UiState())
     val uiState: StateFlow<P2UiState> = _uiState.asStateFlow()
@@ -159,9 +163,10 @@ class P2ViewModel @JvmOverloads constructor(
                     signatureBase64url = hostIdentity.signBase64Url(unsigned.encodeToByteArray()),
                 )
             }.onSuccess { payload ->
+                val replaced = hostIdentity.consumeKeyReplacement()
                 _uiState.value = _uiState.value.copy(
                     hostQrPayload = payload,
-                    lastMessage = "Created a signed QR invitation",
+                    lastMessage = if (replaced != null) HOST_KEY_REPLACED_MESSAGE else "Created a signed QR invitation",
                     lastError = null,
                 )
             }.onFailure { error ->
@@ -421,3 +426,8 @@ internal fun P2ValidatedInvitation.toSessionInfo(): SessionInfo = SessionInfo(
     },
     inviteCodeRequired = approvalMode == "invite_code",
 )
+
+internal const val HOST_KEY_REPLACED_MESSAGE =
+    "This device's host identity changed (for example after a restore or a security reset). " +
+        "Listeners that trusted the earlier identity will ask to verify this host again; " +
+        "nothing is trusted automatically."

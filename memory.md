@@ -1421,3 +1421,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-05T22:30:00Z - Sonnet 5.5 - Owner: do not wait for CI; local gates are enough
 - Owner instruction: "You could just run the tests locally and not wait for CI jobs to pass... I'll keep an eye on the CI jobs for you. I give you permission." So: run the local gates, push, and continue; do not poll or wait for hosted CI. Label evidence as local-only where CI was not seen, and note that a push cancels the in-progress run (cancel-in-progress), which the owner accepts.
 - CHECKED §4 item 6 on local evidence (poll-safety tests, physical same-stream resume). Pushed with the F6 inventory.
+
+## 2026-11-05T23:10:00Z - Sonnet 5.5 - Ralph loop iteration 16: F6 items 3 and 4 (key replacement detection)
+- Took the smallest option (notice only, owner had not chosen): HostKeyContinuity.kt (pure assess + FileHostKeyRecord in noBackupFilesDir), HostIdentityManager detects a missing/different Keystore key and reports it once via consumeKeyReplacement(); P2ViewModel shows HOST_KEY_REPLACED_MESSAGE on QR creation.
+- Tests: HostKeyContinuityTest (6; mutation "mismatch = unchanged" fails 3), HostIdentityContinuityInstrumentedTest on the A54 (deletes the real Keystore key; passes; fails when the replacement is not recorded). Gate: test lintDebug compileDebugAndroidTestKotlin OK, line counts OK.
+- Mistake to avoid: `git checkout <file>` to undo a mutation ALSO reverts my own uncommitted edits to that tracked file, and does nothing for untracked files. Use `cp` backups from the scratchpad before mutating (done for the redo).
+- Items 3 and 4 left UNCHECKED: notice not UI-tested and only on the QR path; no re-enrollment screen; upgrade and revocation untested.

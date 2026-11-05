@@ -17,7 +17,22 @@ import java.security.spec.ECGenParameterSpec
  */
 class HostIdentityManager(
     private val alias: String = KEY_ALIAS,
+    private val record: HostKeyRecord? = null,
 ) {
+    @Volatile
+    private var pendingChange: HostKeyContinuity.Replaced? = null
+
+    /**
+     * Returns and clears a detected key replacement so the UI reports it once.
+     * The new key is used for future signatures; the old identity is never
+     * trusted on its behalf.
+     */
+    fun consumeKeyReplacement(): HostKeyContinuity.Replaced? {
+        val change = pendingChange
+        pendingChange = null
+        return change
+    }
+
     @Synchronized
     fun publicKeyDer(): ByteArray = keyPair().public.encoded.copyOf()
 
@@ -34,6 +49,22 @@ class HostIdentityManager(
     }
 
     private fun keyPair(): KeyPair {
+        val pair = loadOrCreateKeyPair()
+        record?.let { store ->
+            val current = hostKeyFingerprint(pair.public.encoded)
+            when (val outcome = assessHostKeyContinuity(store.read(), current)) {
+                HostKeyContinuity.Unchanged -> Unit
+                HostKeyContinuity.FirstUse -> store.write(current)
+                is HostKeyContinuity.Replaced -> {
+                    pendingChange = outcome
+                    store.write(current)
+                }
+            }
+        }
+        return pair
+    }
+
+    private fun loadOrCreateKeyPair(): KeyPair {
         val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
         val existing = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
         if (existing != null) return KeyPair(existing.certificate.publicKey, existing.privateKey)
