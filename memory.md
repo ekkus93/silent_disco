@@ -1353,3 +1353,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-05T16:50:41Z - Sonnet 5.5 - F4 stress test also run on the API29 emulator
 - After the owner freed disk (29 GB free), booted AVD PostCloseout_API_29 headless and ran HostTransportRebindStressInstrumentedTest with ANDROID_SERIAL=emulator-5554: passed (1 test, 0 failures). A54 was untouched (app still installed). §4 item 6 still UNCHECKED pending hosted CI and the leaked-poll/duplicate-listener/same-stream-resume checks. Emulator killed afterward.
+
+## 2026-11-05T16:57:42Z - Sonnet 5.5 - CI results for iterations 4-7 and F3 item 3 checked
+- Hosted CI green: d3c18283 (CI 42055423309), 3d21b899 (CI 42058127670), bd2f6435 (CI 42067620927: Rust, Android build/unit/lint, API29 instrumentation with 161 tests, publication gate), plus Desktop CI 42053478504 at 0a59b28a. caeea938 is docs-only (source-line check passed). The CI log does not name passing tests, so the stress test running in the 161 is inferred from its being in that SHA APK.
+- CHECKED §3 item 3 (Rust dedup/order tests, desktop and Android stale-approval tests; legacy-v3 scope). §4 item 3 still open: listener controller close/disconnect repeat-safety needs an injectable handle factory. §4 items 5 and 6 still open.
