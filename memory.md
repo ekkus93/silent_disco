@@ -1399,3 +1399,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-05T20:30:00Z - Sonnet 5.5 - CI green at 2e84a938; F4 item 5 checked
 - CI 42102740981 at 2e84a938 success (plus source-line, publish). CHECKED §4 item 5. Item 6 still open (leaked-poll, duplicate-listener, same-stream-resume).
+
+## 2026-11-05T20:36:00Z - Sonnet 5.5 - Ralph loop iteration 13: F4 item 6 audit
+- CI on 2e84a938 green, item 5 checked (754679a5). Audited item 6's remaining checks: same-stream resume coverage is policy/label/parser level only; no test observes an output reopen through the listener runtime (needs device/instrumented test). Leaked-poll and duplicate-listener have no mutation-sensitive test yet. Item 6 stays open, noted in TODO.
