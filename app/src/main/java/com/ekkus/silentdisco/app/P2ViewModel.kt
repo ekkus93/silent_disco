@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 enum class P2StorageState {
     INITIALIZING,
@@ -83,6 +84,23 @@ class P2ViewModel @JvmOverloads constructor(
     private var rejoinScanObserved = false
 
     init {
+        viewModelScope.launch {
+            // A restored or reset device can keep the fingerprint record but
+            // lose the non-exportable key. Tell the user at startup, not only
+            // when a QR invitation is next created.
+            try {
+                val replaced = withContext(Dispatchers.IO) { hostIdentity.checkContinuity() }
+                if (replaced != null) {
+                    _uiState.value = _uiState.value.copy(lastMessage = HOST_KEY_REPLACED_MESSAGE)
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    lastError = "Could not verify this device's host identity: ${error.message}",
+                )
+            }
+        }
         viewModelScope.launch {
             runCatching { store.initialize() }
                 .onSuccess { (recent, trusted) ->

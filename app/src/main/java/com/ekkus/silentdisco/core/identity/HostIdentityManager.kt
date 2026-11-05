@@ -33,6 +33,18 @@ class HostIdentityManager(
         return change
     }
 
+    /**
+     * Startup check that never creates an identity for an install that has
+     * not used one: it only runs when a key fingerprint was recorded earlier.
+     * Returns a replacement (a missing or different Keystore key) once.
+     */
+    @Synchronized
+    fun checkContinuity(): HostKeyContinuity.Replaced? {
+        if (record?.read() == null) return null
+        keyPair()
+        return consumeKeyReplacement()
+    }
+
     @Synchronized
     fun publicKeyDer(): ByteArray = keyPair().public.encoded.copyOf()
 

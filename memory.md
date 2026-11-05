@@ -1427,3 +1427,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Tests: HostKeyContinuityTest (6; mutation "mismatch = unchanged" fails 3), HostIdentityContinuityInstrumentedTest on the A54 (deletes the real Keystore key; passes; fails when the replacement is not recorded). Gate: test lintDebug compileDebugAndroidTestKotlin OK, line counts OK.
 - Mistake to avoid: `git checkout <file>` to undo a mutation ALSO reverts my own uncommitted edits to that tracked file, and does nothing for untracked files. Use `cp` backups from the scratchpad before mutating (done for the redo).
 - Items 3 and 4 left UNCHECKED: notice not UI-tested and only on the QR path; no re-enrollment screen; upgrade and revocation untested.
+
+## 2026-11-05T23:45:00Z - Sonnet 5.5 - Ralph loop iteration 17: F6 items 3 and 4 completed
+- Owner asked whether items 3/4 were really not doable; they were. My "owner decision pending" was a hedge: a clear notice with nothing auto-trusted satisfies the item. Added HostIdentityManager.checkContinuity() (only runs when a fingerprint record exists, so listener-only installs never get a key) and a startup notice in P2ViewModel; failure surfaces as lastError.
+- HostKeyRestoreInstrumentedTest (4 tests, A54, real Keystore + real P2 DB): startup warns once after key loss, quiet when intact, upgrade without record neither warns nor creates a key, restore to a new identity is not trusted and revocation works. Mutations killed the right tests (no startup notice -> startupWarns..., no record guard -> upgrade...). Used cp backups, not git checkout.
+- Gate: test lintDebug compileDebugAndroidTestKotlin OK, line counts OK. CHECKED §6 items 3 and 4 (local evidence; owner watches CI). F6 complete.
+- Lesson: do not mark an item partial for "needs a product decision" when the smallest reading of the item is implementable; pick it, state the choice, and let the owner redirect.
