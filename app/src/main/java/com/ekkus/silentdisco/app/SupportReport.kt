@@ -1,6 +1,12 @@
 package com.ekkus.silentdisco.app
 
+import com.ekkus.silentdisco.core.model.BridgeQueueCounters
+
 private const val REDACTED = "[redacted]"
+
+private fun BridgeQueueCounters.summary(): String =
+    "telemetry/PCM drops=$droppedBestEffortEvents, diagnostic drops=$droppedDiagnosticNotifications, " +
+        "critical timeouts=$criticalNotificationTimeouts"
 
 fun AppUiState.buildSupportReport(
     appVersion: String,
@@ -40,6 +46,7 @@ fun AppUiState.buildSupportReport(
         appendLine("Host packet sends: ${hostDiagnostics.packetSendCount}")
         appendLine("Host packet budget: ${safe(hostDiagnostics.packetBudgetSummary)}")
         appendLine("Host metrics: ${safe(hostDiagnostics.metricsSummary)}")
+        appendLine("Host bridge queues: ${hostDiagnostics.bridgeQueues.summary()}")
         appendLine("Listener offset: ${listenerDiagnostics.hostOffsetMs} ms")
         appendLine("Listener RTT: ${listenerDiagnostics.rttMs} ms")
         appendLine("Listener jitter: ${listenerDiagnostics.jitterMs} ms")
@@ -52,6 +59,7 @@ fun AppUiState.buildSupportReport(
         appendLine("Listener reconnects: ${listenerDiagnostics.reconnectCount}")
         appendLine("Listener resyncs: ${listenerDiagnostics.resyncCount}")
         appendLine("Listener metrics: ${safe(listenerDiagnostics.metricsSummary)}")
+        appendLine("Listener bridge queues: ${listenerDiagnostics.bridgeQueues.summary()}")
         appendLine("Tuning: ${tuningSettings.summary()}")
         appendLine()
         appendLine("Privacy note: invite codes, internal session identifiers, device identifiers, and file paths are omitted or redacted.")

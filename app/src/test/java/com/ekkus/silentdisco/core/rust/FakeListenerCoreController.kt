@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.receiveAsFlow
  * role -- see that class's doc comment for the rationale.
  */
 class FakeListenerCoreController : ListenerCoreController {
+    override var droppedDiagnosticNotifications: Long = 0L
+    override var criticalNotificationTimeouts: Long = 0L
     private val _snapshots = MutableStateFlow<FfiCoreSnapshot?>(null)
     override val snapshots: StateFlow<FfiCoreSnapshot?> = _snapshots
 

@@ -24,6 +24,9 @@ private const val POLL_TIMEOUT_MS: ULong = 500uL
 interface ListenerTransport : AutoCloseable {
     val events: Flow<FfiListenerTransportEvent>
 
+    /** Best-effort PCM notifications dropped when a slow collector exhausted capacity. */
+    val droppedAudioEvents: Long get() = 0L
+
     /** Fakes retain their ordinary event stream; the native implementation
      * validates socket generation immediately before actor/UI projection. */
     suspend fun collectCurrentEvents(consumer: suspend (FfiListenerTransportEvent) -> Unit) {
@@ -93,7 +96,7 @@ class ListenerTransportController(
     }
 
     /** Best-effort PCM notifications dropped when a slow collector exhausted capacity. */
-    val droppedAudioEvents: Long get() = eventQueue.droppedBestEffort
+    override val droppedAudioEvents: Long get() = eventQueue.droppedBestEffort
 
     override suspend fun connect(
         scope: CoroutineScope,

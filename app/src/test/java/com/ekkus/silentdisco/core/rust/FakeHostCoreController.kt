@@ -33,6 +33,8 @@ data class RecordedCompletion(val operationId: String, val completion: FfiPlatfo
  * production dispatch path end-to-end.
  */
 class FakeHostCoreController : HostCoreController {
+    override var droppedDiagnosticNotifications: Long = 0L
+    override var criticalNotificationTimeouts: Long = 0L
     private val _snapshots = MutableStateFlow<FfiCoreSnapshot?>(null)
     override val snapshots: StateFlow<FfiCoreSnapshot?> = _snapshots
 

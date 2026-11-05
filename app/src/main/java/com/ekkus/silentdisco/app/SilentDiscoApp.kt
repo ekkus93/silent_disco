@@ -102,7 +102,7 @@ fun SilentDiscoApp(
     }
 
     fun shareSupportReport() {
-        val report = uiState.buildSupportReport(
+        val report = viewModel.uiStateForSupportReport().buildSupportReport(
             appVersion = BuildConfig.VERSION_NAME,
             generatedAt = Instant.now().toString(),
         )

@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 class FakeListenerTransport : ListenerTransport {
+    override var droppedAudioEvents: Long = 0L
     private val mutableEvents = MutableSharedFlow<FfiListenerTransportEvent>(extraBufferCapacity = 16)
     override val events: Flow<FfiListenerTransportEvent> = mutableEvents.asSharedFlow()
 

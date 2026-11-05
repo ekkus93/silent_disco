@@ -18,6 +18,12 @@ interface ListenerCoreController : AutoCloseable {
     val snapshots: StateFlow<FfiCoreSnapshot?>
     val notifications: Flow<FfiCoreNotification>
 
+    /** Rust diagnostic notifications dropped because the bridge queue was full. */
+    val droppedDiagnosticNotifications: Long get() = 0L
+
+    /** Critical effects that timed out waiting for a stalled collector. */
+    val criticalNotificationTimeouts: Long get() = 0L
+
     fun startDiscovery()
     fun stopDiscovery()
     fun selectSession(sessionId: String)
@@ -86,8 +92,8 @@ class UniFfiListenerCoreController(
     override val snapshots: StateFlow<FfiCoreSnapshot?> = _snapshots
     override val notifications: Flow<FfiCoreNotification> = notificationMailbox.events
     /** Diagnostics are intentionally lossy; authoritative listener effects are not. */
-    val droppedDiagnosticNotifications: Long get() = notificationMailbox.droppedDiagnostics
-    val criticalNotificationTimeouts: Long get() = notificationMailbox.criticalTimeouts
+    override val droppedDiagnosticNotifications: Long get() = notificationMailbox.droppedDiagnostics
+    override val criticalNotificationTimeouts: Long get() = notificationMailbox.criticalTimeouts
 
     override fun startDiscovery() = withRoleSelected { handle, revision ->
         handle.startDiscovery(revision)

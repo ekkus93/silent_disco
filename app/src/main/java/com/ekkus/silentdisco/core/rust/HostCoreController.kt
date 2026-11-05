@@ -36,6 +36,12 @@ interface HostCoreController : AutoCloseable {
      *  boundaries on its authoritative actor before successor frames enqueue. */
     val boundariesReservedByProducer: Boolean get() = false
 
+    /** Rust diagnostic notifications dropped because the bridge queue was full. */
+    val droppedDiagnosticNotifications: Long get() = 0L
+
+    /** Critical effects that timed out waiting for a stalled collector. */
+    val criticalNotificationTimeouts: Long get() = 0L
+
     fun openHostPlaylist(
         sessionId: String,
         streamId: String,
@@ -118,6 +124,8 @@ class UniFfiHostCoreController(
 
     override val snapshots: StateFlow<FfiCoreSnapshot?> = _snapshots
     override val notifications: Flow<FfiCoreNotification> = notificationQueue.events
+    override val droppedDiagnosticNotifications: Long get() = notificationQueue.droppedDiagnostics
+    override val criticalNotificationTimeouts: Long get() = notificationQueue.criticalTimeouts
     override val boundariesReservedByProducer: Boolean = true
 
     override fun openHostPlaylist(

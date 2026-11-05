@@ -154,6 +154,20 @@ data class SyncState(
     val resyncCount: Int = 0,
 )
 
+/**
+ * Android bridge pressure counters since the controllers were created. Lossy
+ * or timed-out work is counted here so a stalled collector is visible in
+ * diagnostics instead of looking like a healthy but quiet session.
+ */
+data class BridgeQueueCounters(
+    /** Telemetry or PCM notifications dropped because the transport queue was full. */
+    val droppedBestEffortEvents: Long = 0,
+    /** Rust diagnostic notifications dropped because the core queue was full. */
+    val droppedDiagnosticNotifications: Long = 0,
+    /** Critical Rust effects that waited out the bounded backpressure deadline. */
+    val criticalNotificationTimeouts: Long = 0,
+)
+
 data class HostDiagnosticsSnapshot(
     val sessionId: String = "",
     val listenerCount: Int = 0,
@@ -167,6 +181,7 @@ data class HostDiagnosticsSnapshot(
     val lastContactElapsedMs: Long? = null,
     val metricsSummary: String = "",
     val lastError: String? = null,
+    val bridgeQueues: BridgeQueueCounters = BridgeQueueCounters(),
 )
 
 data class ListenerDiagnosticsSnapshot(
@@ -188,4 +203,5 @@ data class ListenerDiagnosticsSnapshot(
     val metricsSummary: String = "",
     val lastPacketSequence: Long? = null,
     val lastError: String? = null,
+    val bridgeQueues: BridgeQueueCounters = BridgeQueueCounters(),
 )

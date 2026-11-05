@@ -1372,3 +1372,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - CI 42076348086 at b8ef0c18: Rust quality, Android build/unit/lint, API29 instrumentation, publication gate all success; source-line check success. The run on bf8b4409 (listener idempotent close) was CANCELLED because the next push superseded it (repo cancels in-progress runs), so push once per batch when per-commit evidence matters.
 - CHECKED §4 item 3 (host + listener idempotent close) and §5 item 2 (bounded buffers incl. mDNS ledger). Still open: §4 items 5 and 6, §5 items 3, 4, 5. §0.2 and §3 item 2 unchanged (owner decision for item 2).
 - Next candidate: surface bridge queue counters (droppedDiagnosticEvents, droppedAudioEvents, droppedDiagnosticNotifications, criticalNotificationTimeouts; HostCoreController exposes none) into the diagnostics store, closing the §5 item 3 gap.
+
+## 2026-11-05T18:06:18Z - Sonnet 5.5 - Ralph loop iteration 10: surface bridge queue counters in diagnostics (F5 item 3)
+- Added BridgeQueueCounters (Models.kt) on Host/ListenerDiagnosticsSnapshot; interface members with 0 defaults on HostCoreController, ListenerCoreController and ListenerTransport (real classes override; fakes have settable vars); aggregation + `uiStateForSupportReport()` in MainViewModelDiagnostics.kt; support report prints both lines; SilentDiscoApp builds the report from the fresh state.
+- BridgeQueueDiagnosticsTest (3): host test drives a REAL drop (bound mock handle streams Heartbeats, nothing collects). Mutation (drop host counter read + drop report-time refresh) fails tests 1 and 3, test 2 passes; reverted by text edit.
+- Gates: Android test lintDebug OK, compileDebugAndroidTestKotlin OK, line counts OK. Single push planned so CI evidence attaches to one commit. §5 item 3 stays UNCHECKED until hosted CI.
+- Process restoration documented as reasoned only (handoff 14), untested.
