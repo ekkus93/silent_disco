@@ -353,24 +353,7 @@ impl FfiListenerTransportHandle {
     }
 
     pub fn counters(&self) -> Result<FfiListenerTransportCounters, FfiListenerTransportError> {
-        self.with_transport(|inner| {
-            let counters = inner.transport.counters();
-            Ok(FfiListenerTransportCounters {
-                control_frames_sent: counters.control_frames_sent,
-                control_frames_received: counters.control_frames_received,
-                sync_datagrams_sent: counters.sync_datagrams_sent,
-                sync_datagrams_received: counters.sync_datagrams_received,
-                audio_datagrams_sent: counters.audio_datagrams_sent,
-                audio_datagrams_received: counters.audio_datagrams_received,
-                bytes_sent: counters.bytes_sent,
-                bytes_received: counters.bytes_received,
-                malformed_frames: counters.malformed_frames,
-                oversized_frames: counters.oversized_frames,
-                unauthorized_frames: counters.unauthorized_frames,
-                queue_overflows: counters.queue_overflows,
-                delivery_failures: counters.delivery_failures,
-            })
-        })
+        self.with_transport(|inner| Ok(inner.transport.counters().into()))
     }
 
     /// Idempotently shuts down and joins every transport worker.

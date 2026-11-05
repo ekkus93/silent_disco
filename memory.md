@@ -1308,3 +1308,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - §0.2 left UNCHECKED: no exact-head CI yet, and the Android test uses FakeHostCoreController so the approved-only outcome is not exercised through the real Rust actor via FFI.
 - Environment: running `./gradlew` in parallel with other Bash calls in one message intermittently exits 127 (cwd race); run it alone.
 - memory.md was missing the recent F3 commits (9bc51010..6fae8924: terminal mailbox, busy-refusal accounting); next F3 candidates are TODO §3 items 2-5.
+
+## 2026-11-05T14:48:19Z - Sonnet 5.5 - Ralph loop iteration 2: remediation TODO §3 item 4 (F3 counters over FFI)
+- UniFFI `FfiHostTransportCounters` now exposes best_effort_event_drops, busy_admission_refusals, authoritative_event_failures; `FfiListenerTransportCounters` exposes best_effort_event_drops and authoritative_event_failures. Mapping lives in `From<TransportCounters>` impls with per-field tests. No Kotlin/desktop code constructed these records, so no consumer edits were needed.
+- Local gates passed: check-rust.sh (752 passed, 0 failed), Android `test lintDebug`, line-count policy. No exact-head CI yet; §3 item 4 left UNCHECKED.
+- Blocker for a duplicate-join/retry counter: `rust/silent-disco-core/src/transport/socket/shared.rs` is 796/800 lines; split it before adding fields. `host_workers.rs` is 772.
+- F3 survey: item 3 per-TCP-generation join dedup exists (`host/duplicate_join_tests.rs`); item 2 host busy-reply exists (`host_join_delivery.rs`), automatic finite client retry is NOT implemented (retry is user-driven via actor retry command); item 5 saturation evidence largely exists in `host_worker_admission_pressure_tests.rs`, `terminal_pressure_tests.rs`, `capacity_refusal_tests.rs` but has not been audited against the item wording.

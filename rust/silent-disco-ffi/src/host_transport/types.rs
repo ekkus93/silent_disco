@@ -1,6 +1,6 @@
 use core::fmt;
 
-use silent_disco_core::transport::{TransportError, TransportErrorKind};
+use silent_disco_core::transport::{TransportCounters, TransportError, TransportErrorKind};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Record)]
 pub struct FfiHostTransportCounters {
@@ -19,6 +19,37 @@ pub struct FfiHostTransportCounters {
     pub unauthorized_frames: u64,
     pub queue_overflows: u64,
     pub delivery_failures: u64,
+    /// Best-effort telemetry or diagnostics dropped on queue pressure/closure.
+    pub best_effort_event_drops: u64,
+    /// New TCP peers refused with a busy reply (capacity or actor pressure).
+    pub busy_admission_refusals: u64,
+    /// Critical events that could not reach the actor before timeout/shutdown.
+    pub authoritative_event_failures: u64,
+}
+
+impl From<TransportCounters> for FfiHostTransportCounters {
+    fn from(counters: TransportCounters) -> Self {
+        Self {
+            accepted_control_connections: counters.accepted_control_connections,
+            closed_control_connections: counters.closed_control_connections,
+            control_frames_sent: counters.control_frames_sent,
+            control_frames_received: counters.control_frames_received,
+            sync_datagrams_sent: counters.sync_datagrams_sent,
+            sync_datagrams_received: counters.sync_datagrams_received,
+            audio_datagrams_sent: counters.audio_datagrams_sent,
+            audio_datagrams_received: counters.audio_datagrams_received,
+            bytes_sent: counters.bytes_sent,
+            bytes_received: counters.bytes_received,
+            malformed_frames: counters.malformed_frames,
+            oversized_frames: counters.oversized_frames,
+            unauthorized_frames: counters.unauthorized_frames,
+            queue_overflows: counters.queue_overflows,
+            delivery_failures: counters.delivery_failures,
+            best_effort_event_drops: counters.best_effort_event_drops,
+            busy_admission_refusals: counters.busy_admission_refusals,
+            authoritative_event_failures: counters.authoritative_event_failures,
+        }
+    }
 }
 
 /// Delivery accounting for a host-issued send/broadcast, mirroring
@@ -140,5 +171,55 @@ impl From<TransportError> for FfiHostTransportError {
             | TransportErrorKind::WorkerPanicked => Self::Io(message),
             TransportErrorKind::ShuttingDown => Self::Closed(message),
         }
+    }
+}
+
+#[cfg(test)]
+mod counter_mapping_tests {
+    use super::*;
+
+    /// Every core counter must reach the binding under its own name; unique
+    /// values make a swapped or dropped field fail loudly.
+    #[test]
+    fn host_counters_expose_every_pressure_counter_distinctly() {
+        let core = TransportCounters {
+            accepted_control_connections: 1,
+            closed_control_connections: 2,
+            control_frames_sent: 3,
+            control_frames_received: 4,
+            sync_datagrams_sent: 5,
+            sync_datagrams_received: 6,
+            audio_datagrams_sent: 7,
+            audio_datagrams_received: 8,
+            bytes_sent: 9,
+            bytes_received: 10,
+            malformed_frames: 11,
+            oversized_frames: 12,
+            unauthorized_frames: 13,
+            queue_overflows: 14,
+            delivery_failures: 15,
+            best_effort_event_drops: 16,
+            busy_admission_refusals: 17,
+            authoritative_event_failures: 18,
+        };
+        let ffi = FfiHostTransportCounters::from(core);
+        assert_eq!(ffi.accepted_control_connections, 1);
+        assert_eq!(ffi.closed_control_connections, 2);
+        assert_eq!(ffi.control_frames_sent, 3);
+        assert_eq!(ffi.control_frames_received, 4);
+        assert_eq!(ffi.sync_datagrams_sent, 5);
+        assert_eq!(ffi.sync_datagrams_received, 6);
+        assert_eq!(ffi.audio_datagrams_sent, 7);
+        assert_eq!(ffi.audio_datagrams_received, 8);
+        assert_eq!(ffi.bytes_sent, 9);
+        assert_eq!(ffi.bytes_received, 10);
+        assert_eq!(ffi.malformed_frames, 11);
+        assert_eq!(ffi.oversized_frames, 12);
+        assert_eq!(ffi.unauthorized_frames, 13);
+        assert_eq!(ffi.queue_overflows, 14);
+        assert_eq!(ffi.delivery_failures, 15);
+        assert_eq!(ffi.best_effort_event_drops, 16);
+        assert_eq!(ffi.busy_admission_refusals, 17);
+        assert_eq!(ffi.authoritative_event_failures, 18);
     }
 }

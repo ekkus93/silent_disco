@@ -1,6 +1,6 @@
 use core::fmt;
 
-use silent_disco_core::transport::{TransportError, TransportErrorKind};
+use silent_disco_core::transport::{TransportCounters, TransportError, TransportErrorKind};
 
 /// Binding-facing preview of a validated desktop manual connection payload.
 ///
@@ -39,6 +39,32 @@ pub struct FfiListenerTransportCounters {
     pub unauthorized_frames: u64,
     pub queue_overflows: u64,
     pub delivery_failures: u64,
+    /// Best-effort telemetry or diagnostics dropped on queue pressure/closure.
+    pub best_effort_event_drops: u64,
+    /// Critical events that could not reach the actor before timeout/shutdown.
+    pub authoritative_event_failures: u64,
+}
+
+impl From<TransportCounters> for FfiListenerTransportCounters {
+    fn from(counters: TransportCounters) -> Self {
+        Self {
+            control_frames_sent: counters.control_frames_sent,
+            control_frames_received: counters.control_frames_received,
+            sync_datagrams_sent: counters.sync_datagrams_sent,
+            sync_datagrams_received: counters.sync_datagrams_received,
+            audio_datagrams_sent: counters.audio_datagrams_sent,
+            audio_datagrams_received: counters.audio_datagrams_received,
+            bytes_sent: counters.bytes_sent,
+            bytes_received: counters.bytes_received,
+            malformed_frames: counters.malformed_frames,
+            oversized_frames: counters.oversized_frames,
+            unauthorized_frames: counters.unauthorized_frames,
+            queue_overflows: counters.queue_overflows,
+            delivery_failures: counters.delivery_failures,
+            best_effort_event_drops: counters.best_effort_event_drops,
+            authoritative_event_failures: counters.authoritative_event_failures,
+        }
+    }
 }
 
 /// One typed event surfaced from the shared Rust listener transport.
@@ -181,5 +207,48 @@ impl From<TransportError> for FfiListenerTransportError {
             | TransportErrorKind::WorkerPanicked => Self::Io(message),
             TransportErrorKind::ShuttingDown => Self::Closed(message),
         }
+    }
+}
+
+#[cfg(test)]
+mod counter_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn listener_counters_expose_event_loss_counters_distinctly() {
+        let core = TransportCounters {
+            control_frames_sent: 1,
+            control_frames_received: 2,
+            sync_datagrams_sent: 3,
+            sync_datagrams_received: 4,
+            audio_datagrams_sent: 5,
+            audio_datagrams_received: 6,
+            bytes_sent: 7,
+            bytes_received: 8,
+            malformed_frames: 9,
+            oversized_frames: 10,
+            unauthorized_frames: 11,
+            queue_overflows: 12,
+            delivery_failures: 13,
+            best_effort_event_drops: 14,
+            authoritative_event_failures: 15,
+            ..TransportCounters::default()
+        };
+        let ffi = FfiListenerTransportCounters::from(core);
+        assert_eq!(ffi.control_frames_sent, 1);
+        assert_eq!(ffi.control_frames_received, 2);
+        assert_eq!(ffi.sync_datagrams_sent, 3);
+        assert_eq!(ffi.sync_datagrams_received, 4);
+        assert_eq!(ffi.audio_datagrams_sent, 5);
+        assert_eq!(ffi.audio_datagrams_received, 6);
+        assert_eq!(ffi.bytes_sent, 7);
+        assert_eq!(ffi.bytes_received, 8);
+        assert_eq!(ffi.malformed_frames, 9);
+        assert_eq!(ffi.oversized_frames, 10);
+        assert_eq!(ffi.unauthorized_frames, 11);
+        assert_eq!(ffi.queue_overflows, 12);
+        assert_eq!(ffi.delivery_failures, 13);
+        assert_eq!(ffi.best_effort_event_drops, 14);
+        assert_eq!(ffi.authoritative_event_failures, 15);
     }
 }
