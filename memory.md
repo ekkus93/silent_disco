@@ -1367,3 +1367,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - CHECKED §5 item 1 (documentation). §5 items 2 and 3 left open (item 2 needs hosted CI on the new tests; item 3: counters not surfaced to diagnostics, HostCoreController does not expose its queue counters, process restoration not audited).
 - Gotcha: `git checkout <file>` does NOT restore an UNTRACKED file, so a mutation on a brand-new file stayed applied until reverted by hand; also it would discard uncommitted edits on a modified tracked file. Revert mutations with explicit text edits.
 - Pending: hosted CI on bf8b4409 (listener idempotent close) to check §4 item 3; then CI on this iteration.
+
+## 2026-11-05T17:55:46Z - Sonnet 5.5 - CI green at b8ef0c18; F4 item 3 and F5 item 2 checked
+- CI 42076348086 at b8ef0c18: Rust quality, Android build/unit/lint, API29 instrumentation, publication gate all success; source-line check success. The run on bf8b4409 (listener idempotent close) was CANCELLED because the next push superseded it (repo cancels in-progress runs), so push once per batch when per-commit evidence matters.
+- CHECKED §4 item 3 (host + listener idempotent close) and §5 item 2 (bounded buffers incl. mDNS ledger). Still open: §4 items 5 and 6, §5 items 3, 4, 5. §0.2 and §3 item 2 unchanged (owner decision for item 2).
+- Next candidate: surface bridge queue counters (droppedDiagnosticEvents, droppedAudioEvents, droppedDiagnosticNotifications, criticalNotificationTimeouts; HostCoreController exposes none) into the diagnostics store, closing the §5 item 3 gap.
