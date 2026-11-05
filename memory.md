@@ -1390,3 +1390,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - CI 42084218903 at 761fe0da: all four jobs + source-line success (the background watcher had been killed for low memory; result found by one `gh run list`).
 - CHECKED §5 item 4 (retention) and item 5 (cross-layer saturation, transport level). Item 5's permanent-UI-spinner half (listener UI rendering of JoinRejected) is NOT tested; noted in the TODO as an open gap.
 - Still open: §0.2, §3 item 2 (owner decision), §4 items 5 and 6, later sections.
+
+## 2026-11-05T20:23:00Z - Sonnet 5.5 - Ralph loop iteration 12: F4 item 5 (ViewModel race tests)
+- Added MainViewModelHostRebindRaceTest (2 tests): Stop during an in-flight native bind (retired start never acked, handle retired once) and 8 session switches (each generation closed exactly once, acks in order). Drive via the production StartAdvertising effect + `wifiDirectService.emitSnapshot`; calling `completeRustHostAdvertising` directly from backgroundScope never started the bind.
+- Gotchas: StateFlow drops equal snapshots, so each new session needs an IDLE then ADVERTISING transition. No VM "profile switch" exists; selectRole is UI state only.
+- Mutations killed: dropping post-bind stillRequested guard; skipping old-handle retire in bindIfRequested. A leaked-poller test survived two mutations (no poller cancel; no quiescence wait) and was REMOVED as vacuous.
+- Gates: Android test lintDebug OK, line counts OK. Item 5 left UNCHECKED pending hosted CI. Item 6 unchanged (leaked-poll, duplicate-listener, same-stream-resume still uncovered).
