@@ -1412,3 +1412,12 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-05T22:03:00Z - Sonnet 5.5 - Ralph loop iteration 14: F4 item 6 leaked-poll and duplicate-poller tests
 - Host and listener poll loops each exit via THREE independent guards (isActive, handle identity, poll lease), so single-guard mutations never fail any test. Wrote property tests instead (host VM-level and listener, 8 cycles): record close-while-polling, poll-after-close, two concurrent pollers on one handle. Killed by: awaitPoll={true}; and all three loop guards removed together (M2 also fails an existing listener test).
 - Gate: Android test lintDebug OK, line counts OK. Item 6 stays UNCHECKED until hosted CI covers the new tests. Next: F6 backup/restore.
+
+## 2026-11-05T22:20:00Z - Sonnet 5.5 - Ralph loop iteration 15: F6 item 1 inventory
+- Wrote handoff section 15 (store inventory + policy) and CHECKED §6 item 1 as a documentation deliverable. Item 2 was already checked (BackupExclusionInstrumentedTest/BackupPolicyInstrumentedTest exist).
+- Findings: HostIdentityManager silently regenerates a missing Keystore key (no UI notice on the host; listeners fail closed because P2 trust compares fingerprint + public key, covered by P2PresentationTest). Rust trusted-device records are keyed by unauthenticated claimed device_id, so nothing key-bound to invalidate on restore. No restore simulation test exists.
+- Items 3 and 4 NOT started: "clear re-enrollment UX" is a product decision. Waiting for owner input. CI on c4463f07 (poll-safety tests) not yet checked; not pushing this docs commit until it is, to avoid cancelling that run.
+
+## 2026-11-05T22:30:00Z - Sonnet 5.5 - Owner: do not wait for CI; local gates are enough
+- Owner instruction: "You could just run the tests locally and not wait for CI jobs to pass... I'll keep an eye on the CI jobs for you. I give you permission." So: run the local gates, push, and continue; do not poll or wait for hosted CI. Label evidence as local-only where CI was not seen, and note that a push cancels the in-progress run (cancel-in-progress), which the owner accepts.
+- CHECKED §4 item 6 on local evidence (poll-safety tests, physical same-stream resume). Pushed with the F6 inventory.

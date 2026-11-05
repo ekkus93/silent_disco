@@ -180,3 +180,25 @@ Read from current master. A search of Android main code finds **no `Channel.UNLI
 **Process restoration (reasoned, not tested).** No bridge queue is persisted. Process death takes the native sockets, the Rust actor state and these queues down together; the restored `MainViewModel` builds fresh controllers with empty queues and rebuilds UI state from saved state and the Rust-owned database. A join or Stop that was queued at death is lost with its TCP connection, and the peer observes a disconnect. There is no test that kills and restores the process.
 
 **F5 cross-layer qualification (2026-11-05).** Chain observed on a real native host with the Android event collector stopped: Android transport queue (64 slots, critical events suspend the IO poll) fills, the native poll stops being called, the Rust host event queue (256) backs up, and the first visible refusal (busy join rejection or closed connection) appeared after 83 accepted joins in a connect/join/disconnect loop. Throughout, an already-approved listener still received Stop, and after collection resumed all 83 accepted joins arrived in order with no gaps. Evidence: `HostBridgeSaturationInstrumentedTest` (API29 emulator, local) and `BridgeQueueRetentionTest` (JVM, 64 KiB payloads, measured retained bytes). Not established: UI rendering of the refusal on the listener, and any run in hosted CI.
+
+## 15. 2026-11-05 — F6 Android backup/restore data inventory
+
+Documentation deliverable for TODO §6 item 1. It maps what the code does today; it is not restore proof.
+
+**Policy.** `AndroidManifest.xml` sets `allowBackup="false"`, `fullBackupContent="@xml/full_backup_exclusions"` (API 26-30) and `dataExtractionRules="@xml/data_extraction_exclusions"` (API 31+). Both XML files exclude `domain="root" path="."`; the Android 12+ rules exclude it for both `cloud-backup` and `device-transfer`. Backup and device-to-device migration are therefore denied on every supported API level by two independent mechanisms. Instrumented checks: `BackupExclusionInstrumentedTest`, `BackupPolicyInstrumentedTest`.
+
+| Store | Location | Contents | Migrates? |
+|---|---|---|---|
+| Rust domain SQLite | `noBackupFilesDir/domain/` (`AndroidDatabasePathProvider`) | settings, trusted device IDs, session history | No (no-backup dir and root exclusion) |
+| P2 SQLite | `noBackupFilesDir/domain/` (`AndroidP2Store`) | recent sessions, trusted host public keys and fingerprints | No |
+| `device_identity` prefs | app-private SharedPreferences | random per-install `device_id` (an unauthenticated label, not a key) | No (root exclusion) |
+| domain legacy prefs | `AndroidRustDomainStore` preferences | pre-Rust tuning and `trusted:` keys, read once for import and then cleared | No |
+| audio grant ledger prefs | `AUDIO_GRANT_LEDGER_PREFERENCES` | persisted read-grant bookkeeping for selected audio URIs | No; grants themselves are not restorable |
+| Android Keystore | `silent-disco-host-identity-v1` (EC P-256, `HostIdentityManager`) | host QR signing key; non-exportable | Never leaves the device by design |
+| Staged host audio | `cacheDir` | bounded copies of selected tracks | No; cleaned at start |
+| Diagnostics and callback captures | `getExternalFilesDir("diagnostics")` and `getExternalFilesDir(null)` | debug-only PCM captures, exports | Not covered by the app backup rules; external app storage is not part of Auto Backup |
+
+**Findings (not yet changed).**
+1. `HostIdentityManager.keyPair()` silently generates a new key if the alias is missing. A replaced key changes the host fingerprint. Listeners that trusted the old key fail closed: `P2UiState.validatedHostIsTrusted()` and `trustedVerifiedSessionIds()` require both fingerprint and public key to match (`P2PresentationTest` covers a mismatched key). The host side shows no "your identity changed" notice.
+2. Trusted-device records in the Rust store are keyed by the unauthenticated claimed `device_id` (legacy v3), so there is no key-bound trust record to invalidate on a restore. Durable trust is blocked until the authenticated transport exists (TODO §1/§2).
+3. No test simulates a restore (DB present, Keystore key missing or replaced). That is TODO §6 item 4.
