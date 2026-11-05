@@ -1,108 +1,92 @@
 # Memory summary
 
-_Generated: 2026-10-14T17:49:07Z — derived from memory.md; do not edit by hand._
+_Generated: 2026-11-05T15:18:22Z — derived from memory.md; do not edit by hand._
 
 ## Current state
-- Latest work (2026-10-14, Ubuntu 22.04.5 packaging path, Block 47 / 46.3 acceptance): one physical Samsung Galaxy A54 (SM-A546E, Android 16/API 36) has verified mDNS discovery, host approval, sync lock, "Playing in sync", pause/resume, stop, and a packaged-AppImage session-history row that survives profile reopen. Host rejection now confirms correctly, and the QR invitation expires in the packaged UI. Latest AppImage SHA-256 recorded: `63929088fe1a2e5edda74231a07fda2f0d9ef5be932da0cec8e9bef1767084ca`; `.deb` `90fb149300ba1a6278fb4ba56635f99a9b47a554cc89a3375016eb82e8041b77` (last entry, Block 31 QR readability fix).
-- Last code change in the log: startup recovery of interrupted host history rows (marked `desktop.host_session.interrupted`), focused tests pass, but no packaged runtime observation yet.
-- Blocked on hardware/infra: second physical Android listener (Blocks 29/47), clean Ubuntu graphical VM for Block 46.3, privileged firewall inspection (Block 24).
-- Acceptance host is `arisu` (Ubuntu 22.04.5 amd64) per 2026-09-16; `kawa` is Ubuntu 24.04.4 and was used for 2026-10-13 performance runs.
-- Handoff docs referenced by the log: `docs/CLAUDE_CODE_HANDOFF_2026-09-16_BLOCK_52.md` (Blocks 49–52), `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`, `docs/AUDIO_PLAYBACK_STATE_2026-08-10.md`, `docs/SILENT_DISCO_NONPHYSICAL_CLOSURE_CHECKPOINT_2026-08-19.md`.
+- **Active track: code review remediation** (`docs/SILENT_DISCO_CODE_REVIEW_REMEDIATION_TODO_2026-10-27.md`, findings F1–F6). Latest recorded work (2026-11-05 15:17Z entry, Sonnet 5.5): F3 item 5 checked on the Rust transport boundary, citing exact-head Rust CI on `acc29010`; F3 item 3 partly evidenced by a new desktop stale-approval test. (The matching git commit is `0a59b28a`, taken from git history, not from memory. Memory does not record CI on it.)
+- Earlier the same day (15:02Z entry): duplicate-join counter added and `CounterState` split out of `socket/shared.rs` (796 → 648 lines). Its exact counts are asserted, and removing the production call fails the test.
+- The 800-line source limit is now a **guideline**, not a hard rule (see Decisions). The CI gate still enforces 800 until changed.
+- **Physical acceptance track** (Blocks 46.3, 47, 52.8, 31, 33, 45.3): mostly single-phone results. Remaining gaps are listed under Open items.
+- Acceptance host history: `arisu` (Ubuntu 22.04.5) per 2026-09-16; `kawa` (Ubuntu 24.04.4) used for the 2026-10-13 performance runs.
+- Handoff docs: the 2026-11-05 entry records that `CLAUDE.md` now points to the 2026-10-28 remediation handoff (`docs/SILENT_DISCO_CODE_REVIEW_REMEDIATION_HANDOFF_2026-10-28.md`). That pointer was assumed current and not confirmed by the owner. The older `docs/CLAUDE_CODE_HANDOFF_2026-09-16_BLOCK_52.md` and `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md` are still referenced by the physical-acceptance entries.
 
 ## Timeline
-Entries are listed chronologically by their recorded dates. Model names are as recorded.
+Chronological by recorded date. Model names are as recorded. Entries with no model name are from before the model convention began in this log.
 
-**June–July 2026: early Android PoC and Ralph Loops**
-- 2026-06-07 (Claude Sonnet 4.6): session start; created CLAUDE.md and memory; documented Ralph Loop workflow; completed TODO 11.4 (stable playback callback/write behavior); completed `docs/CODE_REVIEW1_TODO.md` (all 16 tasks) after a UI/UX review.
-- 2026-06-28 (Claude Haiku 4.5, Sonnet 4.6): CODE_REVIEW2 Ralph Loop, FIX3, FIX4, FIX5 loops each reported complete (8–9 blocks each); lint, unit, and on-device tests recorded.
-- 2026-07-25 (GPT-5.6 Thinking): Rust migration ownership inventory (Block 1.2), compatibility baseline, Block 3 Android Rust integration code, Blocks 4–5, Block 6 synchronization code (physical acceptance not run; no device attached), Block 7 SQLite worker, Block 8 ordered/checksummed migrations, Block 9 Rust-owned Android persistence (instrumented test not run; no device).
-- 2026-07-27 to 07-28 (GPT-5.6 Thinking): Tauri desktop Block 1 baseline; Block 10 core ownership.
-- 2026-07-30 to 07-31: desktop Blocks 13 (authority closure), 15 (platform-effect runner), 16 (secure audio source), 17 (atomic staging), 18 (decoder decision), 19 (bounded streaming decode), 20 (shared transport runtime), 21 (network bind policy), 22 (manual endpoint host), 23 (listener management).
-- 2026-08-01: Block 24 physical Android control interoperability complete; shared Block 14.2–14.4 packetizer, 15.1–15.5 jitter buffer and concealment/scheduler (Block 15 closed), 16 SPSC render ring, 17 real-time C ABI, 18 Oboe adapter (verified on device); BLE advertise and Wi-Fi Direct bugs fixed on a fresh install.
-
-**August 2–3, 2026: audio pipeline bring-up and quality work**
-- 2026-08-02 (Sonnet 5): Block 13 listener lifecycle and UniFFI surface; Wi-Fi Direct peers no longer shown as joinable sessions; Block 20 networking moved to Rust transport; clock sync and audio delivery restored over Rust transport; desktop host real streaming (Blocks 25–27); Battery Saver root-caused as the cause of an ECONNREFUSED blocker; first audible live playback; app-crash race fixed; send-ahead horizon added; clipped-tail and skew-estimation bugs fixed.
-- 2026-08-02 (Fable 5): Kotlin audio-quality fixes device-validated over 8 runs; root-caused popping as hard-edged silence concealment of normal Wi-Fi loss; wrote plan to move all audio into Rust core.
-- 2026-08-03 (Opus 5, several entries): listener playback migrated to Rust; Kotlin owns no listener audio after Phases 4–5; burst concealment and seam fixes; 5 ms packets; ring drain and concealment gain schedule; one alignment attempt regressed on device and was reverted. Audio quality accepted by user at 16:26:57Z; focus moved to Android and desktop app work.
-- 2026-08-03T18:40:46Z (Sonnet 5): session pause and handoff; HEAD `2c7a76e`.
-
-**August 8–10, 2026: device sessions, sync fixes, and the Ralph Loop A/D items**
-- 2026-08-08 (Sonnet 5): LG G6 temporarily unavailable; Block 27 closed (two product decisions and two real bugs); Block 28 prep; two-emulator dry run found shared Android device identity bug.
-- 2026-08-09 (Sonnet 5): LG G6 available; Block 28 live session; minSdk lowered to 26 (user's explicit call); two transport bugs and pause/resume timeline fixed.
-- 2026-08-09 (Opus 5): track-switch scratchiness traced to repeated hard resyncs, not Exclusive/Shared mode; Rust now submits audio directly ("much better" per user); rebuffer target separated (Android tuning measured worse and reverted).
-- 2026-08-10 00:10–00:40 (Opus 5): 12.5% "tail" identified as startup stall; `recv_event(&self)` fix raised sync acceptance 19% → 98%.
-- 2026-08-10 03:23–08:05 (Sonnet 5, Ralph Loop A/D items): A1 did not reproduce, BLUETOOTH permission crash fixed; A2 t4 stamped at socket receipt; A3 pending sync probes now expire; A4.1 variance check; A5 FLAC clean, MP3 works but trails; D1 device-independent failure regression tests; A6 real-device host-blindness gap found and fixed; D2 three-stack UI visibility fix confirmed; A4.4 offset-driven hard resyncs counted; A4.2/A4.3 `STARTUP_BUFFER_MS` and `REBUFFER_TARGET_MS` lowered 1000→400 ms (controlled 4-vs-4 A/B); A6 silent-host-partition test found listener-side blindness (not fixed, logged as item 7).
-- 2026-08-10 06:57:56Z (Sonnet 5): D4 bookkeeping closed Block 28.1/28.2; 28.3 left honestly partial.
-- 2026-08-10 13:20–18:40 (Sonnet 5): Blocks 35 (desktop diagnostics screen and export), 36 (deterministic shutdown), 37 (Lab Mode feature-gated build and isolation), 38 (deterministic virtual clocks), 39 (virtual transport and fault injection; reconnect delay deferred).
-- 2026-08-10 19:10 (Sonnet 5): Block 21 (Android `MainViewModel` reduction) partially done; dead code removed; host audio packetization left in Kotlin pending Block 23.
-- 2026-08-10 19:39–22:40 (Sonnet 5): Block 40 (scenario schema, runner, assertions; JSON not YAML); Block 25 fuzz/property testing (one bug fixed); Block 41 recording and replay; Block 42 Lab Mode UI; shared Block 24 FFI hardening; Block 43 security and Tauri capability audit; Block 21 follow-up rewiring pre-runtime sync to `RustCoreBridge.openSyncEstimator()`; Block 21.4 effect-runner fake infrastructure; Block 44 silent-failure audit (7 bugs fixed).
-
-**August 11–19, 2026: refactors and non-physical closure**
-- 2026-08-11 (Sonnet 5): Round-2 oversized-file split refactor, Tasks 1–9 (listener_playback, playback_pump, network, app_state, scheduler, HostSessionScreen, transport host, transport tests, lab_commands); closed out.
-- 2026-08-19: non-physical closure checkpoint; Blocks 26/28/34/36/39–45/48 software-only work reconciled; Android listener playback Item 5.5 migrated. Rust 1.95.0 recovered (below CI pin 1.97.1); full compiler-backed gates not claimed. User: do not monitor CI; they report failures.
-
-**September 16, 2026: CGNAT, Settings, and Blocks 49–52 device debugging (Opus 5)**
-- 16:33Z: Block 46.3 paused by user; a3beac2 staging invalid. Acceptance host set as `arisu`. Venue Wi-Fi gave both devices 100.64.0.0/10 (CGNAT); Block 51 opt-in migration v3 (`allow_shared_address_space`, default 0) device-verified on A54.
-- 17:14Z: desktop→A54 audio over CGNAT confirmed by ear through the device-test harness; packaged GUI host dropped listener on Play.
-- 18:19Z: Block 52.1 root-caused and fixed: the 8 s silence guard evicted listeners approved before Play; fix arms the clock only on inbound sync/audio or delivered StreamStart.
-- 18:33Z: Block 52.1 verified through packaged GUI.
-- 19:17Z: Blocks 52.2/52.3 device-verified; 52.6 (probe loop never started on mDNS path) fixed; mDNS path plays end to end.
-- 19:29Z: Block 52.4: a refused effect silently killed core notification delivery; now fed back as operation failure.
-- 20:00Z–20:32Z: Block 52.5: delivery banner relabeled as control-message timing; "Streaming to nobody" alert added; listener progress wording fixed; broadcast counter split into partial vs undelivered. Device-verified at build 9a8767f.
-- 20:35:45Z: session handoff written to `docs/CLAUDE_CODE_HANDOFF_2026-09-16_BLOCK_52.md`.
-
-**October 13, 2026: continuation, performance evidence, and acceptance gaps**
-- Desktop host TODO continuation (Blocks 4, 23, 26, 49–52): strict clippy restored; playback pause/resume enqueue failures compensated; shared-address-space changes validated before persistence; Host Session snapshot ordering fixes; Android pre-runtime probes after admission (JVM test added; physical verification pending).
-- Block 45 performance: single-run probe, then paired release baselines on `kawa` (Ubuntu 24.04.4, Ryzen 7 5825U) and a 60 s 16-listener soak; virtual numbers only, no physical listener limit claimed.
-- Final local gates green: Android `test lintDebug`, connected tests on A54 (98 completed, 0 failed), desktop `npm run check`, `scripts/check-rust.sh`, AppImage and `.deb` built and verified.
-- A54 long-pause acceptance (120 s pause): passed; listener stayed in host snapshot; 7,121 first-song packets delivered.
-- Mixed run A54 + emulator-5554: both joined and approved; one listener vanished; treated as inconclusive.
-- Diagnostics refresh interval kept at 2,000 ms (0.5 Hz committed renders measured).
-- TODO acceptance audit: several stale open items reconciled with code/tests; remaining items require physical devices, clean VM, runtime firewall inspection.
-- Ubuntu 22.04 fresh-VM attempt: artifact built on 24.04 needs GLIBC_2.39; Jammy has 2.35; launch failed; not a bundle-CI regression; Block 46.3 open.
-
-**October 14, 2026: packaged-host acceptance (Ubuntu 22.04.5 AppImage)**
-- Partial Block 47 physical run (Ubuntu 24.04 host, A54): mDNS discovery and approval worked; 60 s WAV played in sync; a later join hit `desktop.operation_confirmation_missing`; rejection-click result unconfirmed at that time.
-- Rejection confirmation correlated to the actual delivery operation ID (core/FFI/desktop); physical rerun confirmed the full rejection path.
-- AppImage Block 47 continuation: AppImage and `.deb` built on 22.04.5; one-listener playback, pause/resume, stop, diagnostics export, clean shutdown observed (recording 58.695 s, non-silent PCM).
-- Session IDs were colliding with persisted history (`UNIQUE constraint failed: session_history.session_id`); fixed with nanosecond + PID + nonce IDs; host session history rows now written and completed; verified across profile reopen.
-- Connected host listener projection fixed (approval authorizes UDP ports; `ListenerConnected` submitted). Stop/end-session lifecycle needed a second request to complete in one run.
-- QR invitation auto-expires in the packaged UI (verified 04:58–04:59 PDT); physical QR scan/join not yet verified (scanner did not send a request).
-- Virtual audio sink removal probe: did not reproduce physical device loss; Block 33 physical removal item still open.
-- Startup recovery: host rows left `active` by a crashed desktop are marked interrupted; focused tests pass; packaged runtime not yet observed.
-- Block 45 repeated virtual evidence (Ryzen 5 5500U, 22.04.5); still no physical supported-listener maximum.
-- Block 31 QR readability fix: generation at 1024 source pixels; decodes at 640 px (offline check only).
+- **2026-09-16 (Claude Opus 5), Blocks 49–52:**
+  - Desktop shell rework, Settings, and CGNAT opt-in (Blocks 49–51). Block 46.3 acceptance paused. The `a3beac2` stage is invalid because later commits changed desktop code.
+  - Carrier-NAT (100.64.0.0/10) audio confirmed through the device-test harness. The packaged GUI host dropped the listener on Play.
+  - Block 52.1 root-caused and fixed: the 8 s silence guard evicted listeners approved before Play. Verified through the packaged GUI.
+  - Blocks 52.2 and 52.3 device-verified. 52.6 fixed: the mDNS path never started the sync probe loop.
+  - Block 52.4: a refused effect silently stopped core notification delivery. Fixed, with tests.
+  - Block 52.5: misleading delivery banner and "connecting" after approval fixed. Device-verified. Broadcast counter split into partial and undelivered.
+  - Session handoff written to `docs/CLAUDE_CODE_HANDOFF_2026-09-16_BLOCK_52.md`.
+- **2026-10-13 (no model recorded):**
+  - Desktop host TODO continuation (Blocks 4, 23, 26, 49–52): strict Clippy fixes, playback control enqueue compensation, shared-address-space validation.
+  - Block 45 performance: a single-machine probe, then three release baselines and a 60 s 16-listener soak on `kawa`. Limits not set.
+  - Final local gate rerun and A54 instrumentation (98 connected tests passed).
+  - A54 long-pause acceptance: 120 s pause, resumed in sync, 7,121 packets delivered.
+  - Profile identity, mixed-device run (inconclusive: one emulator listener dropped). Diagnostics cadence fixed at 2,000 ms.
+  - Lab fault-editor test race fixed (test synchronization only, no production change).
+  - Ubuntu 22.04 fresh-VM attempt failed on GLIBC 2.39 vs 2.35. Block 46.3 open.
+- **2026-10-14 (no model recorded; many entries):**
+  - Earlier entries in this date range say ADB and GUI automation were intermittently unavailable. A later entry says that was a command-invocation issue and the direct ADB commands work. The "unavailable" claims are superseded.
+  - Partial Block 47 physical run: mDNS discovery, approval and playback on the A54 (Android 16 / API 36). Rejection false negative traced to missing correlation of delivery IDs, then fixed. Physical rejection confirmed.
+  - Session history persists across profile reopen. Session IDs made unique across actors. Startup recovery of interrupted host rows added, tested but not observed in a package.
+  - Packaged QR join and playback with a fresh invitation. The QR expiry timer works in the packaged UI. A QR join was verified, after the sync-state issues below.
+  - Virtual sink removal probe: does not reproduce a physical unplug. Block 33 device removal stays open.
+  - Automation permission regression: a sandboxed wrapper's failure was not a real device failure. The model was told not to edit permission rules to work around it.
+  - Block 31 QR readability fixed (decoded offline at 640 px). Firewall (Block 24) remains unverified because root is needed.
+  - Stop and end-of-session issues were found during the packaged checks: Stop left the phone out of sync, and the listener card stuck at "connecting".
+- **2026-10-15 (no model recorded; many entries):**
+  - Android retry clock reset: sync estimator reset on failure, retry and leave.
+  - Clean-close handling: a clean peer close is routed to normal leave. Broken pipe on the final disconnect is treated as an expected peer close.
+  - End-while-playing investigation: first a stuck state, then a revision race. Root cause: the actor rejected `EndHostSession` when the UI-sampled revision had moved on. Fixed in core. Stale-revision End now ends the current session.
+  - Connected End verified on a fixed packaged AppImage, using the manual endpoint route. Discovered-session return-home is **not** verified.
+  - Disconnect/reconnect attempts: mDNS and QR limits. Recovery action exposed after host loss (`2609475`, `4641fa3`); reconnect routes to Nearby Sessions (`9d31ec0`). A forced process kill and restart recovered to Host Setup (process-restart evidence only).
+  - Diagnostics export verified. Ubuntu 22.04 clean-container startup smoke passed (basic only).
+- **2026-10-16 (Claude Opus 5.5):**
+  - Exact-head gates at `af8e090` (API 36 emulator, no physical devices): Android 119/120 passed (1 skipped), desktop 157 frontend tests, desktop Rust 347 passed.
+  - Listener pause/resume fixes: BUFFERING state on resume, boundaries withdrawn on Pause.
+  - Host decode failure now cancels the pending boundary immediately.
+  - Boundary commit-point edit race found and left open (see Open items).
+- **2026-11-05 (Sonnet 5.5), remediation track:**
+  - 12:48Z: `CLAUDE.md` `/init` review. Handoff pointer updated, commit-hook note corrected, gates documented.
+  - 13:29Z: F1 reproduction (TODO §0.2). Desktop and Android tests that a claimed device ID never becomes trusted; both fail under mutation. Box left unchecked: no exact-head CI, and the Android test uses a fake controller.
+  - 14:48Z: F3 counters exposed over FFI (TODO §3 item 4). Box left unchecked.
+  - 14:48Z: 800-line limit relaxed to a guideline (owner decision).
+  - 15:02Z: duplicate-join counter and `CounterState` split.
+  - 15:17Z: F3 items 3 and 5 audit. Item 5 checked on the Rust boundary. Item 3 left open.
 
 ## Decisions & preferences
-- **Audio quality**: accepted by user 2026-08-03; do not reopen unless asked.
-- **Ask before starting the next block** when the log's established pattern is "per-block approval" (stated 2026-08-10 for Blocks 36–40; do not start unilaterally).
-- **Personal phone** (LG G6) must not be used for physical runs unless user confirms it is free (2026-08-08); use emulators meanwhile.
-- **minSdk** lowered to 26 to support the LG G6 (user's explicit decision, 2026-08-09).
-- **Do not monitor CI**; user reports CI failures (2026-08-19).
-- **Device evidence rule**: rebuild and reinstall the APK before any real-device test (a stale install once invalidated a result). Never claim device validation without the exact command, device model, Android version, and ABI.
-- **Verify the packaged binary**: confirm `/usr/bin/silent-disco-desktop` matches the bundle being tested. Launch GUI as `silent-disco-desktop 2>&1 | tee ~/silent-disco-desktop.log` to keep output.
-- **`./gradlew test lintDebug` does not validate Rust schema changes**; run the Rust gates separately.
-- **Checking a box must not hide a known problem** (MP3 quality in Block 28; desktop clippy gate gap noted).
-- **Lab identities** must never be selected automatically for production; production identity failure is a hard error (Block 37).
-- **Scenario format is JSON**, not YAML (Block 40).
-- **Commit attribution**: memory records a rule against `Co-Authored-By:` lines in commit messages (2026-06-28 FIX5 entry, consistent with CLAUDE.md). Current session attribution guidance differs; the project rule takes precedence per CLAUDE.md.
-- **Do not hand-edit generated bindings**; `git diff --check` trailing whitespace in generated TypeScript is expected.
-- **Diagnostics**: the local UI reports local send outcomes, not confirmed listener receipt.
-- **Shutdown**: a timeout never frees callback-visible memory; `ShutdownFailed` is deliberately not reopen-safe (requires app restart).
-- **Shared-address-space (CGNAT) is opt-in**; automatic selection only uses the best class present.
+- **File size (2026-11-05, owner):** 800 lines is a guideline. The rule is no God files. Claude decides when to refactor, splitting by responsibility and not just to hit a number. The CI gate `scripts/check-source-file-line-counts.sh` still enforces 800 until the owner changes it.
+- **Remediation checkboxes (2026-11-05 entries):** TODO §0.2 and the F3 items were left unchecked while exact-head CI or the real-actor or Android path was missing. The TODO header says a box is checked only with production code, negative and positive tests, and exact-head evidence.
+- **Physical acceptance (2026-10-13 to 10-15):** local gates and simulations are not physical proof. Do not claim a physical pass from simulation, and do not use instrumented or probe builds for acceptance. The two-physical-phone matrix is skipped at the user's direction (2026-10-15).
+- **Git hygiene (2026-10-14 to 10-15):** do not commit the broad dirty worktree as one change. Commit isolated slices.
+- **Generated code (2026-10-14):** do not hand-edit generated bindings. Their trailing whitespace in `git diff --check` is expected.
+- **Performance (2026-10-13 to 10-14):** do not set platform listener limits or timing thresholds from one machine's virtual-listener runs.
+- **Tooling (2026-11-05):** run `./gradlew` alone, not in parallel with other Bash calls; a parallel run exited 127 because of a working-directory race.
+- **Android UI (2026-10-13):** opaque 64-hex host identities render as `Host <8 hex chars>` in listener-facing UI. The full ID is kept for protocol and trust operations.
+- **Screenshots (2026-10-14):** X11 captures of the composited webview can be blank. GNOME captures are reliable. Do not treat X11 blank captures as a product bug.
+- **Packaging (2026-09-16):** `./gradlew test lintDebug` does not validate Rust schema changes. Use the Rust gates for those.
 
 ## Open items
-- Second physical Android listener: Blocks 29 and 47 (and D3, multi-listener capacity); the two-listener sync measurement (the project's success criterion) has never been done on hardware.
-- Clean Ubuntu 22.04 graphical VM / fresh-machine acceptance: Block 46.3.
-- Full Block 47 matrix: packaged-app launch, QR scan/join on physical Android, second listener, failure and recovery scenarios, exact package/APK/network evidence.
-- Block 24 firewall: effective rules unknown (UFW `ENABLED=no` in config but service active; nft/iptables need root).
-- Block 33: physical device-removal checkbox open.
-- Packaged Stop behavior: listener card lingered at `connecting` after Stop; host listener lifecycle status unresolved; listener-count persistence unresolved.
-- Host sync-summary display on the desktop card unresolved.
-- Listener-side silence watchdog (A6 item 7): a silent host partition is not visible to the listener; not fixed.
-- Listener limits, UI rendered-update rate, and stable performance thresholds: unset pending broader machine data.
-- Block 45.3 cadence and listener limit: open pending physical listener runs.
-- Desktop clippy is outside the enforced `npm run check` gate; ~8 pre-existing deny-level errors on master.
-- Unrelated flaky-test history: `LabScreen.test.tsx` link-fault test (fixed 2026-10-13 and 2026-10-14; watch CI).
-- Startup recovery of interrupted host rows: focused tests pass; not yet observed in packaged runtime.
-- Approval send delay (~1 min) and "11 partial frames" from Block 52.5 unconfirmed; per-packet correlation not yet done.
+- **Remediation F1 (TODO §0.2):** exact-head CI for the reproduction commit is not recorded. The Android test does not exercise the approved-only outcome through the real Rust actor via FFI.
+- **Remediation F3 item 2:** automatic finite client retry on a busy reply is not implemented. Retry is user-driven. Owner decision needed.
+- **Remediation F3 item 3:** the Android stale-approval refusal (`pendingListenerDatagramPorts.take`) has no JVM test because the function is file-private. Planned as part of F4.
+- **Remediation F3 item 4:** no Android or desktop UI or diagnostics surface shows the new counters. No exact-head CI yet.
+- **Remediation F3 item 5:** checked for the Rust boundary only. Android bridge and permanent-spinner requirements remain under F5.
+- **Gapless boundary edit race (2026-10-16):** a worker commits a track boundary about 640 ms before hosts report it scheduled. Edits in that window are accepted, but the removed track still plays. Options (actor-approved commit, immediate commit report, end-of-track lock margin) were presented and not decided. The TODO §3 item was reopened.
+- **Connected End (2026-10-15):** verified on the manual endpoint route only. Discovered-session return-home and coupled listener teardown are not verified.
+- **Automatic reconnection (2026-10-15):** not verified. Only user-driven recovery (Fix connection → Reconnect) has passed.
+- **Unauthorized-peer diagnostic (2026-10-14):** the desktop reported `control frame was not sent by the authorized peer identity` while playback was healthy. The desktop also logged a sync-path `Unauthorized` datagram during a network interruption (2026-10-15). No later entry records these as resolved.
+- **Physical hardware gaps:** a second physical Android listener (Blocks 29, 47; two-phone matrix skipped by user direction), a clean Ubuntu 22.04 graphical VM run (Block 46.3), physical device hot-unplug (Block 33), and physical listener scaling (Block 45.3).
+- **Firewall (Block 24):** runtime policy unverified. `ufw.conf` shows `ENABLED=no`, but the effective rules need root.
+- **Performance (Block 45):** UI rendered-update rate, listener ceilings and stable timing thresholds are unset.
+- **Battery saver (2026-09-16):** the A54 `low_power` setting was set to 0 for testing and must be restored to 1 by the user. No later entry confirms this.
+- **Historical flake:** the `LabScreen.test.tsx` link-fault test was flaky. Entries from 2026-10-13 and 2026-10-14 record a synchronization fix that passed repeated isolated runs. Those entries describe it as a fix, not a root-cause proof.
+
+## Provenance notes
+- The previous summary also covered June–July 2026 entries (early Android PoC and Ralph loops, and the Rust migration blocks). Those entries are not in the current `memory.md`, so they are not carried forward here.
+- The "Luna automation handoff" at the top of `memory.md` (2026-10-14) describes a restricted session that later entries supersede.
+- Several Block 47 and Block 52 results depend on one A54 and one host machine. Their artifact hashes are in the log and were not re-verified for this summary.
