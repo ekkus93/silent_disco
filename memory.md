@@ -1331,3 +1331,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Item 3 left UNCHECKED: Android `executeRustTransportEffect` stale-approval refusal (`pendingListenerDatagramPorts.take`) has no JVM test because the function is file-private; fold into the F4 "reject stale approvals" item.
 - Item 2 still open: automatic finite client retry on a busy reply is not implemented (user-driven retry exists); needs an owner decision.
 - `gh run list` / `gh run view <id> --json jobs` gives per-job exact-head CI status; Rust quality passes before Android jobs finish.
+
+## 2026-11-05T15:28:58Z - Sonnet 5.5 - Ralph loop iteration 5: F3 item 4 checked, Android stale-approval test
+- Exact-head `acc29010` CI 42050844898 passed fully (Rust quality, Android build/lint, API29 instrumentation, publication gate); Desktop CI and source policy passed; Desktop Lab shows cancelled (superseded), not counted. CHECKED §3 item 4 (counters exposed via core+UniFFI; no UI surface).
+- Correction: my earlier claim that the Android stale-approval path had no test was wrong (grep miss). `PendingHostJoinRoutesTest` and `MainViewModelRustHostEffectTest.deliverJoinApprovalWithoutRouteReportsExplicitFailureAndNeverConnects` already existed. Added `MainViewModelStaleApprovalTest` for the remaining combination (live route for the replacement request + stale approval). Mutation (take falls back to any route for the device ID) fails it and two route-table tests. Android `test lintDebug` passed.
+- Item 3 still UNCHECKED pending exact-head CI on the commit with the Android test (and desktop test CI at 0a59b28a). Item 2 still needs an owner decision on automatic retry.
+- Lesson: search test dirs by behavior (fun names, effect names) before claiming a path is untested.
