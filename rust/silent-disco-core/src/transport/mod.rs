@@ -19,6 +19,12 @@ mod late_join_liveness_tests;
 #[cfg(test)]
 mod liveness_tests;
 #[cfg(test)]
+mod manual_endpoint_fuzz_tests;
+#[cfg(test)]
+mod secure_replay_fuzz_tests;
+#[cfg(test)]
+mod secure_trust_fuzz_tests;
+#[cfg(test)]
 mod test_support;
 #[cfg(test)]
 mod virtual_fault_tests;

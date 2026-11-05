@@ -1433,3 +1433,13 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - HostKeyRestoreInstrumentedTest (4 tests, A54, real Keystore + real P2 DB): startup warns once after key loss, quiet when intact, upgrade without record neither warns nor creates a key, restore to a new identity is not trusted and revocation works. Mutations killed the right tests (no startup notice -> startupWarns..., no record guard -> upgrade...). Used cp backups, not git checkout.
 - Gate: test lintDebug compileDebugAndroidTestKotlin OK, line counts OK. CHECKED §6 items 3 and 4 (local evidence; owner watches CI). F6 complete.
 - Lesson: do not mark an item partial for "needs a product decision" when the smallest reading of the item is implementable; pick it, state the choice, and let the owner redirect.
+
+## 2026-11-05T23:58:00Z - Sonnet 5.5 - Ralph loop iteration 18: §7 parser fuzz/property tests (partial)
+- Frame decoding already had seeded fuzz tests (protocol/fuzz_tests.rs, own PRNG, no nightly). Added manual_endpoint_fuzz_tests.rs (5) and secure_trust_fuzz_tests.rs (4) for the two untrusted-text parsers that had none. 11 mutations (5 + 6 guards removed one at a time) each fail a test; sources restored with cp backups.
+- Clippy -D warnings flagged range_plus_one, usize->u32 cast, single-char pattern and a 114-line table test (allowed with a comment). Fixed; check-rust.sh clean. Started a duplicate gate run by mistake; do not run the same long gate twice.
+- §7 parser item left UNCHECKED: authenticated-control replay beyond example tests, cancellation and stream-level chunked reassembly not covered.
+
+## 2026-11-06T00:20:00Z - Sonnet 5.5 - §7 parser tests: replay model tests added, Rust gate green
+- Added secure_replay_fuzz_tests.rs (4): model-vs-real replay window, isolation, rekey, registry cap. 5 mutations each fail a test. One test failure was my own bug (random sequences far below the highest are correctly TooOld; use ascending).
+- scripts/check-rust.sh exit 0 (fmt, strict clippy, workspace tests: 23 suites ok). §7 parser item still UNCHECKED (cancellation and chunked stream reassembly uncovered).
+- Process lesson: `pkill -f <pattern>` matches the shell running it and kills it (exit 144), and a `cargo test` child can outlive its parent script. Kill by PID.
