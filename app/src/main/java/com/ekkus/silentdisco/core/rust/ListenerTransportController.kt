@@ -62,7 +62,14 @@ interface ListenerTransport : AutoCloseable {
  * transport, forwards control requests, and surfaces the transport's typed
  * events as a [Flow].
  */
-class ListenerTransportController : ListenerTransport {
+class ListenerTransportController(
+    // Test seam only: production always opens the real shared Rust transport.
+    private val openHandle: (
+        rawEndpoint: String, nowMs: ULong, localDeviceId: String, localAddress: String,
+    ) -> FfiListenerTransportHandle = { endpoint, now, device, address ->
+        FfiListenerTransportHandle.connect(endpoint, now, device, address)
+    },
+) : ListenerTransport {
     private val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
     // A delayed IO bind must not resurrect a socket after Leave, or replace a newer join.
     private val connectionGeneration = AtomicLong()
@@ -102,11 +109,7 @@ class ListenerTransportController : ListenerTransport {
                     !closed.get() && connectionGeneration.get() == requestedGeneration
                 },
                 retire = { retireHandle(it, reason = null) },
-                open = {
-                    FfiListenerTransportHandle.connect(
-                        rawEndpoint, nowMs(), localDeviceId, localAddress,
-                    )
-                },
+                open = { openHandle(rawEndpoint, nowMs(), localDeviceId, localAddress) },
                 start = {
                     eventQueue.discardRetiredEvents()
                     startEventLoop(scope, it)
