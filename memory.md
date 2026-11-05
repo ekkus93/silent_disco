@@ -1301,3 +1301,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-05T12:48:16Z - Sonnet 5.5 - /init review of CLAUDE.md
 - Updated CLAUDE.md: handoff pointer now the 2026-10-28 remediation handoff (assumed current; unconfirmed by user), commit-hook note (user-global ~/.githooks, not repo) plus Conventional Commits, CI-vs-local Rust gate differences, desktop bindings check is not UniFFI, added Node/Lab Mode/800-line/Gradle gotchas.
+
+## 2026-11-05T13:29:49Z - Sonnet 5.5 - Ralph loop iteration 1: remediation TODO §0.2 (F1 reproduction)
+- Added desktop test `approved_devices_only_claimed_identity_is_projected_unverified_and_refused_by_policy` (host_transport_admission_tests.rs) and Android `HostJoinTrustProjectionTest`. Pitfall: desktop projection refuses a join when the advertised approval mode differs from the snapshot host draft, so approved-only tests must advertise TrustedDevices (the shared `advertisement()` helper hardcodes Manual).
+- Mutation checks (projection emits Trusted / Android submits TRUSTED) fail both tests; reverted. Local gates passed: desktop fmt, clippy -D warnings, cargo test (386 passed, 5 ignored), Android `test lintDebug`, line-count policy.
+- §0.2 left UNCHECKED: no exact-head CI yet, and the Android test uses FakeHostCoreController so the approved-only outcome is not exercised through the real Rust actor via FFI.
+- Environment: running `./gradlew` in parallel with other Bash calls in one message intermittently exits 127 (cwd race); run it alone.
+- memory.md was missing the recent F3 commits (9bc51010..6fae8924: terminal mailbox, busy-refusal accounting); next F3 candidates are TODO §3 items 2-5.

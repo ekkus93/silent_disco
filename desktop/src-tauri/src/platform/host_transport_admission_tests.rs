@@ -674,3 +674,69 @@ fn rejected_actor_join_gets_explicit_tcp_refusal_and_next_listener_can_join() {
     accepted.shutdown().expect("accepted socket shutdown");
     runtime.shutdown().expect("host shutdown");
 }
+
+/// F1 reproduction at the desktop production join boundary: a peer-claimed
+/// device ID reaches the actor as session-only, never `Trusted`, so the Rust
+/// "Approved devices only" policy refuses it instead of auto-approving or
+/// silently falling back to a pending manual decision.
+#[test]
+fn approved_devices_only_claimed_identity_is_projected_unverified_and_refused_by_policy() {
+    use silent_disco_core::domain::TrustState;
+    use silent_disco_core::runtime::{
+        HostDraft, JoinRejectionReason, JoinRequestDisposition, classify_join_request,
+    };
+
+    let factory = production_transport_factory();
+    let session_id = SessionId::new("f1-session").expect("session");
+    let host_id = DeviceId::new("f1-host").expect("host");
+    let claimed_id = DeviceId::new("previously-approved-device").expect("claimed id");
+    // The projection refuses a join when the advertised mode differs from the
+    // authoritative draft, so advertise the same approved-only policy.
+    let advertisement = SessionAdvertisement::new(
+        session_id.clone(),
+        host_id.clone(),
+        "F1 host",
+        ApprovalMode::TrustedDevices,
+        silent_disco_core::protocol::PROTOCOL_VERSION,
+        None,
+    )
+    .expect("advertisement");
+    let host_clock = Arc::new(SystemTransportClock::default());
+    let node = factory
+        .bind_host(
+            HostTransportConfig::loopback(session_id.clone()),
+            host_clock.clone(),
+        )
+        .expect("bind host");
+    let endpoint = node.endpoint();
+    let (sender, receiver) = mpsc::channel();
+    let mut snapshot = CoreSnapshot::default();
+    snapshot.host_draft.approval_mode = ApprovalMode::TrustedDevices;
+    let draft: HostDraft = snapshot.host_draft.clone();
+    let sink = Arc::new(RecordingSink {
+        snapshot: Mutex::new(snapshot),
+        sender,
+    });
+    let runtime =
+        DesktopHostTransportRuntime::start(node, advertisement, sink, host_clock).expect("runtime");
+    let mut listener = connect_listener(&factory, &session_id, &claimed_id, endpoint);
+    send_join(&*listener, &session_id, &claimed_id);
+
+    let CoreTransportEvent::JoinRequested(request) = receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .expect("actor received join")
+    else {
+        panic!("expected join request");
+    };
+    assert_eq!(request.device_id, claimed_id);
+    assert_eq!(request.trust_state, TrustState::SessionOnly);
+    assert_eq!(
+        classify_join_request(&draft, &request),
+        JoinRequestDisposition::AutoReject {
+            reason: JoinRejectionReason::DeviceNotApproved,
+        }
+    );
+
+    listener.shutdown().expect("listener shutdown");
+    runtime.shutdown().expect("runtime shutdown");
+}
