@@ -1378,3 +1378,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - BridgeQueueDiagnosticsTest (3): host test drives a REAL drop (bound mock handle streams Heartbeats, nothing collects). Mutation (drop host counter read + drop report-time refresh) fails tests 1 and 3, test 2 passes; reverted by text edit.
 - Gates: Android test lintDebug OK, compileDebugAndroidTestKotlin OK, line counts OK. Single push planned so CI evidence attaches to one commit. §5 item 3 stays UNCHECKED until hosted CI.
 - Process restoration documented as reasoned only (handoff 14), untested.
+
+## 2026-11-05T18:26:14Z - Sonnet 5.5 - Ralph loop iteration 11: F5 items 4 and 5 (retention and cross-layer saturation)
+- CI 42081036704 at ca7648c3 green (all four jobs + source-line). CHECKED §5 item 3.
+- Audited F5 item 4: existing queue tests (19+6+4) use String events and count slots, none measured retained BYTES. Added BridgeQueueRetentionTest (3, 64 KiB payloads; transport flood retains exactly 64 x 64 KiB, 200 rebinds retain only last session, core diagnostic flood). Mutation (best-effort share cap lifted in both queues) fails the two flood tests.
+- F5 item 5: added HostBridgeSaturationInstrumentedTest (real native host, collector stopped, connect/join/disconnect cycles). First refusal after 83 accepted joins (Android 64 + Rust 256 chain). Asserts late joiner refused, Stop still reaches live listener, accepted joins arrive in order with no gaps after resume. Mutation (joins via tryEmit) fails with missing 7..47. Ran on API29 emulator (pinned ANDROID_SERIAL), not CI. Required MIN_ABSORBED_JOINS=30 so it cannot pass vacuously.
+- Items 4 and 5 left UNCHECKED pending hosted CI (and for item 5 the UI-spinner half is unproven). Single push to keep CI evidence on one commit.
+- The loop pattern that worked: do not push while a CI run is in progress (cancel-in-progress); prepare locally, push once.
