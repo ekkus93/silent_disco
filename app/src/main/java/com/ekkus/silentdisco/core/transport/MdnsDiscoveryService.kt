@@ -5,8 +5,6 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -107,6 +105,10 @@ internal fun parseMdnsAdvertisement(record: MdnsResolvedRecord): MdnsSessionAdve
 
 private fun validPort(port: Int): Boolean = port in 1..65_535
 
+private const val DISCOVERY_FULL_MESSAGE =
+    "Nearby session list is full: additional mDNS services are ignored until some disappear. " +
+        "Use the manual endpoint or QR invitation to join a host that is not listed."
+
 /** Android NSD implementation of the desktop `_silentdisco._tcp` convenience layer. */
 class MdnsDiscoveryService(context: Context) : MdnsTransport {
     private val nsdManager = context.applicationContext.getSystemService(NsdManager::class.java)
@@ -117,11 +119,10 @@ class MdnsDiscoveryService(context: Context) : MdnsTransport {
 
     private data class PendingResolve(val serviceInfo: NsdServiceInfo, val generation: Long)
 
-    private val sessionsByServiceName = ConcurrentHashMap<String, MdnsSessionAdvertisement>()
-    private val pendingResolves = ConcurrentLinkedQueue<PendingResolve>()
+    // Every name here is chosen by a LAN peer: bounded, with visible refusals.
+    private val ledger = MdnsDiscoveryLedger<PendingResolve, MdnsSessionAdvertisement>()
     private val resolving = AtomicBoolean(false)
     private val discoveryGeneration = AtomicLong(0)
-    private val lostServiceNames = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var discoveryListener: NsdManager.DiscoveryListener? = null
 
     override fun startDiscovery(): MdnsOperationResult {
@@ -160,15 +161,16 @@ class MdnsDiscoveryService(context: Context) : MdnsTransport {
 
         override fun onServiceFound(serviceInfo: NsdServiceInfo) {
             if (!serviceInfo.serviceType.startsWith("_silentdisco._tcp")) return
-            lostServiceNames.remove(serviceInfo.serviceName)
-            pendingResolves.add(PendingResolve(serviceInfo, discoveryGeneration.get()))
+            val admission = ledger.offerPending(
+                serviceInfo.serviceName,
+                PendingResolve(serviceInfo, discoveryGeneration.get()),
+            )
+            if (admission == LedgerAdmission.REJECTED_FIRST) _failures.tryEmit(DISCOVERY_FULL_MESSAGE)
             resolveNext()
         }
 
         override fun onServiceLost(serviceInfo: NsdServiceInfo) {
-            lostServiceNames.add(serviceInfo.serviceName)
-            pendingResolves.removeIf { it.serviceInfo.serviceName == serviceInfo.serviceName }
-            if (sessionsByServiceName.remove(serviceInfo.serviceName) != null) publishSessions()
+            if (ledger.markLost(serviceInfo.serviceName)) publishSessions()
         }
 
         override fun onDiscoveryStopped(serviceType: String) = Unit
@@ -190,7 +192,7 @@ class MdnsDiscoveryService(context: Context) : MdnsTransport {
 
     private fun resolveNext() {
         if (!resolving.compareAndSet(false, true)) return
-        val pending = pendingResolves.poll()
+        val pending = ledger.pollPending()
         if (pending == null) {
             resolving.set(false)
             return
@@ -221,7 +223,7 @@ class MdnsDiscoveryService(context: Context) : MdnsTransport {
                     override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                         try {
                             if (generation != discoveryGeneration.get() || discoveryListener == null) return
-                            if (serviceInfo.serviceName in lostServiceNames) return
+                            if (ledger.isLost(serviceInfo.serviceName)) return
                             val address = serviceInfo.host?.hostAddress ?: return
                             val parsed = parseMdnsAdvertisement(
                                 MdnsResolvedRecord(
@@ -231,8 +233,11 @@ class MdnsDiscoveryService(context: Context) : MdnsTransport {
                                     attributes = serviceInfo.attributes,
                                 ),
                             ) ?: return
-                            sessionsByServiceName[serviceInfo.serviceName] = parsed
-                            publishSessions()
+                            when (ledger.admitSession(serviceInfo.serviceName, parsed)) {
+                                LedgerAdmission.ACCEPTED -> publishSessions()
+                                LedgerAdmission.REJECTED_FIRST -> _failures.tryEmit(DISCOVERY_FULL_MESSAGE)
+                                LedgerAdmission.REJECTED_REPEATED -> Unit
+                            }
                         } finally {
                             finishResolve()
                         }
@@ -253,14 +258,12 @@ class MdnsDiscoveryService(context: Context) : MdnsTransport {
     }
 
     private fun clearSessions() {
-        pendingResolves.clear()
-        lostServiceNames.clear()
-        sessionsByServiceName.clear()
+        ledger.clear()
         _discoveredSessions.value = emptyList()
     }
 
     private fun publishSessions() {
-        _discoveredSessions.value = sessionsByServiceName.values
+        _discoveredSessions.value = ledger.sessionsSnapshot()
             .distinctBy { it.sessionId }
             .sortedBy { it.sessionName }
     }
