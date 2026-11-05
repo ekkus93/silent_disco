@@ -1396,3 +1396,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Gotchas: StateFlow drops equal snapshots, so each new session needs an IDLE then ADVERTISING transition. No VM "profile switch" exists; selectRole is UI state only.
 - Mutations killed: dropping post-bind stillRequested guard; skipping old-handle retire in bindIfRequested. A leaked-poller test survived two mutations (no poller cancel; no quiescence wait) and was REMOVED as vacuous.
 - Gates: Android test lintDebug OK, line counts OK. Item 5 left UNCHECKED pending hosted CI. Item 6 unchanged (leaked-poll, duplicate-listener, same-stream-resume still uncovered).
+
+## 2026-11-05T20:30:00Z - Sonnet 5.5 - CI green at 2e84a938; F4 item 5 checked
+- CI 42102740981 at 2e84a938 success (plus source-line, publish). CHECKED §4 item 5. Item 6 still open (leaked-poll, duplicate-listener, same-stream-resume).
