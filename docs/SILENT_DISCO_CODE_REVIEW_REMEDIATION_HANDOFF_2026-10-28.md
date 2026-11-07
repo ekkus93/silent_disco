@@ -318,3 +318,34 @@ Step 2, Android half. The listener's proof key is a non-exportable P-256 key in 
 - The listener does not yet sign a proof on the TLS connection. That needs the Android listener's TLS client and the exporter binding wired through, which is a later step.
 - The desktop listener proof key (§19) is not yet used by a proof flow either.
 - The stored key is protected by Keystore, but the test runs were on one device. No emulator run.
+
+## 21. 2026-11-07 — listener TLS proof flow: core and desktop; Android pending
+
+**Signer abstraction (core).** `ListenerProofSigner` (in `transport/secure_listener_proof.rs`) supplies the listener's SPKI and signs the transcript. The proof code never needs the raw private key. A desktop key file or an in-memory key implements it, and an Android Keystore key can implement it through a callback once the FFI exists. `SigningKey` already implements it.
+
+**End-to-end functions (core).**
+- `connect_and_prove(address, host_spki, session, generation, signer)`: connects, completes TLS 1.3 pinned to the host SPKI, reads the host nonce, and returns a proof. It sets a 10 s timeout on connect and I/O.
+- `accept_and_verify(listener, host_certificate, host_signing_key, host_spki, session, generation)`: accepts one listener, completes TLS 1.3, and verifies the proof. It returns the verified listener key.
+- Errors are typed: `SignerFailed` is reported when the key can't be read or can't sign.
+
+**Evidence (core, local).** `secure_listener_proof_tests.rs`, nine tests over real TLS loopback:
+- an end-to-end proof verifies, and the verified fingerprint equals the SHA-256 of the listener's key;
+- a listener pinned to another host key never reaches the proof (both sides fail);
+- a claimed key the listener does not hold is refused (`SignatureMismatch`);
+- a signer that can't read its key surfaces `SignerFailed` on the listener, and no proof verifies;
+- a signer that reads its key but refuses to sign surfaces `SignerFailed`, and no empty proof verifies;
+- a captured proof is refused on a second connection; a proof for another session is refused; an oversized field is refused as malformed;
+- a Keystore-produced signature captured from the A54 verifies in the core verifier.
+
+Mutation: swallowing signer failures (`unwrap_or_default`) passed the first version of the tests, because only the key-read failure was tested. A sign-only failure test was added; with the mutation in place it now fails. Restored, and verified identical.
+
+**Desktop (`desktop/src-tauri/src/platform/listener_proof.rs`).** `prove_to_host` loads the owner-only key file (§19) and runs `connect_and_prove`. Two loopback tests: a desktop listener's key-file key is verified by the host and matches the stored key; a desktop listener refuses to prove to a host it did not pin. Dev-dependencies added to the desktop crate: `rcgen =0.14.2` and `rustls =0.23.46` (ring), the same pins as the core.
+
+**Gates (local).** `scripts/check-rust.sh` exit 0 (23 suites; strict Clippy). Desktop: `cargo fmt --check` passes, `cargo clippy --locked --all-targets -D warnings` passes, and the new desktop tests pass. The desktop lock gained only added lines.
+
+**Not done: Android.** The Keystore key cannot be exported, so the TLS client must run in Rust while each signature is requested from Kotlin. That needs:
+1. a UniFFI callback interface in `silent-disco-ffi` for the signer, plus a function that runs `connect_and_prove`, with regenerated Kotlin bindings;
+2. a Kotlin implementation that delegates to `ListenerIdentityManager`;
+3. a host endpoint for an on-device test. The host side exists only as Rust test code. The options are a test-only FFI export of `accept_and_verify`, or a separate desktop host running on the same network.
+
+**Not done: production wiring.** Neither the desktop nor the Android join path uses the proof yet. Both still run protocol v3 plaintext.

@@ -20,6 +20,7 @@ pub mod identity;
 pub(crate) mod invitation;
 pub mod invitation_identity;
 pub mod listener_key_file;
+pub mod listener_proof;
 mod mdns;
 mod monitor;
 mod monitor_pump;

@@ -1,29 +1,37 @@
-//! Listener possession proof carried over an established TLS 1.3 connection.
+//! Listener possession proof carried over a TLS 1.3 connection.
 //!
-//! After the host's TLS handshake, the host sends a fresh 32-byte nonce. The
-//! listener replies with its SPKI and a signature over the canonical proof
-//! transcript from `secure_identity`. That transcript includes the TLS exporter
+//! After the TLS handshake the host sends a fresh 32-byte nonce. The listener
+//! replies with its SPKI and a DER ECDSA signature over the canonical proof
+//! transcript from `secure_identity`. The transcript includes the TLS exporter
 //! value for this connection, so a proof captured on one connection cannot be
-//! replayed on another: the exporter differs and so does the nonce.
+//! replayed on another.
 //!
-//! Callers compute the exporter value from the connection first and pass the
-//! 32-byte binding in. The proof code never borrows the TLS connection and the
-//! stream together.
+//! The listener signs through [`ListenerProofSigner`], not a raw key. A desktop
+//! listener can implement it with a key file; an Android listener implements
+//! it over the Keystore key, which never leaves Keystore.
 //!
 //! Scope: this module proves possession of the listener key on one connection.
 //! It does not decide whether the listener is trusted; that is the host's
-//! durable trust policy. Nothing here is wired into the control socket yet.
+//! durable trust policy.
 
 use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
+use std::time::Duration;
 
 use p256::{
-    ecdsa::{Signature, SigningKey, signature::Signer},
+    ecdsa::{Signature, SigningKey, VerifyingKey, signature::Signer},
     pkcs8::EncodePublicKey,
 };
-use rustls::{ClientConnection, ServerConnection};
+use rustls::pki_types::CertificateDer;
+use rustls::{
+    ClientConnection, ServerConnection, StreamOwned, pki_types::ServerName,
+    sign::SigningKey as RustlsSigningKey,
+};
 
 use crate::domain::SessionId;
 
+use super::secure_control_tls::{HOST_SERVER_NAME, host_server_config, pinned_client_config};
 use super::secure_identity::{ListenerProofError, PendingListenerProof, VerifiedListenerKey};
 
 /// TLS exporter label for the listener possession proof. Changing it changes
@@ -35,6 +43,39 @@ pub const LISTENER_PROOF_EXPORTER_LABEL: &[u8] = b"silent-disco listener proof v
 /// while refusing hostile lengths before allocation.
 const MAX_FIELD_BYTES: usize = 256;
 
+/// Socket timeouts for the proof exchange, so a stalled peer cannot hold a
+/// thread indefinitely.
+const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The listener's proof key, held wherever the platform keeps it.
+pub trait ListenerProofSigner {
+    /// `SubjectPublicKeyInfo` DER of the key the listener proves.
+    ///
+    /// # Errors
+    /// Returns [`ProofExchangeError::SignerFailed`] if the key cannot be read.
+    fn spki_der(&self) -> Result<Vec<u8>, ProofExchangeError>;
+
+    /// DER ECDSA-SHA256 signature over `transcript`.
+    ///
+    /// # Errors
+    /// Returns [`ProofExchangeError::SignerFailed`] if signing fails.
+    fn sign_der(&self, transcript: &[u8]) -> Result<Vec<u8>, ProofExchangeError>;
+}
+
+impl ListenerProofSigner for SigningKey {
+    fn spki_der(&self) -> Result<Vec<u8>, ProofExchangeError> {
+        self.verifying_key()
+            .to_public_key_der()
+            .map(|der| der.as_bytes().to_vec())
+            .map_err(|_| ProofExchangeError::InvalidListenerKey)
+    }
+
+    fn sign_der(&self, transcript: &[u8]) -> Result<Vec<u8>, ProofExchangeError> {
+        let signature: Signature = self.sign(transcript);
+        Ok(signature.to_der().as_bytes().to_vec())
+    }
+}
+
 #[derive(Debug)]
 pub enum ProofExchangeError {
     Io(std::io::Error),
@@ -43,7 +84,25 @@ pub enum ProofExchangeError {
     MalformedFrame,
     RandomUnavailable,
     InvalidListenerKey,
+    /// The platform signer could not read its key or sign.
+    SignerFailed(String),
 }
+
+impl std::fmt::Display for ProofExchangeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "proof exchange I/O failed: {error}"),
+            Self::Tls(error) => write!(formatter, "TLS failed during the proof exchange: {error}"),
+            Self::Proof(error) => write!(formatter, "listener proof rejected: {error:?}"),
+            Self::MalformedFrame => formatter.write_str("malformed proof frame"),
+            Self::RandomUnavailable => formatter.write_str("system random source is unavailable"),
+            Self::InvalidListenerKey => formatter.write_str("listener key is not a P-256 key"),
+            Self::SignerFailed(reason) => write!(formatter, "listener key signer failed: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ProofExchangeError {}
 
 impl From<std::io::Error> for ProofExchangeError {
     fn from(error: std::io::Error) -> Self {
@@ -111,30 +170,27 @@ fn read_field<IO: Read>(io: &mut IO) -> Result<Vec<u8>, ProofExchangeError> {
     Ok(field)
 }
 
-/// Builds the listener's response frame for one challenge. Exposed so callers
-/// and tests can construct a frame for a specific challenge; a real listener
-/// uses [`listener_prove`].
+/// Builds the listener's response frame for one challenge.
 ///
 /// # Errors
-/// Returns a proof error for a malformed key or an invalid challenge.
+/// Returns a proof error for an invalid challenge, a malformed key, or a
+/// signer failure.
 pub fn build_listener_response(
     session: &SessionId,
     generation: u64,
     host_spki: &[u8],
     nonce: [u8; 32],
     binding: [u8; 32],
-    listener_spki: &[u8],
-    signing_key: &SigningKey,
+    signer: &dyn ListenerProofSigner,
 ) -> Result<Vec<u8>, ProofExchangeError> {
+    let listener_spki = signer.spki_der()?;
     let challenge =
         PendingListenerProof::new(session.clone(), generation, host_spki, nonce, binding)?;
-    let transcript = challenge.signing_transcript(listener_spki)?;
-    let signature: Signature = signing_key.sign(&transcript);
-    let der = signature.to_der();
-    let mut frame = Vec::with_capacity(listener_spki.len() + der.as_bytes().len() + 4);
-    let mut writer = std::io::Cursor::new(&mut frame);
-    write_field(&mut writer, listener_spki)?;
-    write_field(&mut writer, der.as_bytes())?;
+    let transcript = challenge.signing_transcript(&listener_spki)?;
+    let signature = signer.sign_der(&transcript)?;
+    let mut frame = Vec::with_capacity(listener_spki.len() + signature.len() + 4);
+    write_field(&mut frame, &listener_spki)?;
+    write_field(&mut frame, &signature)?;
     Ok(frame)
 }
 
@@ -163,70 +219,95 @@ pub fn host_verify_listener<IO: Read + Write>(
     Ok(challenge.verify_and_consume(&listener_spki, &signature)?)
 }
 
-/// Listener side: read the host's nonce and answer with a proof signed by
-/// `signing_key`, announcing `listener_spki` as the key it proves.
+/// Listener side: read the host's nonce and answer with a proof from `signer`.
 ///
 /// `io` must be the encrypted TLS stream, not the raw socket.
 ///
 /// # Errors
-/// Returns an error for I/O failure or an invalid listener key or challenge.
+/// Returns an error for I/O failure, an invalid challenge, or a signer failure.
 pub fn listener_prove<IO: Read + Write>(
     io: &mut IO,
     binding: [u8; 32],
     session: &SessionId,
     generation: u64,
     host_spki: &[u8],
-    listener_spki: &[u8],
-    signing_key: &SigningKey,
+    signer: &dyn ListenerProofSigner,
 ) -> Result<(), ProofExchangeError> {
     let mut nonce = [0_u8; 32];
     io.read_exact(&mut nonce)?;
-    let frame = build_listener_response(
-        session,
-        generation,
-        host_spki,
-        nonce,
-        binding,
-        listener_spki,
-        signing_key,
-    )?;
+    let frame = build_listener_response(session, generation, host_spki, nonce, binding, signer)?;
     io.write_all(&frame)?;
     io.flush()?;
     Ok(())
 }
 
-/// Reads one listener response frame without verifying it. Used by tests that
-/// capture a frame to replay it.
+/// Listener side, end to end: connect to `address`, pin `host_spki` in TLS 1.3,
+/// and prove the listener key over that connection.
 ///
 /// # Errors
-/// Returns an error for I/O failure or a malformed frame.
-pub fn read_listener_frame<IO: Read>(
-    io: &mut IO,
-) -> Result<(Vec<u8>, Vec<u8>), ProofExchangeError> {
-    Ok((read_field(io)?, read_field(io)?))
+/// Returns an error if the TLS handshake fails (including a host that does not
+/// hold the pinned key), the exchange fails, or the signer fails.
+pub fn connect_and_prove(
+    address: SocketAddr,
+    host_spki: &[u8],
+    session: &SessionId,
+    generation: u64,
+    signer: &dyn ListenerProofSigner,
+) -> Result<(), ProofExchangeError> {
+    let mut tcp = TcpStream::connect_timeout(&address, EXCHANGE_TIMEOUT)?;
+    tcp.set_read_timeout(Some(EXCHANGE_TIMEOUT))?;
+    tcp.set_write_timeout(Some(EXCHANGE_TIMEOUT))?;
+    let config = pinned_client_config(host_spki)?;
+    let name =
+        ServerName::try_from(HOST_SERVER_NAME).map_err(|_| ProofExchangeError::MalformedFrame)?;
+    let mut connection = ClientConnection::new(config, name)?;
+    connection.complete_io(&mut tcp)?;
+    let binding = client_binding(&connection)?;
+    let mut stream = StreamOwned::new(connection, tcp);
+    listener_prove(&mut stream, binding, session, generation, host_spki, signer)
 }
 
-/// Parses the listener's public key from a SPKI, for callers that must reject
-/// a malformed key before running the exchange.
+/// Host side, end to end: accept one listener on `listener`, complete TLS 1.3
+/// with the host certificate and signing key, and verify the listener's proof.
 ///
 /// # Errors
-/// Returns `InvalidListenerKey` if the SPKI is not a P-256 key.
-pub fn validate_listener_spki(listener_spki: &[u8]) -> Result<(), ProofExchangeError> {
-    use p256::ecdsa::VerifyingKey;
-    use p256::pkcs8::DecodePublicKey;
-    VerifyingKey::from_public_key_der(listener_spki)
-        .map(|_| ())
-        .map_err(|_| ProofExchangeError::InvalidListenerKey)
+/// Returns an error if the handshake fails or the listener's proof does not
+/// verify for this session and generation.
+pub fn accept_and_verify(
+    listener: &TcpListener,
+    host_certificate: &CertificateDer<'static>,
+    host_signing_key: &Arc<dyn RustlsSigningKey>,
+    host_spki: &[u8],
+    session: &SessionId,
+    generation: u64,
+) -> Result<VerifiedListenerKey, ProofExchangeError> {
+    let (mut tcp, _) = listener.accept()?;
+    tcp.set_read_timeout(Some(EXCHANGE_TIMEOUT))?;
+    tcp.set_write_timeout(Some(EXCHANGE_TIMEOUT))?;
+    let config = host_server_config(host_certificate.clone(), Arc::clone(host_signing_key))?;
+    let mut connection = ServerConnection::new(config)?;
+    connection.complete_io(&mut tcp)?;
+    let binding = server_binding(&connection)?;
+    let mut stream = StreamOwned::new(connection, tcp);
+    host_verify_listener(&mut stream, binding, session, generation, host_spki)
 }
 
-/// The listener's SPKI bytes for a signing key.
+/// The listener's SPKI bytes for an in-memory signing key (tests and the
+/// desktop key file).
 ///
 /// # Errors
 /// Returns `InvalidListenerKey` if the key cannot be encoded.
 pub fn listener_spki(signing_key: &SigningKey) -> Result<Vec<u8>, ProofExchangeError> {
-    signing_key
-        .verifying_key()
-        .to_public_key_der()
-        .map(|der| der.as_bytes().to_vec())
+    signing_key.spki_der()
+}
+
+/// Checks that SPKI bytes are a P-256 key.
+///
+/// # Errors
+/// Returns `InvalidListenerKey` if the SPKI is not a P-256 key.
+pub fn validate_listener_spki(listener_spki: &[u8]) -> Result<(), ProofExchangeError> {
+    use p256::pkcs8::DecodePublicKey;
+    VerifyingKey::from_public_key_der(listener_spki)
+        .map(|_| ())
         .map_err(|_| ProofExchangeError::InvalidListenerKey)
 }

@@ -1475,3 +1475,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Cross-language: captured one Keystore signature (72-byte DER, 91-byte SPKI) from the A54 via a temporary logging test (deleted afterwards) and added a fixed-vector test in secure_listener_proof_tests.rs; it verifies in the core p256 verifier.
 - Gates: 9 identity instrumented tests pass on the A54, ./gradlew test lintDebug exit 0, line counts OK, clippy -D warnings OK on core.
 - Not wired into a TLS proof flow yet. Handoff §20.
+
+## 2026-11-07T05:30:00Z - Sonnet 5.5 - Ralph loop: listener TLS proof flow (core + desktop; Android pending)
+- Core: ListenerProofSigner trait (SigningKey implements it), connect_and_prove, accept_and_verify. Nine real-TLS tests. A sign-only failure test was added after a mutation (swallowing sign errors) survived the first version; killed now.
+- Desktop: platform/listener_proof.rs prove_to_host + 2 loopback tests; dev-deps rcgen/rustls added (lock additions only).
+- Gates: check-rust.sh exit 0 (23 suites); desktop fmt and clippy -D warnings OK; desktop tests pass.
+- Android NOT built: needs UniFFI callback signer + host endpoint for an on-device test. Asked owner which host option to use. Handoff §21.

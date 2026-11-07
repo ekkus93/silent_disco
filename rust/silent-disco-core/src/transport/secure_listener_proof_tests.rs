@@ -17,11 +17,11 @@ use rustls::{
     sign::SigningKey as RustlsSigningKey,
 };
 
-use super::secure_control_tls::{HOST_SERVER_NAME, host_server_config, pinned_client_config};
+use super::secure_control_tls::{HOST_SERVER_NAME, pinned_client_config};
 use super::secure_identity::ListenerProofError;
 use super::secure_listener_proof::{
-    ProofExchangeError, build_listener_response, client_binding, host_verify_listener,
-    listener_prove, listener_spki, server_binding,
+    ListenerProofSigner, ProofExchangeError, accept_and_verify, build_listener_response,
+    client_binding, connect_and_prove, host_verify_listener, listener_spki, server_binding,
 };
 use crate::domain::SessionId;
 
@@ -33,7 +33,7 @@ struct Host {
     signing_key: Arc<dyn RustlsSigningKey>,
 }
 
-fn host(seed: u8) -> Host {
+fn host_identity(seed: u8) -> Host {
     let signing = SigningKey::from_slice(&[seed; 32]).expect("fixture key");
     let spki = signing
         .verifying_key()
@@ -68,8 +68,88 @@ fn listener_key(seed: u8) -> SigningKey {
     SigningKey::from_slice(&[seed; 32]).expect("listener key")
 }
 
-/// Host side: accept, complete the handshake and return the TLS stream with
-/// its exporter binding.
+fn session(name: &str) -> SessionId {
+    SessionId::new(name).expect("session id")
+}
+
+/// Claims one key's SPKI and signs with another: the forgery under test.
+struct ClaimingSigner {
+    claimed_spki: Vec<u8>,
+    actual_key: SigningKey,
+}
+
+impl ListenerProofSigner for ClaimingSigner {
+    fn spki_der(&self) -> Result<Vec<u8>, ProofExchangeError> {
+        Ok(self.claimed_spki.clone())
+    }
+    fn sign_der(&self, transcript: &[u8]) -> Result<Vec<u8>, ProofExchangeError> {
+        self.actual_key.sign_der(transcript)
+    }
+}
+
+/// A key store that fails, as a locked or unavailable Keystore would.
+struct FailingSigner;
+
+impl ListenerProofSigner for FailingSigner {
+    fn spki_der(&self) -> Result<Vec<u8>, ProofExchangeError> {
+        Err(ProofExchangeError::SignerFailed(
+            "key store locked".to_owned(),
+        ))
+    }
+    fn sign_der(&self, _transcript: &[u8]) -> Result<Vec<u8>, ProofExchangeError> {
+        Err(ProofExchangeError::SignerFailed(
+            "key store locked".to_owned(),
+        ))
+    }
+}
+
+/// Reads its public key, then fails to sign (for example, a user-auth gate).
+struct SignFailingSigner {
+    key: SigningKey,
+}
+
+impl ListenerProofSigner for SignFailingSigner {
+    fn spki_der(&self) -> Result<Vec<u8>, ProofExchangeError> {
+        self.key.spki_der()
+    }
+    fn sign_der(&self, _transcript: &[u8]) -> Result<Vec<u8>, ProofExchangeError> {
+        Err(ProofExchangeError::SignerFailed(
+            "signing refused".to_owned(),
+        ))
+    }
+}
+
+#[test]
+fn a_refused_signature_is_reported_and_never_sent_as_an_empty_proof() {
+    let host = host_identity(3);
+    let session = session("sign-refused-session");
+    let server = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = server.local_addr().expect("address");
+
+    let host_spki = host.spki.clone();
+    let client_session = session.clone();
+    let signer = SignFailingSigner {
+        key: listener_key(7),
+    };
+    let client =
+        thread::spawn(move || connect_and_prove(address, &host_spki, &client_session, 1, &signer));
+    let host_outcome = accept_and_verify(
+        &server,
+        &host.certificate,
+        &host.signing_key,
+        &host.spki,
+        &session,
+        1,
+    );
+    let client_outcome = client.join().expect("client thread");
+    assert!(
+        matches!(client_outcome, Err(ProofExchangeError::SignerFailed(_))),
+        "a refused signature must surface to the listener: {client_outcome:?}"
+    );
+    assert!(host_outcome.is_err(), "an empty proof must never verify");
+}
+
+/// Low-level host side for attack tests that need the raw TLS stream.
 fn accept_host(
     listener: &TcpListener,
     host: &Host,
@@ -77,14 +157,17 @@ fn accept_host(
     let (mut tcp, _) = listener.accept()?;
     tcp.set_read_timeout(Some(TIMEOUT))?;
     tcp.set_write_timeout(Some(TIMEOUT))?;
-    let config = host_server_config(host.certificate.clone(), Arc::clone(&host.signing_key))?;
+    let config = super::secure_control_tls::host_server_config(
+        host.certificate.clone(),
+        Arc::clone(&host.signing_key),
+    )?;
     let mut connection = ServerConnection::new(config)?;
     connection.complete_io(&mut tcp)?;
     let binding = server_binding(&connection)?;
     Ok((StreamOwned::new(connection, tcp), binding))
 }
 
-/// Listener side: connect, pin the host key and complete the handshake.
+/// Low-level listener side for attack tests that need the raw TLS stream.
 fn dial_listener(
     address: std::net::SocketAddr,
     pinned_host_spki: &[u8],
@@ -100,117 +183,95 @@ fn dial_listener(
     Ok((StreamOwned::new(connection, tcp), binding))
 }
 
-fn session(name: &str) -> SessionId {
-    SessionId::new(name).expect("session id")
-}
-
 #[test]
-fn a_listener_proving_its_pinned_key_over_tls_is_verified_for_this_session() {
-    let host = host(3);
-    let listener_key = listener_key(7);
-    let listener_public = listener_spki(&listener_key).expect("spki");
+fn a_listener_proving_its_pinned_key_is_verified_end_to_end() {
+    let host = host_identity(3);
+    let key = listener_key(7);
+    let listener_public = listener_spki(&key).expect("spki");
     let session = session("proof-session");
     let server = TcpListener::bind("127.0.0.1:0").expect("bind");
     let address = server.local_addr().expect("address");
 
     let client_session = session.clone();
-    let client_public = listener_public.clone();
-    let client = thread::spawn(move || {
-        let (mut stream, binding) = dial_listener(address, &host_spki_for(3)).expect("dial");
-        listener_prove(
-            &mut stream,
-            binding,
-            &client_session,
-            1,
-            &host_spki_for(3),
-            &client_public,
-            &listener_key,
-        )
-    });
+    let host_spki = host.spki.clone();
+    let client =
+        thread::spawn(move || connect_and_prove(address, &host_spki, &client_session, 1, &key));
 
-    let (mut stream, binding) = accept_host(&server, &host).expect("accept");
-    let verified = host_verify_listener(&mut stream, binding, &session, 1, &host.spki)
-        .expect("proof verifies");
+    let verified = accept_and_verify(
+        &server,
+        &host.certificate,
+        &host.signing_key,
+        &host.spki,
+        &session,
+        1,
+    )
+    .expect("proof verifies");
     client.join().expect("client thread").expect("client proof");
+
+    let listener_digest: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(&listener_public).into();
+    assert_eq!(
+        verified.fingerprint(),
+        &listener_digest,
+        "verified key must be the listener's key"
+    );
     let host_digest: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(&host.spki).into();
     assert_eq!(verified.host_fingerprint(), &host_digest);
 }
 
 #[test]
-fn a_valid_proof_is_refused_for_a_different_session_on_the_same_connection() {
-    let host = host(3);
-    let listener = listener_key(7);
-    let public = listener_spki(&listener).expect("spki");
-    let signed_session = session("session-a");
-    let checked_session = session("session-b");
+fn a_listener_pinned_to_another_host_key_never_reaches_the_proof() {
+    let host = host_identity(3);
+    let other = host_identity(4);
+    let session = session("pin-session");
     let server = TcpListener::bind("127.0.0.1:0").expect("bind");
     let address = server.local_addr().expect("address");
 
+    let host_spki = other.spki.clone();
+    let client_session = session.clone();
     let client = thread::spawn(move || {
-        let (mut stream, binding) = dial_listener(address, &host_spki_for(3)).expect("dial");
-        let mut nonce = [0_u8; 32];
-        stream.read_exact(&mut nonce).expect("nonce");
-        let frame = build_listener_response(
-            &signed_session,
-            1,
-            &host_spki_for(3),
-            nonce,
-            binding,
-            &public,
-            &listener,
-        )
-        .expect("frame");
-        stream.write_all(&frame).expect("send");
+        connect_and_prove(address, &host_spki, &client_session, 1, &listener_key(7))
     });
-    let (mut stream, binding) = accept_host(&server, &host).expect("accept");
-    let outcome = host_verify_listener(&mut stream, binding, &checked_session, 1, &host.spki);
-    client.join().expect("client thread");
-    assert!(
-        matches!(
-            outcome,
-            Err(ProofExchangeError::Proof(
-                ListenerProofError::SignatureMismatch
-            ))
-        ),
-        "a proof for another session was accepted: {outcome:?}"
+    let host_outcome = accept_and_verify(
+        &server,
+        &host.certificate,
+        &host.signing_key,
+        &host.spki,
+        &session,
+        1,
     );
-}
-
-fn host_spki_for(seed: u8) -> Vec<u8> {
-    host(seed).spki
+    let client_outcome = client.join().expect("client thread");
+    assert!(
+        client_outcome.is_err(),
+        "a listener pinned to another key completed the proof"
+    );
+    assert!(host_outcome.is_err());
 }
 
 #[test]
-fn a_listener_claiming_a_key_it_does_not_hold_is_refused() {
-    // The attacker announces the victim's SPKI but signs with its own key.
-    let host = host(3);
+fn a_claimed_key_the_listener_does_not_hold_is_refused() {
+    let host = host_identity(3);
     let victim = listener_spki(&listener_key(7)).expect("victim spki");
-    let attacker_key = listener_key(9);
+    let signer = ClaimingSigner {
+        claimed_spki: victim,
+        actual_key: listener_key(9),
+    };
     let session = session("forgery-session");
     let server = TcpListener::bind("127.0.0.1:0").expect("bind");
     let address = server.local_addr().expect("address");
 
+    let host_spki = host.spki.clone();
     let client_session = session.clone();
-    let client = thread::spawn(move || {
-        let (mut stream, binding) = dial_listener(address, &host_spki_for(3)).expect("dial");
-        let mut nonce = [0_u8; 32];
-        stream.read_exact(&mut nonce).expect("nonce");
-        let frame = build_listener_response(
-            &client_session,
-            1,
-            &host_spki_for(3),
-            nonce,
-            binding,
-            &victim,
-            &attacker_key,
-        )
-        .expect("frame");
-        stream.write_all(&frame).expect("send");
-    });
-
-    let (mut stream, binding) = accept_host(&server, &host).expect("accept");
-    let outcome = host_verify_listener(&mut stream, binding, &session, 1, &host.spki);
-    client.join().expect("client thread");
+    let client =
+        thread::spawn(move || connect_and_prove(address, &host_spki, &client_session, 1, &signer));
+    let outcome = accept_and_verify(
+        &server,
+        &host.certificate,
+        &host.signing_key,
+        &host.spki,
+        &session,
+        1,
+    );
+    let _ = client.join().expect("client thread");
     assert!(
         matches!(
             outcome,
@@ -223,17 +284,45 @@ fn a_listener_claiming_a_key_it_does_not_hold_is_refused() {
 }
 
 #[test]
+fn a_signer_failure_is_reported_on_the_listener_and_never_proves_anything() {
+    let host = host_identity(3);
+    let session = session("signer-session");
+    let server = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = server.local_addr().expect("address");
+
+    let host_spki = host.spki.clone();
+    let client_session = session.clone();
+    let client = thread::spawn(move || {
+        connect_and_prove(address, &host_spki, &client_session, 1, &FailingSigner)
+    });
+    let host_outcome = accept_and_verify(
+        &server,
+        &host.certificate,
+        &host.signing_key,
+        &host.spki,
+        &session,
+        1,
+    );
+    let client_outcome = client.join().expect("client thread");
+    assert!(
+        matches!(client_outcome, Err(ProofExchangeError::SignerFailed(_))),
+        "the signer failure must surface to the listener: {client_outcome:?}"
+    );
+    assert!(
+        host_outcome.is_err(),
+        "no proof may be accepted after a signer failure"
+    );
+}
+
+#[test]
 fn a_proof_captured_on_one_connection_is_refused_on_another() {
-    let host = host(3);
+    let host = host_identity(3);
     let listener = listener_key(7);
-    let public = listener_spki(&listener).expect("spki");
     let session = session("replay-session");
     let server = TcpListener::bind("127.0.0.1:0").expect("bind");
     let address = server.local_addr().expect("address");
 
-    // Connection one: a legitimate proof, captured by the attacker.
     let capture_session = session.clone();
-    let capture_public = public.clone();
     let capture_listener = listener.clone();
     let legitimate = thread::spawn(move || {
         let (mut stream, binding) = dial_listener(address, &host_spki_for(3)).expect("dial");
@@ -245,7 +334,6 @@ fn a_proof_captured_on_one_connection_is_refused_on_another() {
             &host_spki_for(3),
             nonce,
             binding,
-            &capture_public,
             &capture_listener,
         )
         .expect("frame");
@@ -260,8 +348,6 @@ fn a_proof_captured_on_one_connection_is_refused_on_another() {
         "the legitimate proof must verify first: {first_outcome:?}"
     );
 
-    // Connection two: the attacker replays the captured frame against a fresh
-    // nonce and a different exporter value.
     let replayed = thread::spawn(move || {
         let (mut stream, _) = dial_listener(address, &host_spki_for(3)).expect("dial two");
         let mut nonce = [0_u8; 32];
@@ -282,9 +368,45 @@ fn a_proof_captured_on_one_connection_is_refused_on_another() {
     );
 }
 
+fn host_spki_for(seed: u8) -> Vec<u8> {
+    host_identity(seed).spki
+}
+
 #[test]
-fn an_oversized_length_prefix_is_refused_before_any_allocation_of_its_size() {
-    let host = host(3);
+fn a_proof_for_one_session_is_refused_for_another_on_the_same_connection() {
+    let host = host_identity(3);
+    let key = listener_key(7);
+    let signed_session = session("session-a");
+    let checked_session = session("session-b");
+    let server = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = server.local_addr().expect("address");
+
+    let host_spki = host.spki.clone();
+    let client =
+        thread::spawn(move || connect_and_prove(address, &host_spki, &signed_session, 1, &key));
+    let outcome = accept_and_verify(
+        &server,
+        &host.certificate,
+        &host.signing_key,
+        &host.spki,
+        &checked_session,
+        1,
+    );
+    let _ = client.join().expect("client thread");
+    assert!(
+        matches!(
+            outcome,
+            Err(ProofExchangeError::Proof(
+                ListenerProofError::SignatureMismatch
+            ))
+        ),
+        "a proof for another session was accepted: {outcome:?}"
+    );
+}
+
+#[test]
+fn an_oversized_length_prefix_is_refused_as_malformed() {
+    let host = host_identity(3);
     let session = session("oversize-session");
     let server = TcpListener::bind("127.0.0.1:0").expect("bind");
     let address = server.local_addr().expect("address");
@@ -293,10 +415,8 @@ fn an_oversized_length_prefix_is_refused_before_any_allocation_of_its_size() {
         let (mut stream, _) = dial_listener(address, &host_spki_for(3)).expect("dial");
         let mut nonce = [0_u8; 32];
         stream.read_exact(&mut nonce).expect("nonce");
-        // A 65,535-byte claim with no body behind it.
         stream.write_all(&[0xff, 0xff]).expect("send");
     });
-
     let (mut stream, binding) = accept_host(&server, &host).expect("accept");
     let outcome = host_verify_listener(&mut stream, binding, &session, 1, &host.spki);
     client.join().expect("client thread");

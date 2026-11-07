@@ -73,3 +73,7 @@ unsafe_code = "deny"
 [lints.clippy]
 all = "deny"
 pedantic = "warn"
+
+[dev-dependencies]
+rcgen = { version = "=0.14.2", default-features = false, features = ["ring", "pem"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
