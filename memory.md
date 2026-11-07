@@ -1443,3 +1443,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Added secure_replay_fuzz_tests.rs (4): model-vs-real replay window, isolation, rekey, registry cap. 5 mutations each fail a test. One test failure was my own bug (random sequences far below the highest are correctly TooOld; use ascending).
 - scripts/check-rust.sh exit 0 (fmt, strict clippy, workspace tests: 23 suites ok). §7 parser item still UNCHECKED (cancellation and chunked stream reassembly uncovered).
 - Process lesson: `pkill -f <pattern>` matches the shell running it and kills it (exit 144), and a `cargo test` child can outlive its parent script. Kill by PID.
+
+## 2026-11-07T00:30:00Z - Sonnet 5.5 - Ralph loop: §0 item 3 call-path map (F2, F3)
+- Verified in code: PROTOCOL_VERSION=3 with no negotiation; no TLS crate in any Cargo.toml; join device_id is self-declared; secure_identity/secure_replay/secure_trust have no production callers (tests only); P2 Keystore-signed QR is not checked by join admission.
+- Wrote handoff §16 and CHECKED §0 item 3 (documentation deliverable). §0 item 1 (refresh SHA) and item 4 (preserve green CI) stay open: item 4 depends on hosted CI, which the owner watches.
+- Local HEAD = origin/master = d25828f5 at this point.

@@ -202,3 +202,21 @@ Documentation deliverable for TODO §6 item 1. It maps what the code does today;
 1. (Addressed in part, same day: replacement is now detected and reported once; see TODO §6 item 3.) `HostIdentityManager.keyPair()` silently generated a new key if the alias was missing. A replaced key changes the host fingerprint. Listeners that trusted the old key fail closed: `P2UiState.validatedHostIsTrusted()` and `trustedVerifiedSessionIds()` require both fingerprint and public key to match (`P2PresentationTest` covers a mismatched key). The host side shows no "your identity changed" notice.
 2. Trusted-device records in the Rust store are keyed by the unauthenticated claimed `device_id` (legacy v3), so there is no key-bound trust record to invalidate on a restore. Durable trust is blocked until the authenticated transport exists (TODO §1/§2).
 3. No test simulates a restore (DB present, Keystore key missing or replaced). That is TODO §6 item 4.
+
+## 16. 2026-11-07 — F2 and F3 call-path and protocol map
+
+Documentation deliverable for TODO §0 item 3 (F2 and F3; F4, F5 and F6 are in §13–15). It records what the code does today. It is not a security proof.
+
+**F2 — transport security (current state, verified in code).**
+- **Protocol version.** `PROTOCOL_VERSION = 3` (`rust/silent-disco-core/src/protocol/types.rs:8`). Decoding rejects any other version (`protocol/codec/decoding.rs:329`). There is no version negotiation and no downgrade path, because there is only one version.
+- **Transport encryption.** No Cargo manifest in the workspace or the desktop crate depends on `rustls`, `native-tls` or `openssl`. Control and audio frames are plaintext on the wire. The TLS 1.3 requirement in §1 item 1 is unimplemented.
+- **Identity in frames.** `JoinRequest` and the other control messages carry a self-declared `device_id` (`protocol/types.rs:156`). No signature or key is bound to it on the wire.
+- **Secure building blocks exist but are not wired.** `transport/secure_identity.rs` (possession proof), `secure_replay.rs` (replay windows), and `secure_trust.rs` (host-owned trust snapshot) are declared as `pub mod` in `transport/mod.rs`. Their only callers are their own unit and fuzz tests. No desktop (`desktop/src-tauri`) or Android (`app/src/main`) production path references them. Therefore no production join, admission or datagram path uses them.
+- **Signed invitations.** The Android P2 flow creates and validates a signed QR (`P2ViewModel` → `P2RustBridge.prepareUnsignedQr` / `finalizeQr` / `validateInvitation`), and the host signs with an Android Keystore key (`HostIdentityManager`). This proves the invitation's origin to the app. It does not authenticate the transport, and join admission does not check it.
+- **Consequence for F1.** Approved-devices-only admission cannot be strengthened by a key-bound check until the secure modules are wired into the join path. Current protection is the claimed-ID approval in §0.2 and F1.
+
+**F3 — authoritative transport events (current state).**
+- **Join path.** Desktop and Android transport inputs go through bounded queues: `BoundedTransportEventQueue` and `BoundedCoreNotificationQueue` on Android (64 slots, a quarter reserved for best-effort traffic, critical events apply backpressure with a 2 s timeout), and a 256-event queue in the Rust host (`host_workers`). Busy refusal is a protocol `JoinRejection` with the reason "Host busy" (verified by `real_socket_busy_join_is_refused_then_retry_rejoins_live_pcm`). Duplicate join suppression is per TCP generation (`duplicate_join_tests.rs`, counter `duplicate_join_suppressions`).
+- **Counters.** Best-effort drops, busy refusals and authoritative-event failures are exposed through FFI counters (`FfiHostTransportCounters`, `FfiListenerTransportCounters`) and the Android `BridgeQueueCounters` diagnostics (§14).
+- **Client retry.** The client does not retry automatically after a busy reply. Retry is user-driven. This is the open owner decision for §3 item 2.
+- **Not yet changed by this map.** Nothing in this section changes behavior.
