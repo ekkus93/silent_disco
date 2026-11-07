@@ -134,3 +134,45 @@ fn notification_queue_overflow_fails_actor_without_blocking() {
     assert!(runtime.shutdown().is_err());
     assert!(observer_calls.load(Ordering::SeqCst) >= 1);
 }
+
+/// A shutdown queued from a snapshot that a concurrent command has since
+/// advanced must still stop the actor. Otherwise the stale command is rejected,
+/// the actor keeps waiting for input, and `shutdown` blocks on the join forever.
+#[test]
+fn shutdown_is_honored_even_when_a_concurrent_command_moved_the_revision() {
+    use super::state::ActorState;
+    use super::{CoreActorInput, OperationId};
+    use crate::domain::AppRole;
+
+    let mut state = ActorState::new_with_session_id_namespace(
+        DeviceId::new("core-shutdown-race").expect("valid device ID"),
+        None,
+    );
+    let sampled = state.snapshot.revision;
+    let moved = state.process(CoreActorInput::Command {
+        operation_id: OperationId::new("op-concurrent").expect("operation id"),
+        request: CoreCommandRequest::new(
+            sampled,
+            CoreCommand::SelectRole {
+                role: AppRole::Host,
+            },
+        )
+        .expect("command request"),
+    });
+    assert!(
+        moved
+            .notifications
+            .iter()
+            .any(|note| matches!(note, crate::runtime::CoreNotification::Snapshot(_))),
+        "the concurrent command must advance the snapshot for this race to exist"
+    );
+
+    let outcome = state.process(CoreActorInput::Command {
+        operation_id: OperationId::new("op-shutdown").expect("operation id"),
+        request: CoreCommandRequest::new(sampled, CoreCommand::Shutdown).expect("command request"),
+    });
+    assert!(
+        outcome.stop_requested,
+        "a shutdown sampled before a concurrent command must still stop the actor"
+    );
+}

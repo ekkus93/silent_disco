@@ -432,3 +432,16 @@ Mutations, both restored and verified identical: dropping the partially accepted
 - The host's real join flow does not use the admitted TLS channel yet. Admitted listeners are closed. Joins over TLS, durable trust, and the listener's join path remain.
 - The 250 ms classification wait is a small accept-loop delay for silent clients. It is documented in the module.
 - The actor-runtime shutdown hang above needs its own investigation before the full gate can be called green.
+
+## 26. 2026-11-07 — fix: shutdown hang in the core actor (resolves the §25 open problem)
+
+**Root cause.** `CoreActorRuntime::shutdown` swaps `accepting` to false, samples the snapshot revision, and queues a `Shutdown` command with that revision. The actor applied the optimistic revision check to every command except `EndHostSession`. If a concurrent command advanced the revision between the sample and the send, the actor rejected the stale `Shutdown` with `invalid_state`. `stop_requested` stayed false, the actor kept waiting on its input channel, and the main thread blocked forever in `join_actor`. The notification worker was waiting in the same state. The `/proc` wait channels from the hang (all threads in futex waits, submitters already finished) matched exactly.
+
+**Fix.** `Shutdown` is treated as terminal, like `EndHostSession`, and is exempt from the optimistic revision check (`actor_runtime/state/mod.rs`). Shutdown has no state precondition, so the exemption is safe.
+
+**Evidence.**
+- Deterministic regression test `shutdown_is_honored_even_when_a_concurrent_command_moved_the_revision` (actor state, no threads). It fails on the old code and passes on the fix.
+- The FFI test `shutdown_races_with_concurrent_command_submission_and_notification_delivery` passed 40 of 40 isolated runs after the fix. Before the fix it hung in 2 of 20 isolated runs, and in the full gate.
+- Full `scripts/check-rust.sh`: exit 0, 23 suites, no failures, no tests skipped.
+
+**Not claimed.** The fix addresses the stale-revision path. Other lost-wakeup or ordering races in the actor are not ruled out by these runs; the 40-run rate is evidence, not a proof.

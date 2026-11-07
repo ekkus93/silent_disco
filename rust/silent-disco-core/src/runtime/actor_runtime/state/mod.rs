@@ -217,8 +217,16 @@ impl ActorState {
                 // the only shutdown request while leaving the host advertised. The actor still
                 // validates that a session is active in `end_host_session`; all other commands
                 // retain optimistic revision checks to protect against stale edits.
-                let is_terminal_host_end = matches!(&request.command, CoreCommand::EndHostSession);
-                if request.expected_revision != self.snapshot.revision && !is_terminal_host_end {
+                // Shutdown is also terminal. `CoreActorRuntime::shutdown` samples the
+                // revision and queues Shutdown separately; a command that lands in
+                // between would reject a stale Shutdown, leave the actor running, and
+                // hang the join forever. Shutdown carries no state precondition, so it
+                // is exempt from the optimistic check, as End is.
+                let is_terminal = matches!(
+                    &request.command,
+                    CoreCommand::EndHostSession | CoreCommand::Shutdown
+                );
+                if request.expected_revision != self.snapshot.revision && !is_terminal {
                     return Err(invalid_state(
                         format!(
                             "command expected snapshot revision {}, but current revision is {}",

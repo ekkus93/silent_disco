@@ -1505,3 +1505,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Validation: core lib 606 passed; FFI 127 passed with 1 skipped; workspace clippy -D warnings OK; TLS mutation (route to plaintext) killed.
 - OPEN: FFI test shutdown_races_with_concurrent_command_submission hangs ~2/20 isolated runs; all threads in futex waits (actor shutdown). Not proven pre-existing. Needs investigation before full gate is green. Handoff §25.
 - Process lesson (again): pgrep -f with a pattern that appears in my own command kills my shell (exit 144); gdb ptrace is blocked here; use /proc/<pid>/task/*/wchan.
+
+## 2026-11-07T14:30:00Z - Sonnet 5.5 - Fix: core actor shutdown hang
+- Root cause: Shutdown was subject to the optimistic revision check; a concurrent command made a sampled Shutdown stale, so the actor never stopped and join blocked. Fixed by exempting Shutdown (terminal, like EndHostSession). Regression test shutdown_is_honored_even_when_a_concurrent_command_moved_the_revision (fails before, passes after).
+- Evidence: 40/40 isolated runs of the FFI race test pass (was 2/20 hang); full check-rust.sh exit 0, 23 suites, nothing skipped. Handoff §26.
+- Diagnosis method that worked: /proc/<pid>/task/*/wchan (gdb ptrace blocked) plus reading the shutdown sequence.
