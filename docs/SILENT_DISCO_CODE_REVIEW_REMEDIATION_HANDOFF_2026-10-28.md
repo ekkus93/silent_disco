@@ -445,3 +445,20 @@ Mutations, both restored and verified identical: dropping the partially accepted
 - Full `scripts/check-rust.sh`: exit 0, 23 suites, no failures, no tests skipped.
 
 **Not claimed.** The fix addresses the stale-revision path. Other lost-wakeup or ordering races in the actor are not ruled out by these runs; the 40-run rate is evidence, not a proof.
+
+## 27. 2026-11-07 — TLS join path, first part: protocol frames over the admitted channel
+
+**What is built.**
+- `transport/secure_control_session.rs`: `SecureControlSession` wraps an admitted channel bound to one session. Each channel message is one encoded protocol frame, the same bytes the plaintext v3 path uses. Outbound frames must belong to the session. Inbound frames are decoded with the session policy (`DecodePolicy.expected_session_id`), so a frame for another session is refused and the channel stays usable.
+- The frame channel's length prefix is now `u32`, and the cap is the largest protocol control frame (`FRAME_HEADER_BYTES + MAX_CONTROL_PAYLOAD_BYTES`). The old `u16` prefix was too small for a control frame.
+
+**Evidence (local, real TLS 1.3 on loopback, five tests).** A join request sent by the listener is decoded at the host with the right device and session, and the host's approval comes back on the same channel. The host refuses to send a foreign-session frame. A foreign-session frame arriving over TLS is refused, and the next valid join still decodes. Malformed bytes are refused as protocol errors. A silent peer times out. Mutations: removing the receive-side session check fails the foreign-frame test; removing the send-side check fails the send refusal test. Both restored.
+
+**Full Rust gate:** `scripts/check-rust.sh` exit 0, 23 suites, nothing skipped.
+
+**Not built yet (the rest of the join path).**
+- Feeding these frames into the host actor. The plaintext path emits `PeerAccepted` and `FrameReceived` events with per-peer state; the TLS path does not emit them yet, so a TLS join does not reach the actor. Admitted channels are still closed by the accept loop (§25).
+- Route authorization for datagrams (`PeerAuthorized`), and the approval-to-route handoff.
+- The listener's own join state machine and its disconnect and reconnect behavior.
+- The desktop and Android listeners still join over plaintext v3. Nothing in the app uses this path yet.
+- Durable trust: a TLS join is still session-scoped, and the claimed device ID is not yet bound to the verified listener key.

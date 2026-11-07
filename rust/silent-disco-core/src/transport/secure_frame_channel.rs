@@ -5,7 +5,7 @@
 //! receive frames from another. This avoids cloning a TLS stream, which the
 //! existing `TcpStream` reader/writer split cannot do.
 //!
-//! Frames are length-prefixed (`u16`, big-endian) and capped at
+//! Frames are length-prefixed (`u32`, big-endian) and capped at
 //! [`MAX_SECURE_FRAME_BYTES`]. An oversized frame is refused at send time and
 //! never reaches the wire.
 //!
@@ -23,8 +23,10 @@ use std::time::Duration;
 
 use rustls::Connection;
 
-/// Largest application frame accepted in either direction.
-pub const MAX_SECURE_FRAME_BYTES: usize = 65_535;
+/// Largest application frame accepted in either direction: the largest protocol
+/// control frame (header plus maximum control payload).
+pub const MAX_SECURE_FRAME_BYTES: usize =
+    crate::protocol::FRAME_HEADER_BYTES + crate::protocol::MAX_CONTROL_PAYLOAD_BYTES;
 
 /// Read poll interval. The worker alternates between writing queued frames and
 /// reading, so this bounds how long a queued frame can wait.
@@ -248,7 +250,7 @@ fn write_pending_frames(
         let Ok(frame) = outbound.try_recv() else {
             break;
         };
-        let length = u16::try_from(frame.len()).map_err(|_| SecureChannelError::FrameTooLarge {
+        let length = u32::try_from(frame.len()).map_err(|_| SecureChannelError::FrameTooLarge {
             length: frame.len(),
         })?;
         staged.extend(length.to_be_bytes());
@@ -299,17 +301,18 @@ fn deliver_frames(
     inbound: &SyncSender<Result<Vec<u8>, SecureChannelError>>,
 ) -> Result<(), SecureChannelError> {
     loop {
-        if assembly.len() < 2 {
+        if assembly.len() < 4 {
             return Ok(());
         }
-        let length = usize::from(u16::from_be_bytes([assembly[0], assembly[1]]));
-        if length == 0 {
-            return Err(SecureChannelError::FrameTooLarge { length: 0 });
+        let length = u32::from_be_bytes([assembly[0], assembly[1], assembly[2], assembly[3]]);
+        let length = usize::try_from(length).unwrap_or(usize::MAX);
+        if length == 0 || length > MAX_SECURE_FRAME_BYTES {
+            return Err(SecureChannelError::FrameTooLarge { length });
         }
-        if assembly.len() < 2 + length {
+        if assembly.len() < 4 + length {
             return Ok(());
         }
-        assembly.drain(..2);
+        assembly.drain(..4);
         let frame: Vec<u8> = assembly.drain(..length).collect();
         if inbound.send(Ok(frame)).is_err() {
             return Err(SecureChannelError::Closed);

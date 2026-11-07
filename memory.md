@@ -1510,3 +1510,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Root cause: Shutdown was subject to the optimistic revision check; a concurrent command made a sampled Shutdown stale, so the actor never stopped and join blocked. Fixed by exempting Shutdown (terminal, like EndHostSession). Regression test shutdown_is_honored_even_when_a_concurrent_command_moved_the_revision (fails before, passes after).
 - Evidence: 40/40 isolated runs of the FFI race test pass (was 2/20 hang); full check-rust.sh exit 0, 23 suites, nothing skipped. Handoff §26.
 - Diagnosis method that worked: /proc/<pid>/task/*/wchan (gdb ptrace blocked) plus reading the shutdown sequence.
+
+## 2026-11-07T16:00:00Z - Sonnet 5.5 - TLS join path, first part (frames over the admitted channel)
+- Frame channel length prefix widened to u32; cap = FRAME_HEADER_BYTES + MAX_CONTROL_PAYLOAD_BYTES (65,552), since a u16 prefix could not carry a control frame.
+- Added transport/secure_control_session.rs (SecureControlSession: one protocol frame per channel message; session checks on send and receive) and five real-TLS tests. Mutations killed (receive check, send check). check-rust.sh exit 0, 23 suites.
+- Not built: actor event feed (PeerAccepted/FrameReceived), datagram route authorization, listener join state machine, app listeners, durable trust binding. Handoff §27.
