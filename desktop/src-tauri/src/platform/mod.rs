@@ -19,6 +19,7 @@ pub(crate) mod host_transport_events;
 pub mod identity;
 pub(crate) mod invitation;
 pub mod invitation_identity;
+pub mod listener_key_file;
 mod mdns;
 mod monitor;
 mod monitor_pump;

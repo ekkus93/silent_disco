@@ -1464,3 +1464,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Fixed my own tautological assertion (host_fingerprint compared with itself) to compare against SHA-256 of the pinned host key. Added a cross-session test.
 - Mutations: binding+nonce constant -> replay test fails; signature check removed -> 3 tests fail. Binding alone constant -> replay still refused by the nonce (recorded as a gap, not proven).
 - Gate: check-rust.sh exit 0 (no error lines, 23 suites ok). Next step 2 needs key storage decisions (Android Keystore; desktop store).
+
+## 2026-11-07T03:30:00Z - Sonnet 5.5 - Ralph loop: desktop listener proof key file (owner choice)
+- Owner chose a key file in app data with owner-only permissions. Added desktop/src-tauri/src/platform/listener_key_file.rs (7 tests; mutations "repair mode" and "regenerate truncated key" each fail a test; restored identical). Refuses wrong mode, symlink, malformed or invalid scalar, and never regenerates a damaged key. Unix only; others fail closed.
+- Gates: cargo fmt --check OK (after one rustfmt pass on the new file only), clippy -D warnings OK, full desktop lib suite 394 passed, 5 ignored.
+- Note for owner: desktop host identity already uses the OS keyring (platform/identity.rs); the listener key uses a file by choice. Residual: check-then-open race needs same-user write access; O_NOFOLLOW not used. Not yet wired into the listener proof; Android Keystore listener key not built.

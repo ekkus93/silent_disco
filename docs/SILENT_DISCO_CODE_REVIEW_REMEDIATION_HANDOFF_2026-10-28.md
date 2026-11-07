@@ -276,3 +276,26 @@ Mutations, all restored and verified identical:
 - Listeners have no persistent P-256 key. Android listeners have a random device ID label (`DeviceIdentityStore`); desktop listeners likewise. Step 2 (key storage, Keystore on Android, owner decision on desktop) comes first.
 - The proof is not wired into join admission, and the control socket is still protocol v3 plaintext.
 - Nothing here is device evidence. Gate: `scripts/check-rust.sh` exit 0, 23 suites.
+
+## 19. 2026-11-07 — desktop listener proof key: owner-only key file
+
+Step 2 for the desktop listener, as chosen by the owner: a key file in the app data directory with owner-only permissions. This is storage only. It is not yet used by the listener proof.
+
+**Design (`desktop/src-tauri/src/platform/listener_key_file.rs`).**
+- File `listener-proof-key.v1`: the raw 32-byte P-256 scalar. Mode must be exactly `0600`, inside a directory with no group or other bits (`0700` when the directory is created).
+- A missing file is created with `create_new` (never overwrites), written, synced, then `chmod`ed to `0600` so the result does not depend on the umask.
+- Everything else is refused and the file is left unchanged: symlinked path, non-regular file, wrong mode (not repaired), wrong length, zero or out-of-range scalar, or a directory readable by others. A damaged key is never regenerated, because that would silently change the listener's identity, which trust policy must see as a change.
+- Unix only. Other platforms fail closed with `UnsupportedPlatform`.
+- Randomness comes from `getrandom`, already a dependency. No new crates.
+
+**Relationship to the existing host identity.** `platform/identity.rs` already keeps the desktop host's secret in the OS keyring. The listener key deliberately uses a file, at the owner's choice. Two stores now exist. That is not a problem for correctness, but it is a difference the owner should know about.
+
+**Evidence (local).**
+- Seven tests: create and reload the same key (mode `0600`), create a missing directory as `0700`, refuse a `0644` key file and leave it unchanged, refuse a symlink without creating anything behind it, refuse a truncated file without regenerating it, refuse zero and `0xff…` scalars, refuse a `0755` directory.
+- Mutations, both restored and verified identical: repairing a wrong mode instead of refusing it fails the permission test; regenerating a truncated key fails the truncation test.
+- `cargo fmt --check` passes. `cargo clippy --all-targets -D warnings` passes. Full desktop library suite: 394 passed, 5 ignored (the existing manual device tests).
+
+**Residual limits.**
+- Time-of-check and time-of-use: the path is checked, then opened. An attacker who can write into the owner's `0700` directory could swap the file in between. Such an attacker already runs as that user, so the risk is narrow, but it is not closed. `O_NOFOLLOW` would close it, but it needs a platform-specific constant or `libc`, which I did not add.
+- The key is stored unencrypted on disk. Protection comes from file permissions only.
+- Nothing is wired to the listener proof yet, and the Android Keystore listener key (step 2, Android half) is not built.
