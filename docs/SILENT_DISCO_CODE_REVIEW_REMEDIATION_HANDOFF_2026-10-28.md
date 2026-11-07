@@ -220,3 +220,31 @@ Documentation deliverable for TODO §0 item 3 (F2 and F3; F4, F5 and F6 are in �
 - **Counters.** Best-effort drops, busy refusals and authoritative-event failures are exposed through FFI counters (`FfiHostTransportCounters`, `FfiListenerTransportCounters`) and the Android `BridgeQueueCounters` diagnostics (§14).
 - **Client retry.** The client does not retry automatically after a busy reply. Retry is user-driven. This is the open owner decision for §3 item 2.
 - **Not yet changed by this map.** Nothing in this section changes behavior.
+
+## 17. 2026-11-07 — F2 control-channel TLS 1.3 with pinned host key (rustls)
+
+Implementation slice for TODO §1 item 1. It is the TLS configuration and its proof, not yet wired into the control socket.
+
+**Choice.** `rustls =0.23.46` with the `ring` provider, TLS 1.3 only (`default-features = false`, so TLS 1.2 is not compiled). Pure Rust, no OpenSSL. `rcgen =0.14.2` is a dev-dependency only, for test certificates.
+
+**Design (`rust/silent-disco-core/src/transport/secure_control_tls.rs`).**
+- The host's identity is the SPKI of its P-256 key, the same `publicKeyDer` shown in the signed invitation. There is no CA, because the app works offline.
+- The listener's verifier pins that SPKI. Authentication comes from the TLS 1.3 `CertificateVerify` signature: it must verify under the pinned key (`rustls::crypto::verify_tls13_signature_with_raw_key`). The presented certificate's chain and names are not checked. That is deliberate: the certificate only carries the key, and only a holder of the pinned private key can produce a valid signature over the handshake transcript.
+- TLS 1.2 signatures are refused outright.
+- The host configuration takes any rustls `SigningKey`, so a platform-protected key can sign without being exported. A Keystore-backed signer is not built yet.
+
+**Evidence (local).** `secure_control_tls_tests.rs` runs real handshakes over loopback TCP:
+- a listener pinned to the host key completes TLS 1.3 and echoes bytes (the negotiated version is checked);
+- a listener pinned to a different key refuses a host that presents a valid self-signed certificate;
+- five successive handshakes succeed.
+- Mutation: replacing `verify_tls13_signature` with an unconditional accept makes the mismatched-key test fail. Restored; passes.
+- `scripts/check-rust.sh` exit 0 (23 suites; strict Clippy).
+- `./gradlew assembleDebug` builds for all four Android ABIs, so `ring` cross-compiles (`buildRustAndroidDebug`). `./gradlew test lintDebug` does not run that task, so the cross-build needed the separate assemble run.
+- `desktop/src-tauri/Cargo.lock` updated (additions only); `cargo metadata --locked` passes, which CI's `--locked` needs.
+
+**Not done (TODO §1 item 1 stays open).**
+- The control socket does not use this configuration yet, so protocol v3 plaintext is still the production transport.
+- The host signing key for TLS is not Keystore-backed. Keystore can sign ECDSA-SHA256, which matches TLS 1.3 `ecdsa_secp256r1_sha256`, so a rustls `SigningKey` over `HostIdentityManager` is the natural next step, but it is unbuilt.
+- No client (listener) authentication: client certificates are disabled. That needs the possession proof in `secure_identity.rs`, or mutual TLS, and is a separate item.
+- Hostile-network tests (downgrade, forged host, tampered control) belong to §1 item 4 and are not written.
+- No CI record for this commit; the owner watches CI.

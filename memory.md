@@ -1452,3 +1452,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-07T00:50:00Z - Sonnet 5.5 - Ralph loop: §0 item 2 investigated, blocked by §1
 - Under plaintext v3 the FFI refuses TrustedDevices drafts ("Legacy v3"), desktop disables the option, Android has only a placeholder enum value. The approved-only actor outcome cannot be produced through FFI until §1 lands. Recorded in TODO; box stays open. No test added because any test would only re-pin the existing refusal.
 - Stopping the loop here: remaining unchecked items are §1/§2 (TLS 1.3 stack and verified identity, multi-session work and a design choice), §3 item 2 (owner decision), §7 dependency audit (needs network tooling), §8 and §9 (CI-dependent or large).
+
+## 2026-11-07T01:30:00Z - Sonnet 5.5 - Ralph loop: §1 item 1 partial: rustls pinned control TLS (owner chose rustls)
+- Added rustls =0.23.46 (ring, TLS 1.3 only) to silent-disco-core; rcgen =0.14.2 dev-only. New transport/secure_control_tls.rs (pinned-SPKI verifier via verify_tls13_signature_with_raw_key; host config takes any SigningKey) and secure_control_tls_tests.rs (3 real loopback handshakes). Mutation (accept any signature) fails the mismatched-key test.
+- Gates: check-rust.sh exit 0 (after one doc-backtick clippy fix); desktop Cargo.lock updated, `cargo metadata --locked` OK; `./gradlew assembleDebug` cross-compiles ring for 4 ABIs (test lintDebug alone does not run buildRustAndroid).
+- Lesson: `bash script > log; echo exit` in a background command reports the echo's exit (0), not the script's. Put the real rc in the log and read it.
+- §1 item 1 stays UNCHECKED: not wired into the socket, no Keystore signer, no listener auth. Handoff §17.
