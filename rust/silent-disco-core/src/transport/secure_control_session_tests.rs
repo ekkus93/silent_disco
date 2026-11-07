@@ -120,6 +120,29 @@ fn the_host_refuses_to_send_a_frame_for_another_session() {
 }
 
 #[test]
+fn queued_bytes_for_another_session_never_leave_the_host() {
+    let session = SessionId::new("bytes-session").expect("session");
+    let other = SessionId::new("bytes-other").expect("other");
+    let (host, listener) = admitted_pair(57, 58, &session);
+    // The control writer sends already-encoded bytes, so the byte path needs
+    // the same session check as the frame path.
+    let foreign =
+        encode_frame(&join_frame(&other, &DeviceId::new("y").expect("device"))).expect("encode");
+    assert!(matches!(
+        host.send_encoded(foreign),
+        Err(SecureSessionError::Protocol(_))
+    ));
+    // The same bytes for this session are accepted and delivered.
+    let own =
+        encode_frame(&join_frame(&session, &DeviceId::new("y").expect("device"))).expect("encode");
+    host.send_encoded(own).expect("own-session bytes sent");
+    let mut listener = listener;
+    assert!(listener.recv_frame(WAIT).is_ok());
+    listener.close();
+    host.close();
+}
+
+#[test]
 fn a_frame_for_another_session_arriving_over_tls_is_refused_and_the_session_recovers() {
     let session = SessionId::new("recv-session").expect("session");
     let other = SessionId::new("stale-session").expect("other");

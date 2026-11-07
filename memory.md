@@ -1515,3 +1515,12 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Frame channel length prefix widened to u32; cap = FRAME_HEADER_BYTES + MAX_CONTROL_PAYLOAD_BYTES (65,552), since a u16 prefix could not carry a control frame.
 - Added transport/secure_control_session.rs (SecureControlSession: one protocol frame per channel message; session checks on send and receive) and five real-TLS tests. Mutations killed (receive check, send check). check-rust.sh exit 0, 23 suites.
 - Not built: actor event feed (PeerAccepted/FrameReceived), datagram route authorization, listener join state machine, app listeners, durable trust binding. Handoff §27.
+
+## 2026-11-07T23:31:21Z - Haiku 5.5 - TLS join path parts 2-3 (core): actor events, datagram routes, listener join
+- Admitted TLS listeners are now registered as normal host peers (`socket/secure_peer.rs`): PeerAccepted, the same join gating, the same ordered disconnect. Plaintext reader/writer logic moved into shared modules (`peer_registry.rs`, `peer_inbound.rs`, `listener_inbound.rs`, `secure_control_io.rs`); plaintext behavior unchanged (613 core lib tests green after the refactor).
+- Datagram routes over TLS needed no new code: authorize_peer and the UDP receiver apply the same checks. Tests show sync is accepted only from the authorized route.
+- Listener: `ListenerTransportConfig.secure_host` (SecureHostTarget: invitation host key + proof signer) dials TLS, pins the host, and runs join/approval/sync/departure through a pump. Five real-TLS listener tests, including rejoin after leave.
+- Mutation (remove decode check in SecureControlSession::send_encoded) killed and restored with cmp.
+- Gate: check-rust.sh exit 0, 23 suites. desktop cargo check --locked --all-features --all-targets exit 0. Line-count gate: all under 800.
+- NOT done: desktop/Android hosts have no TLS identity (secure_control None); app listeners do not pass invitation key or signer; durable trust binding; downgrade/tamper tests; device tests. Handoff §28.
+- Decision: host lands before listener app wiring, or TLS joins would break against current hosts. Option 2 keeps plaintext unchanged.

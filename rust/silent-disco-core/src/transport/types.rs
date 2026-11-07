@@ -207,6 +207,25 @@ impl HostTransportConfig {
     }
 }
 
+/// The host a listener pins over TLS, with the listener key that proves the
+/// listener's identity. `host_spki` comes from the signed invitation.
+#[derive(Clone)]
+pub struct SecureHostTarget {
+    pub host_spki: Vec<u8>,
+    pub signer: std::sync::Arc<
+        dyn crate::transport::secure_listener_proof::ListenerProofSigner + Send + Sync,
+    >,
+}
+
+impl std::fmt::Debug for SecureHostTarget {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SecureHostTarget")
+            .field("host_spki_bytes", &self.host_spki.len())
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ListenerTransportConfig {
     pub session_id: SessionId,
@@ -217,6 +236,9 @@ pub struct ListenerTransportConfig {
     pub event_queue_capacity: usize,
     pub io_timeout: Duration,
     pub operation_timeout: Duration,
+    /// When set, the control connection is TLS pinned to the host, and the
+    /// listener proves its key. `None` keeps the plaintext v3 control path.
+    pub secure_host: Option<SecureHostTarget>,
 }
 
 impl ListenerTransportConfig {
@@ -231,6 +253,7 @@ impl ListenerTransportConfig {
             event_queue_capacity: DEFAULT_TRANSPORT_EVENT_CAPACITY,
             io_timeout: DEFAULT_IO_TIMEOUT,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            secure_host: None,
         }
     }
 

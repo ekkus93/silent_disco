@@ -136,6 +136,7 @@ impl FfiListenerTransportHandle {
             event_queue_capacity: DEFAULT_TRANSPORT_EVENT_CAPACITY,
             io_timeout: DEFAULT_IO_TIMEOUT,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            secure_host: None,
         };
         let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
         let transport =

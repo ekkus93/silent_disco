@@ -1,17 +1,14 @@
 #![allow(clippy::too_many_lines)]
 use std::collections::HashMap;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc::{SyncSender, sync_channel};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use crate::domain::{DeviceId, SessionId};
-use crate::protocol::{
-    ControlMessage, JoinRejection, MAX_AUDIO_DATAGRAM_BYTES, ProtocolDecoder, ProtocolFrame,
-    encode_frame,
-};
+use crate::protocol::{MAX_AUDIO_DATAGRAM_BYTES, ProtocolDecoder, ProtocolFrame};
 
 use super::super::{
     HostTransportConfig, TransportChannel, TransportClock, TransportError, TransportErrorKind,
@@ -21,15 +18,15 @@ use super::host::{PeerRoute, PeerState, terminal_mailbox::TerminalEventMailbox};
 #[path = "host_capacity_refusal.rs"]
 mod capacity_refusal;
 #[path = "host_join_delivery.rs"]
-mod join_delivery;
+pub(super) mod join_delivery;
 #[path = "host_worker_startup.rs"]
-mod startup;
+pub(super) mod startup;
+use super::peer_inbound::PeerInbound;
+use super::peer_registry::PeerRegistry;
 use super::shared::{
-    ControlSender, CounterState, ReadControlOutcome, classify_rejection, is_best_effort_event,
-    read_control_loop, reap_finished_workers, send_authoritative_event_bounded, send_event,
-    shutdown_stream, spawn_control_writer,
+    CounterState, classify_rejection, read_control_loop, reap_finished_workers,
+    send_authoritative_event_bounded, send_event, spawn_control_writer,
 };
-use join_delivery::forward_join_or_refuse;
 use startup::rollback_failed_peer_start;
 
 #[allow(clippy::too_many_arguments)]
@@ -51,6 +48,18 @@ pub(super) fn spawn_accept_loop(
         .spawn(move || {
             let refusal_gate = capacity_refusal::CapacityRefusalGate::default();
             let secure_in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let registry = PeerRegistry {
+                config: config.clone(),
+                stop: stop.clone(),
+                counters: counters.clone(),
+                peers: peers.clone(),
+                terminal_mailbox: terminal_mailbox.clone(),
+                routes: routes.clone(),
+                workers: workers.clone(),
+                event_sender: event_sender.clone(),
+                clock: clock.clone(),
+                next_peer: next_peer.clone(),
+            };
             while !stop.load(Ordering::Acquire) {
                 // Reap finished peer threads even when no new connections
                 // arrive, rather than retaining two handles per reconnect.
@@ -76,11 +85,7 @@ pub(super) fn spawn_accept_loop(
                             break;
                         }
                         // Retained terminals consume admission slots until collected.
-                        let current_count =
-                            peers.lock().map_or(config.max_peers, |peers| peers.len());
-                        if current_count.saturating_add(terminal_mailbox.pending())
-                            >= config.max_peers
-                        {
+                        if registry.is_at_capacity() {
                             counters.busy_admission_refusal();
                             counters.delivery_failure();
                             refusal_gate.spawn(stream, &config, &stop, &counters);
@@ -89,29 +94,13 @@ pub(super) fn spawn_accept_loop(
                         let stream = match super::control_dispatch::route_control_connection(
                             stream,
                             remote,
-                            &config,
-                            &event_sender,
-                            &counters,
-                            &clock,
+                            &registry,
                             &secure_in_flight,
                         ) {
                             super::control_dispatch::Routed::Plaintext(stream) => stream,
                             super::control_dispatch::Routed::Handled => continue,
                         };
-                        if let Err(error) = register_peer(
-                            stream,
-                            remote,
-                            &config,
-                            &stop,
-                            &counters,
-                            &peers,
-                            &terminal_mailbox,
-                            &routes,
-                            &workers,
-                            &event_sender,
-                            &clock,
-                            &next_peer,
-                        ) {
+                        if let Err(error) = register_peer(stream, remote, &registry) {
                             send_event(
                                 &event_sender,
                                 &counters,
@@ -158,20 +147,10 @@ pub(super) fn spawn_accept_loop(
         })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn register_peer(
     stream: TcpStream,
     remote: SocketAddr,
-    config: &HostTransportConfig,
-    global_stop: &Arc<AtomicBool>,
-    counters: &Arc<CounterState>,
-    peers: &Arc<Mutex<HashMap<u64, Arc<PeerState>>>>,
-    terminal_mailbox: &Arc<TerminalEventMailbox>,
-    routes: &Arc<Mutex<HashMap<DeviceId, PeerRoute>>>,
-    workers: &Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
-    event_sender: &SyncSender<TransportEvent>,
-    clock: &Arc<dyn TransportClock>,
-    next_peer: &AtomicU64,
+    registry: &PeerRegistry,
 ) -> Result<(), TransportError> {
     let writer_stream = stream.try_clone().map_err(|error| {
         TransportError::io(
@@ -189,26 +168,11 @@ fn register_peer(
             &error,
         )
     })?;
-    let number = next_peer.fetch_add(1, Ordering::AcqRel);
-    let peer_stop = Arc::new(AtomicBool::new(false));
-    let (write_sender, write_receiver) = sync_channel(config.outbound_queue_capacity);
-    let peer = Arc::new(PeerState {
-        number,
-        remote,
-        identity: Mutex::new(None),
-        authorized: AtomicBool::new(false),
-        admission_denied: AtomicBool::new(false),
-        join_forwarded: AtomicBool::new(false),
-        active: AtomicBool::new(true),
-        consecutive_failures: AtomicU32::new(0),
-        sender: ControlSender::new(write_sender, config.operation_timeout, counters.clone()),
-        stop: peer_stop.clone(),
-        shutdown_stream: Mutex::new(shutdown_copy),
-        // Use registration time so a new peer is not already stale.
-        last_inbound_millis: AtomicU64::new(clock.now().get()),
-        silence_armed: AtomicBool::new(false),
-    });
-    peers
+    let number = registry.next_peer.fetch_add(1, Ordering::AcqRel);
+    let (write_sender, write_receiver) = registry.writer_queue();
+    let peer = registry.new_peer(number, remote, write_sender, shutdown_copy);
+    registry
+        .peers
         .lock()
         .map_err(|_| {
             TransportError::new(
@@ -218,26 +182,26 @@ fn register_peer(
             )
         })?
         .insert(number, peer.clone());
-    counters.accepted();
+    registry.counters.accepted();
     // The actor must observe a new TCP peer before it can process its join.
     // Only the accept worker waits, never the decoder or audio callback.
     if !send_authoritative_event_bounded(
-        event_sender,
-        global_stop,
-        counters,
+        &registry.event_sender,
+        &registry.stop,
+        &registry.counters,
         TransportEvent::PeerAccepted {
             peer: peer.transport_peer(),
-            received_at: clock.now(),
+            received_at: registry.clock.now(),
         },
-        config.operation_timeout,
+        registry.config.operation_timeout,
     ) {
         // No reader/writer has started. Close the unobservable socket and
         // remove its provisional registry entry after the bounded deadline.
         drop(peer.close());
-        if let Ok(mut registry) = peers.lock() {
-            registry.remove(&number);
+        if let Ok(mut peers) = registry.peers.lock() {
+            peers.remove(&number);
         }
-        counters.closed();
+        registry.counters.closed();
         return Err(TransportError::new(
             TransportErrorKind::QueueFull,
             TransportChannel::Control,
@@ -248,221 +212,47 @@ fn register_peer(
     let writer = spawn_control_writer(
         writer_stream,
         write_receiver,
-        peer_stop,
-        counters.clone(),
-        config.io_timeout,
+        peer.stop.clone(),
+        registry.counters.clone(),
+        registry.config.io_timeout,
         format!("silent-disco-control-writer-{number}"),
     )
     .inspect_err(|error| {
         rollback_failed_peer_start(
             &peer,
-            peers,
-            event_sender,
-            global_stop,
-            counters,
-            clock.now(),
-            config.operation_timeout,
+            &registry.peers,
+            &registry.event_sender,
+            &registry.stop,
+            &registry.counters,
+            registry.clock.now(),
+            registry.config.operation_timeout,
             error,
         );
     })?;
-    workers.lock().map_err(worker_registry_error)?.push(writer);
+    registry
+        .workers
+        .lock()
+        .map_err(worker_registry_error)?
+        .push(writer);
 
-    let session_id = config.session_id.clone();
-    let counters_for_reader = counters.clone();
-    let peers_for_reader = peers.clone();
-    let routes_for_reader = routes.clone();
-    let event_for_reader = event_sender.clone();
-    let clock_for_reader = clock.clone();
-    let reader_peer = peer.clone();
-    let io_timeout = config.io_timeout;
-    let join_timeout = config.operation_timeout;
-    let shutdown_for_reader = global_stop.clone();
-    let terminal_mailbox_for_reader = terminal_mailbox.clone();
-    let terminal_capacity = config.max_peers;
+    let io_timeout = registry.config.io_timeout;
+    let join_timeout = registry.config.operation_timeout;
+    let session_id = registry.config.session_id.clone();
+    let inbound = PeerInbound::new(peer.clone(), registry.clone());
     let reader = thread::Builder::new()
         .name(format!("silent-disco-control-reader-{number}"))
         .spawn(move || {
             let mut terminal_error = None;
             read_control_loop(
                 stream,
-                &reader_peer.stop,
+                &inbound.peer.stop,
                 io_timeout,
                 join_timeout,
                 &session_id,
-                Some((&reader_peer.join_forwarded, join_timeout)),
-                |outcome| match outcome {
-                    ReadControlOutcome::Frame(frame, bytes) => {
-                        counters_for_reader.frame_received(bytes);
-                        match validate_host_frame(&reader_peer, &frame) {
-                            Ok(()) => {
-                                let received_at = clock_for_reader.now();
-                                reader_peer.mark_inbound_activity(received_at);
-                                // A join accepted by the TCP reader must
-                                // reach the host actor, or receive an explicit
-                                // busy rejection. Dropping it from a full
-                                // event queue would leave the listener waiting
-                                // indefinitely for an approval.
-                                let pending_join = match &frame {
-                                    ProtocolFrame::Control(ControlMessage::JoinRequest(request)) => {
-                                        Some(request.device.device_id.clone())
-                                    }
-                                    _ => None,
-                                };
-                                // Shared classification protects critical controls from lossy delivery.
-                                let event = TransportEvent::FrameReceived {
-                                    channel: TransportChannel::Control,
-                                    peer: reader_peer.transport_peer(),
-                                    frame,
-                                    received_at,
-                                };
-                                if pending_join.is_some()
-                                    && reader_peer.join_forwarded.swap(true, Ordering::AcqRel)
-                                {
-                                    // One accepted join per TCP connection. A
-                                    // retransmitted JoinRequest must not create
-                                    // another host-actor approval or enrollment.
-                                    // A rejected first delivery closes this
-                                    // connection; a fresh TCP generation may
-                                    // submit a new request.
-                                    counters_for_reader.duplicate_join_suppression();
-                                    true
-                                } else if let Some(listener_id) = pending_join {
-                                    match forward_join_or_refuse(
-                                        &event_for_reader,
-                                        &counters_for_reader,
-                                        event,
-                                        || {
-                                            // A completed writer acknowledgement, not
-                                            // merely an attempted send, is a refusal.
-                                            let refusal = ProtocolFrame::Control(
-                                                ControlMessage::JoinRejection(JoinRejection {
-                                                    session_id: session_id.clone(),
-                                                    listener_id,
-                                                    reason: "Host busy: join queue full; reconnect and retry"
-                                                        .to_owned(),
-                                                }),
-                                            );
-                                            let bytes = encode_frame(&refusal).map_err(|error| {
-                                                TransportError::protocol(TransportChannel::Control, &error)
-                                            })?;
-                                            reader_peer.sender.send(bytes).map(|_| ())
-                                        },
-                                    ) {
-                                        Ok(true) => true,
-                                        Ok(false) => {
-                                            terminal_error = Some(TransportError::new(
-                                                TransportErrorKind::QueueFull,
-                                                TransportChannel::Control,
-                                                "host join queue full; busy rejection delivered",
-                                            ));
-                                            false
-                                        }
-                                        Err(error) => {
-                                            // Closed or congested writer: do not claim the
-                                            // listener received a retryable busy response.
-                                            terminal_error = Some(error);
-                                            false
-                                        }
-                                    }
-                                } else if is_best_effort_event(&event) {
-                                    // Drop only best-effort telemetry when the bounded
-                                    // actor queue is full; critical controls stay ordered.
-                                    send_event(&event_for_reader, &counters_for_reader, event);
-                                    true
-                                } else {
-                                    // A permanently stopped host actor must not strand
-                                    // this TCP peer forever behind a full event queue.
-                                    // Refuse the control by closing its connection;
-                                    // the authoritative terminal event reports why.
-                                    let delivered = send_authoritative_event_bounded(
-                                        &event_for_reader,
-                                        &reader_peer.stop,
-                                        &counters_for_reader,
-                                        event,
-                                        join_timeout,
-                                    );
-                                    if !delivered {
-                                        terminal_error = Some(TransportError::new(
-                                            TransportErrorKind::QueueFull,
-                                            TransportChannel::Control,
-                                            "host control event delivery timed out; peer disconnected",
-                                        ));
-                                    }
-                                    delivered
-                                }
-                            }
-                            Err(error) => {
-                                // A diagnostic Rejected event is lossy under
-                                // queue pressure. Preserve the reason in the
-                                // authoritative terminal disconnect as well.
-                                terminal_error = Some(error.clone());
-                                classify_rejection(&counters_for_reader, &error);
-                                send_event(
-                                    &event_for_reader,
-                                    &counters_for_reader,
-                                    TransportEvent::Rejected {
-                                        channel: TransportChannel::Control,
-                                        source: reader_peer.remote,
-                                        error,
-                                        received_at: clock_for_reader.now(),
-                                    },
-                                );
-                                false
-                            }
-                        }
-                    }
-                    ReadControlOutcome::Closed => false,
-                    ReadControlOutcome::Rejected(error) => {
-                        terminal_error = Some(error.clone());
-                        classify_rejection(&counters_for_reader, &error);
-                        send_event(
-                            &event_for_reader,
-                            &counters_for_reader,
-                            TransportEvent::Rejected {
-                                channel: TransportChannel::Control,
-                                source: reader_peer.remote,
-                                error,
-                                received_at: clock_for_reader.now(),
-                            },
-                        );
-                        false
-                    }
-                },
+                Some((&inbound.peer.join_forwarded, join_timeout)),
+                |outcome| inbound.handle(outcome, &mut terminal_error),
             );
-            reader_peer.active.store(false, Ordering::Release);
-            reader_peer.stop.store(true, Ordering::Release);
-            drop(shutdown_stream(&reader_peer.shutdown_stream));
-            // Reserve the peer slot until terminal delivery to bound parked
-            // readers under hostile reconnect churn and a stalled actor.
-            if let Some(device_id) = reader_peer.device_id() {
-                // A replacement socket for the same device may have been
-                // authorized while this retired reader was unwinding. Never
-                // let its cleanup remove the replacement's live UDP route.
-                let _ = remove_route_if_current(&routes_for_reader, &device_id, reader_peer.number);
-            }
-            counters_for_reader.closed();
-            // Preserve disconnect without parking the peer worker on a stalled actor.
-            if !terminal_mailbox_for_reader.push(
-                TransportEvent::PeerDisconnected {
-                    peer: reader_peer.transport_peer(),
-                    error: terminal_error,
-                    received_at: clock_for_reader.now(),
-                },
-                terminal_capacity,
-            ) {
-                // Mailbox overflow violates the joint admission budget.
-                counters_for_reader.delivery_failure();
-                counters_for_reader.authoritative_event_failure();
-                counters_for_reader.mark_worker_panicked();
-                shutdown_for_reader.store(true, Ordering::Release);
-            }
-            // Release the admission slot only after terminal delivery.
-            drop(
-                peers_for_reader
-                    .lock()
-                    .ok()
-                    .and_then(|mut peers| peers.remove(&reader_peer.number)),
-            );
+            inbound.finish(terminal_error);
         })
         .map_err(|error| {
             let error = TransportError::io(
@@ -472,13 +262,23 @@ fn register_peer(
                 &error,
             );
             rollback_failed_peer_start(
-                &peer, peers, event_sender, global_stop, counters, clock.now(),
-                config.operation_timeout, &error,
+                &peer,
+                &registry.peers,
+                &registry.event_sender,
+                &registry.stop,
+                &registry.counters,
+                registry.clock.now(),
+                registry.config.operation_timeout,
+                &error,
             );
             error
         })?;
-    workers.lock().map_err(worker_registry_error)?.push(reader);
-    if global_stop.load(Ordering::Acquire) {
+    registry
+        .workers
+        .lock()
+        .map_err(worker_registry_error)?
+        .push(reader);
+    if registry.stop.load(Ordering::Acquire) {
         drop(peer.close());
     }
     Ok(())
@@ -504,72 +304,6 @@ pub(super) fn remove_route_if_current(
     } else {
         false
     }
-}
-
-fn validate_host_frame(peer: &PeerState, frame: &ProtocolFrame) -> Result<(), TransportError> {
-    let ProtocolFrame::Control(message) = frame else {
-        return Err(TransportError::new(
-            TransportErrorKind::Protocol,
-            TransportChannel::Control,
-            "non-control frame reached host control validation",
-        ));
-    };
-    match message {
-        ControlMessage::JoinRequest(request) => {
-            let mut identity = peer.identity.lock().map_err(|_| {
-                TransportError::new(
-                    TransportErrorKind::WorkerPanicked,
-                    TransportChannel::Control,
-                    "peer identity is poisoned",
-                )
-            })?;
-            if identity
-                .as_ref()
-                .is_some_and(|current| current != &request.device.device_id)
-            {
-                return Err(TransportError::new(
-                    TransportErrorKind::Unauthorized,
-                    TransportChannel::Control,
-                    "control peer attempted to change device identity",
-                ));
-            }
-            *identity = Some(request.device.device_id.clone());
-            Ok(())
-        }
-        ControlMessage::Heartbeat(value) => require_authorized_identity(peer, &value.listener_id),
-        ControlMessage::Disconnect(value) => require_authorized_identity(peer, &value.listener_id),
-        ControlMessage::ResyncNotice(value) => {
-            require_authorized_identity(peer, &value.listener_id)
-        }
-        ControlMessage::SynchronizationReport(value) => {
-            require_authorized_identity(peer, &value.listener_id)
-        }
-        ControlMessage::Hello(_)
-        | ControlMessage::JoinApproval(_)
-        | ControlMessage::JoinRejection(_)
-        | ControlMessage::StreamStart(_)
-        | ControlMessage::TrackBoundary(_)
-        | ControlMessage::Pause(_)
-        | ControlMessage::Stop(_) => Err(TransportError::new(
-            TransportErrorKind::Unauthorized,
-            TransportChannel::Control,
-            "listener sent a host-only control message",
-        )),
-    }
-}
-
-fn require_authorized_identity(
-    peer: &PeerState,
-    device_id: &DeviceId,
-) -> Result<(), TransportError> {
-    if !peer.authorized.load(Ordering::Acquire) || peer.device_id().as_ref() != Some(device_id) {
-        return Err(TransportError::new(
-            TransportErrorKind::Unauthorized,
-            TransportChannel::Control,
-            "control frame was not sent by the authorized peer identity",
-        ));
-    }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

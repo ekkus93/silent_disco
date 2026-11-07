@@ -462,3 +462,27 @@ Mutations, both restored and verified identical: dropping the partially accepted
 - The listener's own join state machine and its disconnect and reconnect behavior.
 - The desktop and Android listeners still join over plaintext v3. Nothing in the app uses this path yet.
 - Durable trust: a TLS join is still session-scoped, and the claimed device ID is not yet bound to the verified listener key.
+
+## 28. 2026-11-07 — TLS join path, parts 2–3 (core): actor events, datagram routes, listener join
+
+**What is built (core only; the desktop and Android apps do not use it yet).**
+- **Actor events (item 1).** An admitted TLS listener is registered as a normal host peer (`socket/secure_peer.rs`). It gets the same peer-table entry, `PeerAccepted`, and join gating as a plaintext peer. The join frame reaches the actor as `FrameReceived { channel: Control }`, and the actor's approval goes back over the same channel through `send_pending_control`.
+- **Shared handling.** The plaintext reader and the TLS pump now run the same code: `socket/peer_registry.rs` (shared handles and the `PeerState` constructor), `socket/peer_inbound.rs` (frame validation, one join per connection, busy refusal, ordered terminal disconnect), and `socket/secure_control_io.rs` (outcome mapping and write drain). The plaintext behavior is unchanged: the full core suite (613 library tests plus integration suites) passed after the refactor.
+- **Datagram routes (item 2).** UDP authorization needed no new code. A TLS peer is in the same peer table and route map, so `authorize_peer` and the datagram receiver apply the same checks. Test: a TLS-joined listener's sync is accepted only from its authorized route; before authorization, and from any other socket, it is refused as `Unauthorized`.
+- **Listener join (item 3, core).** `ListenerTransportConfig.secure_host` (a `SecureHostTarget`: the invitation's host key and a listener proof signer) makes `SocketListenerTransport::connect` dial TLS, pin the host, and prove the listener key. A pump then carries join, approval, sync and departure through `listener_inbound.rs` (the shared inbound handler). `None` keeps plaintext v3.
+
+**Evidence (local, real TLS 1.3 on loopback).**
+- Dispatch: join reaches the actor and the approval returns on the same channel; a foreign-session frame disconnects its peer.
+- Datagrams: sync accepted only from the authorized route.
+- Listener (`secure_listener_tests.rs`, five tests): a pinned listener joins and gets its approval; a listener pinned to another key never connects; sync over its authorized route reaches the host; a clean departure is seen by the host; a listener that leaves can rejoin with the same device and be approved again.
+- Session: queued bytes for another session are refused on the byte path. Mutation (remove the decode check in `send_encoded`) fails that test; the file was restored and checked with `cmp`.
+- Gate: `scripts/check-rust.sh` exit 0, 23 suites, nothing skipped. `cargo check` on `desktop/src-tauri` with `--locked --all-features --all-targets` exit 0. `check-source-file-line-counts.sh`: all 861 tracked files under 800 lines.
+
+**Not built (the app half of item 3, and item 5).**
+- *Hosts have no TLS identity.* Both the desktop and the Android host still set `secure_control: None`, so a TLS listener is refused with a visible reason. The desktop host can build its identity from the PKCS#8 key it already stores for invitations (`platform/invitation_identity.rs`). The Android host's key is non-exportable, so its TLS signing needs a Keystore-backed rustls signer; that is a design and device task.
+- *Listeners do not pin yet.* The invitation carries `host_public_key_der`, so an app listener can pin it. The FFI listener config and the Kotlin controller do not pass `secure_host` yet; the Keystore proof signer exists (`KeystoreListenerProofSigner`).
+- *Durable trust (item 5).* A TLS join is still session-scoped. The claimed device ID is not bound to the verified listener key, and no trust record is written.
+- *Negative and device tests (§1 items 4–6).* Downgrade and tamper tests across the app, and end-to-end runs on the A54 and the desktop host, are not written.
+- *Missing deadline test.* A TLS peer that never sends a join is cut off by the pump's admission deadline, but no test covers it yet. Post-join trickle is also unbounded (the TCP reader's frame deadline does not apply to the TLS channel). Both are noted for follow-up.
+
+**Decision recorded.** Option 2 keeps plaintext working unchanged, so no cutover is needed. A listener should use TLS only when its invitation carries a host key, and a host should accept it only once its own identity is configured. Wiring the listener side before the host side would break joins, so the host lands first.

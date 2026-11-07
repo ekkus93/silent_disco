@@ -120,7 +120,22 @@ pub fn dial_and_prove(
     generation: u64,
     signer: &dyn ListenerProofSigner,
 ) -> Result<SecureFrameChannel, ProofExchangeError> {
-    let mut tcp = TcpStream::connect_timeout(&address, ADMISSION_TIMEOUT)?;
+    let tcp = TcpStream::connect_timeout(&address, ADMISSION_TIMEOUT)?;
+    prove_over_tcp(tcp, host_spki, session, generation, signer)
+}
+
+/// Listener side over a socket the caller has already connected. The caller
+/// keeps its own handle to the socket, so it can close the connection.
+///
+/// # Errors
+/// The same as [`dial_and_prove`].
+pub fn prove_over_tcp(
+    mut tcp: TcpStream,
+    host_spki: &[u8],
+    session: &SessionId,
+    generation: u64,
+    signer: &dyn ListenerProofSigner,
+) -> Result<SecureFrameChannel, ProofExchangeError> {
     tcp.set_read_timeout(Some(ADMISSION_TIMEOUT))?;
     tcp.set_write_timeout(Some(ADMISSION_TIMEOUT))?;
     let config = pinned_client_config(host_spki)?;

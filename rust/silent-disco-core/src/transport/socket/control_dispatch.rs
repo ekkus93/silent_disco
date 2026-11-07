@@ -13,17 +13,16 @@ use std::io::ErrorKind;
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::SyncSender;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use super::super::control_protocol::{ControlProtocol, classify_control_prefix};
 use super::super::secure_admission::{SECURE_ADMISSION_GENERATION, admit_listener};
-use super::super::{
-    HostTransportConfig, TransportChannel, TransportClock, TransportError, TransportErrorKind,
-    TransportEvent,
-};
-use super::shared::{CounterState, send_event};
+use super::super::secure_listener_proof::ProofExchangeError;
+use super::super::{TransportChannel, TransportError, TransportErrorKind, TransportEvent};
+use super::peer_registry::PeerRegistry;
+use super::secure_peer::register_secure_peer;
+use super::shared::send_event;
 
 /// Longest a new connection may take to reveal its protocol.
 const CLASSIFY_DEADLINE: Duration = Duration::from_millis(250);
@@ -42,10 +41,7 @@ pub(super) enum Routed {
 pub(super) fn route_control_connection(
     stream: TcpStream,
     remote: SocketAddr,
-    config: &HostTransportConfig,
-    event_sender: &SyncSender<TransportEvent>,
-    counters: &Arc<CounterState>,
-    clock: &Arc<dyn TransportClock>,
+    registry: &PeerRegistry,
     secure_in_flight: &Arc<AtomicUsize>,
 ) -> Routed {
     // A failed peek is not a TLS handshake, so it takes the plaintext path,
@@ -59,49 +55,34 @@ pub(super) fn route_control_connection(
                     remote,
                     TransportErrorKind::Io,
                     "could not restore blocking mode for the plaintext control connection",
-                    event_sender,
-                    counters,
-                    clock,
+                    registry,
                 );
                 return Routed::Handled;
             }
             Routed::Plaintext(stream)
         }
         ControlProtocol::Tls => {
-            let Some(identity) = config.secure_control.clone() else {
+            let Some(identity) = registry.config.secure_control.clone() else {
                 refuse(
                     stream,
                     remote,
                     TransportErrorKind::Protocol,
                     "secure control is not configured on this host; TLS connection refused",
-                    event_sender,
-                    counters,
-                    clock,
+                    registry,
                 );
                 return Routed::Handled;
             };
-            if !try_reserve(secure_in_flight, config.max_peers) {
+            if !try_reserve(secure_in_flight, registry.config.max_peers) {
                 refuse(
                     stream,
                     remote,
                     TransportErrorKind::QueueFull,
                     "too many secure admissions are already in progress",
-                    event_sender,
-                    counters,
-                    clock,
+                    registry,
                 );
                 return Routed::Handled;
             }
-            spawn_secure_admission(
-                stream,
-                remote,
-                identity,
-                config.session_id.clone(),
-                event_sender.clone(),
-                counters.clone(),
-                clock.clone(),
-                secure_in_flight,
-            );
+            spawn_secure_admission(stream, remote, identity, registry.clone(), secure_in_flight);
             Routed::Handled
         }
     }
@@ -147,59 +128,58 @@ impl Drop for ReservedSlot {
 }
 
 #[allow(
-    clippy::too_many_arguments,
     clippy::needless_pass_by_value,
-    reason = "the stream and handles are moved into the admission thread"
+    reason = "the stream and registry are moved into the admission thread"
 )]
 fn spawn_secure_admission(
     stream: TcpStream,
     remote: SocketAddr,
     identity: Arc<super::super::secure_control_tls::HostTlsIdentity>,
-    session: crate::domain::SessionId,
-    event_sender: SyncSender<TransportEvent>,
-    counters: Arc<CounterState>,
-    clock: Arc<dyn TransportClock>,
+    registry: PeerRegistry,
     in_flight: &Arc<AtomicUsize>,
 ) {
     // The slot was reserved by the caller; release it when this thread ends.
     let slot = ReservedSlot(in_flight.clone());
-    let failure_counters = counters.clone();
+    let failure_counters = registry.counters.clone();
     let spawned = thread::Builder::new()
         .name("silent-disco-secure-admission".to_owned())
         .spawn(move || {
             let _slot = slot;
-            let outcome = admit_listener(stream, &identity, &session, SECURE_ADMISSION_GENERATION);
-            let error = match outcome {
-                // Admission succeeded, but the join path that would keep this
-                // channel open is not built yet. Say so rather than hold it.
-                Ok(admitted) => {
-                    drop(admitted.channel);
+            // A second handle to the socket lets the host close the admitted
+            // connection later; admission consumes the first one.
+            let Ok(shutdown_handle) = stream.try_clone() else {
+                send_rejection(
+                    &registry,
+                    remote,
                     TransportError::new(
-                        TransportErrorKind::Protocol,
+                        TransportErrorKind::Io,
                         TransportChannel::Control,
-                        "listener admitted over TLS; the secure join path is not serving yet, connection closed",
-                    )
+                        "could not clone the admitted TLS control socket",
+                    ),
+                );
+                return;
+            };
+            let session = registry.config.session_id.clone();
+            let outcome = admit_listener(stream, &identity, &session, SECURE_ADMISSION_GENERATION);
+            let failure = match outcome {
+                Ok(admitted) => {
+                    register_secure_peer(&registry, admitted, shutdown_handle, remote).err()
                 }
                 Err(error) => {
                     let kind = match error {
-                        super::super::secure_listener_proof::ProofExchangeError::Proof(_) => {
-                            TransportErrorKind::Unauthorized
-                        }
+                        ProofExchangeError::Proof(_) => TransportErrorKind::Unauthorized,
                         _ => TransportErrorKind::Protocol,
                     };
-                    TransportError::new(kind, TransportChannel::Control, error.to_string())
+                    Some(TransportError::new(
+                        kind,
+                        TransportChannel::Control,
+                        error.to_string(),
+                    ))
                 }
             };
-            send_event(
-                &event_sender,
-                &counters,
-                TransportEvent::Rejected {
-                    channel: TransportChannel::Control,
-                    source: remote,
-                    error,
-                    received_at: clock.now(),
-                },
-            );
+            if let Some(error) = failure {
+                send_rejection(&registry, remote, error);
+            }
         });
     if spawned.is_err() {
         // The closure (and with it the stream and slot) was dropped; the slot
@@ -208,8 +188,20 @@ fn spawn_secure_admission(
     }
 }
 
+fn send_rejection(registry: &PeerRegistry, remote: SocketAddr, error: TransportError) {
+    send_event(
+        &registry.event_sender,
+        &registry.counters,
+        TransportEvent::Rejected {
+            channel: TransportChannel::Control,
+            source: remote,
+            error,
+            received_at: registry.clock.now(),
+        },
+    );
+}
+
 #[allow(
-    clippy::too_many_arguments,
     clippy::needless_pass_by_value,
     reason = "taking the socket by value closes the refused connection when it is dropped"
 )]
@@ -218,19 +210,12 @@ fn refuse(
     remote: SocketAddr,
     kind: TransportErrorKind,
     message: &str,
-    event_sender: &SyncSender<TransportEvent>,
-    counters: &Arc<CounterState>,
-    clock: &Arc<dyn TransportClock>,
+    registry: &PeerRegistry,
 ) {
     let _ = stream.shutdown(Shutdown::Both);
-    send_event(
-        event_sender,
-        counters,
-        TransportEvent::Rejected {
-            channel: TransportChannel::Control,
-            source: remote,
-            error: TransportError::new(kind, TransportChannel::Control, message),
-            received_at: clock.now(),
-        },
+    send_rejection(
+        registry,
+        remote,
+        TransportError::new(kind, TransportChannel::Control, message),
     );
 }

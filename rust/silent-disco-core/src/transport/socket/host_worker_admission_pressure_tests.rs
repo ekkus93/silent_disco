@@ -1,5 +1,8 @@
+use super::super::shared::ControlSender;
+use super::join_delivery::forward_join_or_refuse;
 use super::*;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc::sync_channel;
 
 #[test]
 fn worker_start_failure_after_accept_emits_terminal_and_releases_peer_slot() {

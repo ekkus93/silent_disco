@@ -8,6 +8,17 @@ mod control_writer_deadline_tests;
 mod host;
 mod host_workers;
 mod listener;
+mod listener_inbound;
+mod peer_inbound;
+mod peer_registry;
+mod secure_control_io;
+#[cfg(test)]
+mod secure_datagram_tests;
+#[cfg(test)]
+mod secure_listener_tests;
+mod secure_peer;
+#[cfg(test)]
+mod secure_test_support;
 // Block 44 implicit-shutdown tests intentionally sit beside the shared shutdown policy.
 #[cfg_attr(test, allow(clippy::items_after_test_module))]
 mod shared;

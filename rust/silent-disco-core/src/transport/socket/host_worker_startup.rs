@@ -9,7 +9,7 @@ use super::{
 /// listener and repeated failures exhaust `max_peers`. The writer may already
 /// be running when reader startup fails, so close its socket as well.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn rollback_failed_peer_start(
+pub(in crate::transport::socket) fn rollback_failed_peer_start(
     peer: &Arc<PeerState>,
     peers: &Mutex<HashMap<u64, Arc<PeerState>>>,
     event_sender: &SyncSender<TransportEvent>,

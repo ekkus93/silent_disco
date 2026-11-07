@@ -61,8 +61,8 @@ pub use types::{
     DEFAULT_TRANSPORT_EVENT_CAPACITY, DEFAULT_TRANSPORT_QUEUE_CAPACITY, DatagramSendFailures,
     HostTransportConfig, ListenerDatagramRoutes, ListenerTransportConfig,
     MAX_TRANSPORT_EVENT_CAPACITY, MAX_TRANSPORT_PEERS, MAX_TRANSPORT_QUEUE_CAPACITY,
-    TransportChannel, TransportCounters, TransportDelivery, TransportError, TransportErrorKind,
-    TransportEvent, TransportPeer,
+    SecureHostTarget, TransportChannel, TransportCounters, TransportDelivery, TransportError,
+    TransportErrorKind, TransportEvent, TransportPeer,
 };
 pub use virtual_fault::{
     DeterministicPrng, FaultInjectingVirtualTransportFactory, VirtualUdpFaultConfig,

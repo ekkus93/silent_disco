@@ -10,7 +10,7 @@ use super::super::shared::CounterState;
 
 /// `Ok(true)` means forwarded to actor, `Ok(false)` means busy refusal
 /// confirmed by the TCP writer. `Err` means neither was delivered.
-pub(super) fn forward_join_or_refuse<T>(
+pub(in crate::transport::socket) fn forward_join_or_refuse<T>(
     sender: &SyncSender<T>,
     counters: &CounterState,
     event: T,

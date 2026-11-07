@@ -16,15 +16,20 @@ use crate::protocol::{
     encode_frame,
 };
 
+use super::super::secure_admission::{SECURE_ADMISSION_GENERATION, prove_over_tcp};
+use super::super::secure_control_session::SecureControlSession;
+use super::super::secure_frame_channel::SecureFrameChannel;
+use super::super::secure_listener_proof::ProofExchangeError;
 use super::super::{
     ListenerDatagramRoutes, ListenerTransportConfig, ListenerTransportNode, TransportChannel,
     TransportClock, TransportCounters, TransportDelivery, TransportError, TransportErrorKind,
     TransportEvent, TransportPeer,
 };
+use super::listener_inbound::ListenerInbound;
+use super::secure_control_io::{drain_writes, receive_outcome};
 use super::shared::{
-    ControlSender, CounterState, ReadControlOutcome, classify_rejection,
-    fail_loud_on_implicit_shutdown, is_best_effort_event, join_workers, read_control_loop,
-    recv_event, send_authoritative_event, send_event, shutdown_stream, spawn_control_writer,
+    ControlSender, ControlWrite, CounterState, classify_rejection, fail_loud_on_implicit_shutdown,
+    join_workers, read_control_loop, recv_event, send_event, shutdown_stream, spawn_control_writer,
 };
 
 pub struct SocketListenerTransport {
@@ -70,15 +75,33 @@ impl SocketListenerTransport {
                 &error,
             )
         })?;
-        let writer_stream = stream.try_clone().map_err(|error| {
-            TransportError::io(
-                TransportErrorKind::Connect,
-                TransportChannel::Control,
-                "failed to clone listener control stream for writer",
-                &error,
-            )
-        })?;
-        let shutdown_copy = stream.try_clone().map_err(|error| {
+        let link = match config.secure_host.clone() {
+            Some(target) => {
+                let shutdown = stream.try_clone().map_err(|error| {
+                    TransportError::io(
+                        TransportErrorKind::Connect,
+                        TransportChannel::Control,
+                        "failed to clone listener control stream for shutdown",
+                        &error,
+                    )
+                })?;
+                let channel = prove_over_tcp(
+                    stream,
+                    &target.host_spki,
+                    &config.session_id,
+                    SECURE_ADMISSION_GENERATION,
+                    target.signer.as_ref(),
+                )
+                .map_err(|error| proof_failure(&error))?;
+                ControlLink::Secure { channel, shutdown }
+            }
+            None => ControlLink::Plain(stream),
+        };
+        let shutdown_copy = match &link {
+            ControlLink::Secure { shutdown, .. } => shutdown.try_clone(),
+            ControlLink::Plain(stream) => stream.try_clone(),
+        }
+        .map_err(|error| {
             TransportError::io(
                 TransportErrorKind::Connect,
                 TransportChannel::Control,
@@ -153,22 +176,48 @@ impl SocketListenerTransport {
         let control_sender =
             ControlSender::new(write_sender, config.operation_timeout, counters.clone());
         let mut workers = Vec::new();
-        workers.push(spawn_control_writer(
-            writer_stream,
-            write_receiver,
-            stop.clone(),
-            counters.clone(),
-            config.io_timeout,
-            "silent-disco-listener-control-writer".to_owned(),
-        )?);
-        workers.push(spawn_control_reader(
-            stream,
-            config.clone(),
-            stop.clone(),
-            counters.clone(),
-            event_sender.clone(),
-            clock.clone(),
-        )?);
+        match link {
+            ControlLink::Secure { channel, .. } => {
+                let session = SecureControlSession::new(channel, config.session_id.clone());
+                workers.push(spawn_secure_control_pump(
+                    session,
+                    write_receiver,
+                    ListenerInbound::new(
+                        config.clone(),
+                        stop.clone(),
+                        counters.clone(),
+                        event_sender.clone(),
+                        clock.clone(),
+                    ),
+                )?);
+            }
+            ControlLink::Plain(stream) => {
+                let writer_stream = stream.try_clone().map_err(|error| {
+                    TransportError::io(
+                        TransportErrorKind::Connect,
+                        TransportChannel::Control,
+                        "failed to clone listener control stream for writer",
+                        &error,
+                    )
+                })?;
+                workers.push(spawn_control_writer(
+                    writer_stream,
+                    write_receiver,
+                    stop.clone(),
+                    counters.clone(),
+                    config.io_timeout,
+                    "silent-disco-listener-control-writer".to_owned(),
+                )?);
+                workers.push(spawn_control_reader(
+                    stream,
+                    config.clone(),
+                    stop.clone(),
+                    counters.clone(),
+                    event_sender.clone(),
+                    clock.clone(),
+                )?);
+            }
+        }
         workers.push(spawn_listener_udp_receiver(
             sync_socket.clone(),
             TransportChannel::Synchronization,
@@ -201,6 +250,70 @@ impl SocketListenerTransport {
             shutdown_complete: false,
         })
     }
+}
+
+/// The control connection after dialing: plaintext, or TLS already proven to
+/// the pinned host, with a second handle to the same socket.
+enum ControlLink {
+    Plain(TcpStream),
+    Secure {
+        channel: SecureFrameChannel,
+        shutdown: TcpStream,
+    },
+}
+
+fn proof_failure(error: &ProofExchangeError) -> TransportError {
+    let kind = match error {
+        ProofExchangeError::Proof(_) => TransportErrorKind::Unauthorized,
+        _ => TransportErrorKind::Connect,
+    };
+    TransportError::new(kind, TransportChannel::Control, error.to_string())
+}
+
+/// Starts the TLS control pump. It owns the session and the inbound handler,
+/// so it runs the same validation and ordered disconnect as the plaintext reader.
+fn spawn_secure_control_pump(
+    session: SecureControlSession,
+    writes: Receiver<ControlWrite>,
+    inbound: ListenerInbound,
+) -> Result<thread::JoinHandle<()>, TransportError> {
+    thread::Builder::new()
+        .name("silent-disco-listener-secure-control".to_owned())
+        .spawn(move || run_listener_pump(session, writes, inbound))
+        .map_err(|error| {
+            TransportError::io(
+                TransportErrorKind::Connect,
+                TransportChannel::Control,
+                "failed to spawn listener secure control pump",
+                &error,
+            )
+        })
+}
+
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the pump owns its session, queue and handler for its whole life"
+)]
+fn run_listener_pump(
+    mut session: SecureControlSession,
+    writes: Receiver<ControlWrite>,
+    inbound: ListenerInbound,
+) {
+    let mut terminal_error = None;
+    while !inbound.stop.load(Ordering::Acquire) {
+        if let Err(error) = drain_writes(&session, &writes, &inbound.counters) {
+            terminal_error = Some(error);
+            break;
+        }
+        let Some(outcome) = receive_outcome(&mut session) else {
+            continue;
+        };
+        if !inbound.handle(outcome, &mut terminal_error) {
+            break;
+        }
+    }
+    inbound.finish(terminal_error);
+    drop(session);
 }
 
 impl ListenerTransportNode for SocketListenerTransport {
@@ -333,95 +446,21 @@ fn spawn_control_reader(
     event_sender: SyncSender<TransportEvent>,
     clock: Arc<dyn TransportClock>,
 ) -> Result<thread::JoinHandle<()>, TransportError> {
+    let inbound = ListenerInbound::new(config, stop, counters, event_sender, clock);
     thread::Builder::new()
         .name("silent-disco-listener-control-reader".to_owned())
         .spawn(move || {
             let mut terminal_error = None;
-            let host_peer = TransportPeer {
-                device_id: None,
-                control_address: SocketAddr::new(
-                    config.endpoint.address,
-                    config.endpoint.control_port,
-                ),
-            };
             read_control_loop(
                 stream,
-                &stop,
-                config.io_timeout,
-                config.operation_timeout,
-                &config.session_id,
+                &inbound.stop,
+                inbound.config.io_timeout,
+                inbound.config.operation_timeout,
+                &inbound.config.session_id,
                 None,
-                |outcome| match outcome {
-                    ReadControlOutcome::Frame(frame, bytes) => {
-                        counters.frame_received(bytes);
-                        match validate_listener_inbound(&config.device_id, &frame) {
-                            Ok(()) => {
-                                // Shared classification protects playback controls from telemetry loss.
-                                let event = TransportEvent::FrameReceived {
-                                    channel: TransportChannel::Control,
-                                    peer: host_peer.clone(),
-                                    frame,
-                                    received_at: clock.now(),
-                                };
-                                if is_best_effort_event(&event) {
-                                    send_event(&event_sender, &counters, event);
-                                    true
-                                } else {
-                                    send_authoritative_event(&event_sender, &stop, &counters, event)
-                                }
-                            }
-                            Err(error) => {
-                                // A diagnostic Rejected event is lossy under
-                                // queue pressure. Preserve the reason in the
-                                // authoritative terminal disconnect as well.
-                                terminal_error = Some(error.clone());
-                                classify_rejection(&counters, &error);
-                                send_event(
-                                    &event_sender,
-                                    &counters,
-                                    TransportEvent::Rejected {
-                                        channel: TransportChannel::Control,
-                                        source: host_peer.control_address,
-                                        error,
-                                        received_at: clock.now(),
-                                    },
-                                );
-                                false
-                            }
-                        }
-                    }
-                    ReadControlOutcome::Closed => false,
-                    ReadControlOutcome::Rejected(error) => {
-                        terminal_error = Some(error.clone());
-                        classify_rejection(&counters, &error);
-                        send_event(
-                            &event_sender,
-                            &counters,
-                            TransportEvent::Rejected {
-                                channel: TransportChannel::Control,
-                                source: host_peer.control_address,
-                                error,
-                                received_at: clock.now(),
-                            },
-                        );
-                        false
-                    }
-                },
+                |outcome| inbound.handle(outcome, &mut terminal_error),
             );
-            // Deliver the terminal event even if a full UDP event queue
-            // temporarily prevents the UI from polling. The owner can still
-            // interrupt this wait via shutdown(), which sets stop.
-            send_authoritative_event(
-                &event_sender,
-                &stop,
-                &counters,
-                TransportEvent::PeerDisconnected {
-                    peer: host_peer,
-                    error: terminal_error,
-                    received_at: clock.now(),
-                },
-            );
-            stop.store(true, Ordering::Release);
+            inbound.finish(terminal_error);
         })
         .map_err(|error| {
             TransportError::io(
@@ -637,7 +676,7 @@ fn validate_listener_outbound(
     }
 }
 
-fn validate_listener_inbound(
+pub(super) fn validate_listener_inbound(
     device_id: &DeviceId,
     frame: &ProtocolFrame,
 ) -> Result<(), TransportError> {

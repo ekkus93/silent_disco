@@ -70,23 +70,57 @@ impl SecureControlSession {
             .map_err(SecureSessionError::Channel)
     }
 
+    /// Sends one already-encoded protocol frame, as queued by the control
+    /// writer. The bytes are decoded with the session policy first, so a frame
+    /// for another session never leaves this host.
+    ///
+    /// # Errors
+    /// Returns `Protocol` for bytes that do not decode for this session, and
+    /// `Channel` if the channel refuses them.
+    pub fn send_encoded(&self, bytes: Vec<u8>) -> Result<(), SecureSessionError> {
+        let policy = DecodePolicy {
+            expected_session_id: Some(&self.session),
+            minimum_audio_sequence: None,
+        };
+        ProtocolDecoder::default()
+            .decode(&bytes, policy)
+            .map_err(SecureSessionError::Protocol)?;
+        self.channel
+            .send(bytes)
+            .map_err(SecureSessionError::Channel)
+    }
+
     /// Receives and decodes the next protocol frame within `timeout`.
     ///
     /// # Errors
     /// Returns `Channel` on timeout or close, and `Protocol` for a frame that
     /// fails decoding or belongs to another session.
     pub fn recv_frame(&mut self, timeout: Duration) -> Result<ProtocolFrame, SecureSessionError> {
+        self.recv_frame_sized(timeout).map(|(frame, _length)| frame)
+    }
+
+    /// Like [`Self::recv_frame`], also returning the encoded length for telemetry.
+    ///
+    /// # Errors
+    /// The same as [`Self::recv_frame`].
+    pub fn recv_frame_sized(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<(ProtocolFrame, usize), SecureSessionError> {
         let bytes = self
             .channel
             .recv_timeout(timeout)
             .map_err(SecureSessionError::Channel)?;
+        let length = bytes.len();
         let policy = DecodePolicy {
             expected_session_id: Some(&self.session),
             minimum_audio_sequence: None,
         };
-        self.decoder
+        let frame = self
+            .decoder
             .decode(&bytes, policy)
-            .map_err(SecureSessionError::Protocol)
+            .map_err(SecureSessionError::Protocol)?;
+        Ok((frame, length))
     }
 
     /// Sends raw bytes as one channel message, bypassing the session checks.
