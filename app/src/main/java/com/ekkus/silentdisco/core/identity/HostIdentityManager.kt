@@ -1,13 +1,8 @@
 package com.ekkus.silentdisco.core.identity
 
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.security.KeyPair
-import java.security.KeyPairGenerator
-import java.security.KeyStore
 import java.security.Signature
-import java.security.spec.ECGenParameterSpec
 
 /**
  * Owns the device's stable host signing key inside Android Keystore.
@@ -19,6 +14,7 @@ class HostIdentityManager(
     private val alias: String = KEY_ALIAS,
     private val record: HostKeyRecord? = null,
 ) {
+    private val key = KeystoreEcKey(alias)
     @Volatile
     private var pendingChange: HostKeyContinuity.Replaced? = null
 
@@ -76,27 +72,9 @@ class HostIdentityManager(
         return pair
     }
 
-    private fun loadOrCreateKeyPair(): KeyPair {
-        val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
-        val existing = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
-        if (existing != null) return KeyPair(existing.certificate.publicKey, existing.privateKey)
-
-        val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEY_STORE)
-        generator.initialize(
-            KeyGenParameterSpec.Builder(
-                alias,
-                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
-            )
-                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                .setDigests(KeyProperties.DIGEST_SHA256)
-                .setUserAuthenticationRequired(false)
-                .build(),
-        )
-        return generator.generateKeyPair()
-    }
+    private fun loadOrCreateKeyPair(): KeyPair = key.keyPair()
 
     companion object {
-        private const val ANDROID_KEY_STORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "silent-disco-host-identity-v1"
     }
 }

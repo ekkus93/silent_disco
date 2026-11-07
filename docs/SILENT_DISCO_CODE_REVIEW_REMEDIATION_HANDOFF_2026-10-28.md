@@ -299,3 +299,22 @@ Step 2 for the desktop listener, as chosen by the owner: a key file in the app d
 - Time-of-check and time-of-use: the path is checked, then opened. An attacker who can write into the owner's `0700` directory could swap the file in between. Such an attacker already runs as that user, so the risk is narrow, but it is not closed. `O_NOFOLLOW` would close it, but it needs a platform-specific constant or `libc`, which I did not add.
 - The key is stored unencrypted on disk. Protection comes from file permissions only.
 - Nothing is wired to the listener proof yet, and the Android Keystore listener key (step 2, Android half) is not built.
+
+## 20. 2026-11-07 — Android listener proof key in Android Keystore
+
+Step 2, Android half. The listener's proof key is a non-exportable P-256 key in Android Keystore. It is not yet used by a listener proof flow.
+
+**Design.**
+- `core/identity/KeystoreEcKey.kt`: shared load-or-create for a Keystore EC key (P-256, SHA-256, sign and verify, no user authentication). `HostIdentityManager` now delegates its key loading to it. Behavior is unchanged, and its instrumented tests still pass.
+- `core/identity/ListenerIdentityManager.kt`: the listener proof key, alias `silent-disco-listener-proof-v1`, separate from the host key. It exposes the SPKI DER and a DER ECDSA-SHA256 signature, which is the form the core verifier takes.
+
+**Evidence (Samsung A54, Android 16, real Keystore).**
+- `ListenerIdentityInstrumentedTest`, four tests: the public key is on the secp256r1 curve; signatures are DER and verify against the public key, and fail for another payload; the same alias keeps its identity across manager instances; the listener key differs from the host key; the private key's `encoded` is null.
+- Mutation: a signer that ignores its payload fails the signature test. Restored; byte-identical.
+- Cross-language: a signature captured from the phone's Keystore (72-byte DER, 91-byte SPKI) verifies in the core `p256` verifier, and the same signature is rejected for another transcript. Test `a_keystore_signature_from_android_verifies_in_the_core_verifier`.
+- All nine identity instrumented tests pass after the refactor. `./gradlew test lintDebug` passes. `cargo clippy -D warnings` passes on the core crate.
+
+**Not done.**
+- The listener does not yet sign a proof on the TLS connection. That needs the Android listener's TLS client and the exporter binding wired through, which is a later step.
+- The desktop listener proof key (§19) is not yet used by a proof flow either.
+- The stored key is protected by Keystore, but the test runs were on one device. No emulator run.

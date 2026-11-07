@@ -305,3 +305,33 @@ fn an_oversized_length_prefix_is_refused_before_any_allocation_of_its_size() {
         "an oversized field was not refused as malformed: {outcome:?}"
     );
 }
+
+/// A proof signature produced by Android Keystore (`SHA256withECDSA`, DER)
+/// on a Samsung SM-A546E, Android 16, captured 2026-11-07. The core verifier
+/// must accept what the phone produces, not only what this crate produces.
+#[test]
+fn a_keystore_signature_from_android_verifies_in_the_core_verifier() {
+    use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
+    use p256::pkcs8::DecodePublicKey;
+
+    fn unhex(text: &str) -> Vec<u8> {
+        (0..text.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&text[index..index + 2], 16).expect("hex"))
+            .collect()
+    }
+
+    let spki = unhex(
+        "3059301306072a8648ce3d020106082a8648ce3d030107034200041b0cea1d93383d7ded44990a987f656a0ee706543348c5cdecd3be249f46c01a1634936f9c12a6b6072929ea6624054146ae4ff6284130a85c494f67f8cac52d",
+    );
+    let payload = unhex("73696c656e742d646973636f2063726f73732d6c616e677561676520766563746f72");
+    let signature = unhex(
+        "3046022100966e8ae2f0a2f445c994c695490ee07642de3f4418e500dc470d99ffb886ea0d022100ee7144bc8aa789058535d9acac56878aa93eeea731faa35c51e4343b72006740",
+    );
+    let key = VerifyingKey::from_public_key_der(&spki).expect("android spki is p-256");
+    let signature = Signature::from_der(&signature).expect("android signature is der");
+    key.verify(&payload, &signature)
+        .expect("android signature verifies");
+    // The same signature must not verify for any other transcript.
+    assert!(key.verify(b"another transcript", &signature).is_err());
+}

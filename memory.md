@@ -1469,3 +1469,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Owner chose a key file in app data with owner-only permissions. Added desktop/src-tauri/src/platform/listener_key_file.rs (7 tests; mutations "repair mode" and "regenerate truncated key" each fail a test; restored identical). Refuses wrong mode, symlink, malformed or invalid scalar, and never regenerates a damaged key. Unix only; others fail closed.
 - Gates: cargo fmt --check OK (after one rustfmt pass on the new file only), clippy -D warnings OK, full desktop lib suite 394 passed, 5 ignored.
 - Note for owner: desktop host identity already uses the OS keyring (platform/identity.rs); the listener key uses a file by choice. Residual: check-then-open race needs same-user write access; O_NOFOLLOW not used. Not yet wired into the listener proof; Android Keystore listener key not built.
+
+## 2026-11-07T04:30:00Z - Sonnet 5.5 - Ralph loop: Android Keystore listener proof key
+- Added core/identity/KeystoreEcKey.kt (shared Keystore EC load-or-create; HostIdentityManager delegates, behavior unchanged), ListenerIdentityManager.kt (alias silent-disco-listener-proof-v1), ListenerIdentityInstrumentedTest (4 tests, A54). Mutation (signer ignores payload) fails the signature test; restored.
+- Cross-language: captured one Keystore signature (72-byte DER, 91-byte SPKI) from the A54 via a temporary logging test (deleted afterwards) and added a fixed-vector test in secure_listener_proof_tests.rs; it verifies in the core p256 verifier.
+- Gates: 9 identity instrumented tests pass on the A54, ./gradlew test lintDebug exit 0, line counts OK, clippy -D warnings OK on core.
+- Not wired into a TLS proof flow yet. Handoff §20.
