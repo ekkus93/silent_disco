@@ -1481,3 +1481,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Desktop: platform/listener_proof.rs prove_to_host + 2 loopback tests; dev-deps rcgen/rustls added (lock additions only).
 - Gates: check-rust.sh exit 0 (23 suites); desktop fmt and clippy -D warnings OK; desktop tests pass.
 - Android NOT built: needs UniFFI callback signer + host endpoint for an on-device test. Asked owner which host option to use. Handoff §21.
+
+## 2026-11-07T06:00:00Z - Sonnet 5.5 - Ralph loop: Android listener TLS proof over FFI (on device)
+- Added FFI listener_proof.rs: listener_prove_to_host (callback signer), FfiProofHostListener (bind/host_spki/accept_and_verify). Core host_tls_identity_from_pkcs8; rcgen moved to core deps. Android KeystoreListenerProofSigner. Three ListenerProofOverFfiInstrumentedTest tests pass on the A54; mutation (wrong bytes signed) killed.
+- Disk: first gate run failed ENOSPC; owner freed space. Gate passed on rerun (23 suites). Test shutdown_races_with_concurrent_command_submission stalled under memory pressure (~230MB free) in one run; passes 5/5 alone. Flake risk, not fixed.
+- Process lesson (again): `pkill -f <pattern>` matched its own shell (exit 144). Kill by PID.
+- Gates: test lintDebug OK, line counts OK, desktop lock --locked OK. Handoff §22.

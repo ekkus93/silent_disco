@@ -24,6 +24,7 @@ mod host_control;
 mod host_playlist;
 mod host_transport;
 mod listener_playback;
+mod listener_proof;
 mod listener_transport;
 #[cfg(test)]
 mod playlist_pcm_capture_tests;
@@ -79,6 +80,9 @@ pub use listener_playback::{
     FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError,
     FfiListenerPlaybackHandle, FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence,
     FfiSyncSampleOutcome, ListenerPlaybackError, ListenerPlaybackRuntime,
+};
+pub use listener_proof::{
+    FfiListenerProofSigner, FfiProofHostListener, FfiVerifiedProofListener, listener_prove_to_host,
 };
 pub use listener_transport::{
     FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,

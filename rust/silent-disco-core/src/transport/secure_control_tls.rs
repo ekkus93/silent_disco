@@ -136,3 +136,65 @@ pub fn host_server_config(
         .with_cert_resolver(Arc::new(FixedCertificate(Arc::new(certified))));
     Ok(Arc::new(config))
 }
+
+/// The host's TLS identity, derived from one PKCS#8 P-256 key so the pinned
+/// SPKI, the certificate and the signing key cannot disagree.
+pub struct HostTlsIdentity {
+    /// `SubjectPublicKeyInfo` DER: the value an invitation pins.
+    pub spki: Vec<u8>,
+    /// Self-signed certificate that carries the key. Its chain is not checked.
+    pub certificate: CertificateDer<'static>,
+    /// Signs the handshake with the same key.
+    pub signing_key: Arc<dyn SigningKey>,
+}
+
+impl std::fmt::Debug for HostTlsIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HostTlsIdentity")
+            .field("spki_bytes", &self.spki.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Builds the host TLS identity from a PKCS#8 P-256 private key.
+///
+/// # Errors
+/// Returns a rustls error if the key is not a valid P-256 PKCS#8 key or the
+/// certificate cannot be produced.
+pub fn host_tls_identity_from_pkcs8(pkcs8: &[u8]) -> Result<HostTlsIdentity, TlsError> {
+    use p256::{
+        ecdsa::SigningKey as EcdsaKey,
+        pkcs8::{DecodePrivateKey, EncodePublicKey},
+    };
+    use rcgen::{CertificateParams, KeyPair, PKCS_ECDSA_P256_SHA256};
+    use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+
+    let key = EcdsaKey::from_pkcs8_der(pkcs8)
+        .map_err(|_| TlsError::General("host key is not a P-256 PKCS#8 key".to_owned()))?;
+    let spki = key
+        .verifying_key()
+        .to_public_key_der()
+        .map_err(|_| TlsError::General("host key SPKI cannot be encoded".to_owned()))?
+        .as_bytes()
+        .to_vec();
+    let key_pair = KeyPair::from_pkcs8_der_and_sign_algo(
+        &PrivatePkcs8KeyDer::from(pkcs8),
+        &PKCS_ECDSA_P256_SHA256,
+    )
+    .map_err(|_| TlsError::General("host key cannot be used for a certificate".to_owned()))?;
+    let certificate = CertificateParams::new(vec![HOST_SERVER_NAME.to_owned()])
+        .map_err(|_| TlsError::General("host certificate parameters are invalid".to_owned()))?
+        .self_signed(&key_pair)
+        .map_err(|_| TlsError::General("host certificate cannot be produced".to_owned()))?
+        .der()
+        .clone();
+    let signing_key = rustls::crypto::ring::sign::any_ecdsa_type(&PrivateKeyDer::Pkcs8(
+        PrivatePkcs8KeyDer::from(pkcs8),
+    ))?;
+    Ok(HostTlsIdentity {
+        spki,
+        certificate,
+        signing_key,
+    })
+}

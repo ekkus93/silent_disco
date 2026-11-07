@@ -349,3 +349,25 @@ Mutation: swallowing signer failures (`unwrap_or_default`) passed the first vers
 3. a host endpoint for an on-device test. The host side exists only as Rust test code. The options are a test-only FFI export of `accept_and_verify`, or a separate desktop host running on the same network.
 
 **Not done: production wiring.** Neither the desktop nor the Android join path uses the proof yet. Both still run protocol v3 plaintext.
+
+## 22. 2026-11-07 — Android listener TLS proof over the FFI (on-device)
+
+Completes the Android half of §21. The Keystore listener key signs through a UniFFI callback, and the Rust listener runs TLS 1.3 pinned to the host key.
+
+**FFI surface (`rust/silent-disco-ffi/src/listener_proof.rs`).**
+- `listener_prove_to_host(address, host_spki, session_id, generation, signer)`: runs the listener side. `signer` is a `FfiListenerProofSigner` callback, implemented by the app.
+- `FfiProofHostListener`: binds a port from a PKCS#8 P-256 host key. `host_spki()` is what listeners pin. `accept_and_verify(session_id, generation)` accepts one listener and returns the verified fingerprints. This is the host-side verifier a real host needs later, so it is not test-only.
+- Core support: `host_tls_identity_from_pkcs8` derives the SPKI, self-signed certificate and signing key from one key, so they cannot disagree. `rcgen` moved from dev-dependency to dependency of the core for this.
+
+**Android.** `KeystoreListenerProofSigner` implements the callback over `ListenerIdentityManager`. Failures reach Rust as `FfiBridgeException.Callback`, never as an empty proof.
+
+**Evidence (Samsung A54, Android 16, real Keystore and TLS).**
+- `ListenerProofOverFfiInstrumentedTest`, three tests: the Keystore listener proves and the host verifies, with the listener and host fingerprints checked; a listener pinned to another key never proves and the host rejects the failed handshake; a signature over the wrong transcript is refused.
+- Mutation: breaking `KeystoreListenerProofSigner.signDer` to sign the wrong bytes fails the end-to-end test. Restored and verified identical.
+- `./gradlew test lintDebug` passes. The line-count check passes. The Rust gate passes (23 suites, strict Clippy). The desktop lock is consistent under `--locked`.
+
+**Environment note.** The first full Rust gate run hit "No space left on device" during compilation. A later run had one concurrency test (`shutdown_races_with_concurrent_command_submission_and_notification_delivery`) stall for several minutes under memory pressure (about 230 MB free). Run alone it passes five times in a row, and the full gate passed on a rerun. This is a timing-sensitive test that stalls under load, and it is recorded as a flake risk, not a fix.
+
+**Not done.**
+- Neither join path uses the proof yet. Both still run protocol v3 plaintext.
+- The host object in this step is test-exercised; no production host uses it yet.
