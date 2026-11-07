@@ -392,3 +392,21 @@ Mutations, both restored and verified identical: dropping the partially accepted
 - The host's control path (`transport/socket/host_workers.rs`) still runs plaintext v3. The next step is to accept control connections as TLS, run the listener proof on the new channel, and only then forward the join to the actor.
 - The listener's join path (`listener.rs`) and the Android listener's join are not switched.
 - Admission still does not consult durable host trust. That is the F1 work, which follows the wiring.
+
+## 24. 2026-11-07 — TLS control admission with the listener proof on the frame channel (wiring step 1)
+
+**What this is.** `transport/secure_admission.rs` provides the two halves of the admission the host's control socket will use:
+- `admit_listener(tcp, host_identity, session, generation)`: completes TLS 1.3 on the accepted socket (exporter binding taken after the handshake), starts the owner-thread channel, sends a fresh 32-byte nonce as a frame, reads the listener's response frame (exactly two length-prefixed fields, no trailing bytes), and verifies it with `PendingListenerProof`. It returns the verified listener and the open channel, only on success.
+- `dial_and_prove(address, host_spki, session, generation, signer)`: the listener side. It connects, pins the host SPKI, answers the nonce from its signer, and returns the open channel for join traffic.
+
+**Deadlines.** Connect, handshake and every frame are bounded at 10 s. A listener that never answers is dropped at that deadline.
+
+**Evidence (local, real TLS 1.3 on loopback, four tests).**
+- An honest listener is admitted with the expected fingerprint, and a message the host sends after admission reaches the listener over the same channel.
+- A listener claiming another key is refused with a proof error before any channel is returned.
+- A listener pinned to another host key never reaches admission.
+- A listener that stalls the proof is dropped within the deadline (the test checks it does not wait the full stall).
+- Mutation: removing the signature check in `secure_identity` makes the forgery test fail. Restored; identical.
+- `scripts/check-rust.sh` exit 0, 23 suites, strict Clippy.
+
+**Not done (the rest of wiring step 1).** The host's production accept loop in `transport/socket/host_workers.rs` does not call `admit_listener` yet, and the listener's join path does not call `dial_and_prove`. Both still run plaintext protocol v3. Switching the production accept loop is a protocol cutover: existing plaintext listeners (including the Android and desktop clients today) would be refused, so it needs a decision on whether the host runs a TLS-only port or both protocols side by side.

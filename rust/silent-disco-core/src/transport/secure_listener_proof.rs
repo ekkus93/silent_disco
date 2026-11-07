@@ -86,6 +86,8 @@ pub enum ProofExchangeError {
     InvalidListenerKey,
     /// The platform signer could not read its key or sign.
     SignerFailed(String),
+    /// The frame channel failed or timed out during the exchange.
+    Channel(String),
 }
 
 impl std::fmt::Display for ProofExchangeError {
@@ -98,6 +100,7 @@ impl std::fmt::Display for ProofExchangeError {
             Self::RandomUnavailable => formatter.write_str("system random source is unavailable"),
             Self::InvalidListenerKey => formatter.write_str("listener key is not a P-256 key"),
             Self::SignerFailed(reason) => write!(formatter, "listener key signer failed: {reason}"),
+            Self::Channel(reason) => write!(formatter, "proof channel failed: {reason}"),
         }
     }
 }

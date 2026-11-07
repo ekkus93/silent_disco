@@ -1,6 +1,7 @@
 mod boundary;
 mod clock;
 mod manual_endpoint;
+pub mod secure_admission;
 pub mod secure_control_tls;
 pub mod secure_frame_channel;
 pub mod secure_identity;
@@ -23,6 +24,8 @@ mod late_join_liveness_tests;
 mod liveness_tests;
 #[cfg(test)]
 mod manual_endpoint_fuzz_tests;
+#[cfg(test)]
+mod secure_admission_tests;
 #[cfg(test)]
 mod secure_control_tls_tests;
 #[cfg(test)]

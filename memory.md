@@ -1492,3 +1492,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Added transport/secure_frame_channel.rs (one worker per connection owns socket + rustls Connection; bounded queues; u16 frames; staged partial writes) and four real-TLS tests. Mutations killed: drop partial bytes; no send size check. Gate check-rust.sh exit 0 (23 suites).
 - Host control path (host_workers.rs) and listener join still plaintext v3. Next: host control TLS + proof on the new channel. Handoff §23.
 - Lesson: rustls writer.write_all fails when its buffer is full; bytes must be staged and retried after flush.
+
+## 2026-11-07T08:30:00Z - Sonnet 5.5 - Ralph loop: wiring step 1 (TLS admission over the frame channel)
+- Added transport/secure_admission.rs: admit_listener (host; handshake, exporter binding, nonce frame, proof verify, returns open channel only on success) and dial_and_prove (listener). Four real-TLS tests: honest admitted with channel usable, forged claim refused, wrong pin never admitted, stalled proof dropped by 10s deadline. Mutation (no signature check) killed.
+- Gate check-rust.sh exit 0 (23 suites). Clippy fixed: Duration::from_mins(1).
+- NOT wired into host_workers accept loop; switching is a protocol cutover (plaintext listeners would be refused). Needs owner decision: TLS-only port or dual-stack. Handoff §24.
