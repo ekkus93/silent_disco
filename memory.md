@@ -1458,3 +1458,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Gates: check-rust.sh exit 0 (after one doc-backtick clippy fix); desktop Cargo.lock updated, `cargo metadata --locked` OK; `./gradlew assembleDebug` cross-compiles ring for 4 ABIs (test lintDebug alone does not run buildRustAndroid).
 - Lesson: `bash script > log; echo exit` in a background command reports the echo's exit (0), not the script's. Put the real rc in the log and read it.
 - §1 item 1 stays UNCHECKED: not wired into the socket, no Keystore signer, no listener auth. Handoff §17.
+
+## 2026-11-07T02:30:00Z - Sonnet 5.5 - Ralph loop: listener possession proof over TLS (step 1)
+- Added transport/secure_listener_proof.rs and secure_listener_proof_tests.rs (5 real-TLS tests). Proof = nonce + TLS exporter binding + secure_identity transcript; caller computes the binding before the exchange.
+- Fixed my own tautological assertion (host_fingerprint compared with itself) to compare against SHA-256 of the pinned host key. Added a cross-session test.
+- Mutations: binding+nonce constant -> replay test fails; signature check removed -> 3 tests fail. Binding alone constant -> replay still refused by the nonce (recorded as a gap, not proven).
+- Gate: check-rust.sh exit 0 (no error lines, 23 suites ok). Next step 2 needs key storage decisions (Android Keystore; desktop store).

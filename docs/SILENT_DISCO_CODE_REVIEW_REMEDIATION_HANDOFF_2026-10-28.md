@@ -248,3 +248,31 @@ Implementation slice for TODO §1 item 1. It is the TLS configuration and its pr
 - No client (listener) authentication: client certificates are disabled. That needs the possession proof in `secure_identity.rs`, or mutual TLS, and is a separate item.
 - Hostile-network tests (downgrade, forged host, tampered control) belong to §1 item 4 and are not written.
 - No CI record for this commit; the owner watches CI.
+
+## 18. 2026-11-07 — listener possession proof over TLS 1.3 (step 1 of the proof plan)
+
+Implements the possession proof from §17's next steps, in core only, with in-memory keys. It is not wired into a socket and does not use a device key store yet.
+
+**Design (`transport/secure_listener_proof.rs`).**
+- After the TLS 1.3 handshake, the host sends a fresh 32-byte nonce from the provider's `secure_random`. The listener replies with its SPKI and a DER ECDSA signature over the canonical transcript from `secure_identity.rs`.
+- The transcript binds the host key fingerprint, the listener key fingerprint, session ID, generation, nonce and a 32-byte TLS exporter value (`export_keying_material`, label `silent-disco listener proof v1`). A proof captured on one connection cannot be replayed on another, because both the nonce and the exporter differ.
+- The caller computes the exporter value from the connection before the exchange, so the proof code never borrows the TLS connection and the stream together.
+- Frames are two length-prefixed fields. A length of zero or above 256 bytes is refused before any allocation of that size.
+- The host consumes the challenge on the first verification attempt (`PendingListenerProof::verify_and_consume`), so a failed proof cannot be retried.
+
+**Evidence (local).** `secure_listener_proof_tests.rs`, five tests over real TLS 1.3 loopback connections:
+- a listener proving its pinned key is verified, and the verified fingerprint equals the SHA-256 of the pinned host key;
+- a listener announcing a victim's key but signing with its own key is refused (`SignatureMismatch`);
+- a proof captured on connection one is refused on connection two (`SignatureMismatch`), after the same proof verifies on connection one;
+- a valid proof is refused when checked against a different session ID;
+- a 65,535-byte length prefix is refused as `MalformedFrame`.
+
+Mutations, all restored and verified identical:
+- Binding and nonce both made constant: the replay test fails.
+- Signature check removed from `secure_identity`: three tests fail (forged key, replay, cross-session).
+- Binding alone made constant: the replay test still passes, because the fresh nonce is enough on its own. So the exporter binding is defence in depth, and nothing in the test suite yet proves it works alone. This is recorded as a gap.
+
+**Not done.**
+- Listeners have no persistent P-256 key. Android listeners have a random device ID label (`DeviceIdentityStore`); desktop listeners likewise. Step 2 (key storage, Keystore on Android, owner decision on desktop) comes first.
+- The proof is not wired into join admission, and the control socket is still protocol v3 plaintext.
+- Nothing here is device evidence. Gate: `scripts/check-rust.sh` exit 0, 23 suites.

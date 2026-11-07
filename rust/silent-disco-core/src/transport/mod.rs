@@ -3,6 +3,7 @@ mod clock;
 mod manual_endpoint;
 pub mod secure_control_tls;
 pub mod secure_identity;
+pub mod secure_listener_proof;
 pub mod secure_replay;
 pub mod secure_trust;
 mod socket;
@@ -23,6 +24,8 @@ mod liveness_tests;
 mod manual_endpoint_fuzz_tests;
 #[cfg(test)]
 mod secure_control_tls_tests;
+#[cfg(test)]
+mod secure_listener_proof_tests;
 #[cfg(test)]
 mod secure_replay_fuzz_tests;
 #[cfg(test)]
