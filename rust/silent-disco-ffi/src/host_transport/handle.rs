@@ -113,6 +113,7 @@ impl FfiHostTransportHandle {
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
             max_consecutive_failures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
             peer_inbound_silence_timeout: DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
+            secure_control: None,
         };
         let clock: Arc<dyn TransportClock> = Arc::new(if host_now_elapsed_ms == 0 {
             SystemTransportClock::default()

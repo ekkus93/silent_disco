@@ -1,5 +1,6 @@
 mod boundary;
 mod clock;
+pub mod control_protocol;
 mod manual_endpoint;
 pub mod secure_admission;
 pub mod secure_control_tls;

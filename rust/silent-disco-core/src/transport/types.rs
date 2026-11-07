@@ -150,6 +150,9 @@ pub struct HostTransportConfig {
     pub operation_timeout: Duration,
     pub max_consecutive_failures: u32,
     pub peer_inbound_silence_timeout: Duration,
+    /// TLS identity for secure control admission. `None` refuses TLS connections
+    /// with a visible reason; plaintext v3 is unaffected.
+    pub secure_control: Option<std::sync::Arc<super::secure_control_tls::HostTlsIdentity>>,
 }
 
 impl HostTransportConfig {
@@ -168,6 +171,7 @@ impl HostTransportConfig {
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
             max_consecutive_failures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
             peer_inbound_silence_timeout: DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
+            secure_control: None,
         }
     }
 

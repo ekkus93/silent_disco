@@ -171,6 +171,8 @@ fn run_worker(
     let mut staged: VecDeque<u8> = VecDeque::new();
     let failure = loop {
         if stop.load(Ordering::Acquire) {
+            // Deliver frames queued before the stop, then close the session.
+            drain_before_close(tcp, connection, outbound, &mut staged);
             connection.send_close_notify();
             let _ = flush_tls(tcp, connection);
             break None;
@@ -200,6 +202,30 @@ fn run_worker(
     };
     if let Some(error) = failure {
         let _ = inbound.send(Err(error));
+    }
+}
+
+/// Upper bound on drain passes at close, so a stalled peer cannot hold the worker.
+const MAX_CLOSE_DRAIN_PASSES: usize = 64;
+
+/// Writes frames still queued when the channel is stopped or dropped, so a
+/// sender that drops right after queuing a frame does not lose it.
+fn drain_before_close(
+    tcp: &mut TcpStream,
+    connection: &mut Connection,
+    outbound: &Receiver<Vec<u8>>,
+    staged: &mut VecDeque<u8>,
+) {
+    for _ in 0..MAX_CLOSE_DRAIN_PASSES {
+        if write_pending_frames(connection, outbound, staged).is_err() {
+            return;
+        }
+        if flush_tls(tcp, connection).is_err() {
+            return;
+        }
+        if staged.is_empty() && !connection.wants_write() && outbound.try_recv().is_err() {
+            return;
+        }
     }
 }
 

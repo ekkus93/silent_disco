@@ -152,3 +152,18 @@ fn a_clean_close_is_observed_by_the_peer() {
     );
     host.close();
 }
+
+#[test]
+fn a_frame_queued_just_before_the_channel_is_dropped_still_reaches_the_peer() {
+    let host_spki = spki_of(25);
+    let (host, listener) = pair(25, &host_spki);
+    listener.send(b"proof".to_vec()).expect("send");
+    // Drop immediately, as a listener does once its proof is sent.
+    drop(listener);
+    assert_eq!(
+        host.recv_timeout(WAIT)
+            .expect("queued frame must be delivered before close"),
+        b"proof"
+    );
+    host.close();
+}

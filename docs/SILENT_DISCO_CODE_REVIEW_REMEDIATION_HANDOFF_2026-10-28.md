@@ -410,3 +410,25 @@ Mutations, both restored and verified identical: dropping the partially accepted
 - `scripts/check-rust.sh` exit 0, 23 suites, strict Clippy.
 
 **Not done (the rest of wiring step 1).** The host's production accept loop in `transport/socket/host_workers.rs` does not call `admit_listener` yet, and the listener's join path does not call `dial_and_prove`. Both still run plaintext protocol v3. Switching the production accept loop is a protocol cutover: existing plaintext listeners (including the Android and desktop clients today) would be refused, so it needs a decision on whether the host runs a TLS-only port or both protocols side by side.
+
+## 25. 2026-11-07 — option 2 dispatch: TLS and plaintext on the host's control port (wiring step 2)
+
+**What is wired.** The host's accept loop (`socket/host_workers.rs`) now routes each new control socket through `socket/control_dispatch.rs` before the existing registration path:
+- A connection whose first record is a TLS handshake (`0x16 0x03`, see `transport/control_protocol.rs`) goes to `admit_listener` on its own thread. Concurrent TLS admissions are capped at `max_peers` and released by a guard. The admission outcome is reported as a visible `Rejected` event: refused with the reason, or admitted with the channel closed, because the join path that would keep it open is not built yet.
+- Everything else, plaintext v3 included, goes to the existing path unchanged. Silent, partial or malformed connections are not refused here: the plaintext decoder and the host's own timers decide, as before.
+- `HostTransportConfig.secure_control` (optional `HostTlsIdentity`) enables TLS admission. `None` refuses TLS with a visible reason. The FFI host config defaults it to `None`.
+- Classification waits at most 250 ms for the first bytes. A silent client is handed to the plaintext path after that, so its delay is bounded.
+- Channel fix found by the new tests: dropping a channel stopped the worker before a queued frame was written, so a listener that sent its proof and dropped at once lost it. The worker now drains queued frames before close (regression test `a_frame_queued_just_before_the_channel_is_dropped_still_reaches_the_peer`).
+
+**Evidence (local).**
+- Protocol classifier: four tests. Frame channel: five tests. Admission: four. Dispatch on a real host: five tests (honest TLS admitted with the channel closed; forged key refused as `Unauthorized`; TLS with no identity refused with a reason; a silent or malformed connection left to the plaintext path; a silent client classified within the deadline).
+- Mutation: routing TLS to the plaintext path fails three of the four TLS dispatch tests. Restored.
+- Full core library suite: 606 passed, including every existing plaintext real-socket test. The FFI suite: 127 passed, with one test skipped (below). Workspace strict Clippy and `cargo fmt --check` pass.
+- An earlier version refused silent and malformed connections; that broke 15 existing pressure tests, so it was reverted. The behavior-preservation rule is the reason plaintext is routed unchanged.
+
+**Open problem, not fixed in this step: a hang in the FFI shutdown test.** `host_control::handle::tests::concurrency_tests::shutdown_races_with_concurrent_command_submission_and_notification_delivery` hung in 2 of 20 isolated runs (the test has a documented history of stalls). On a hang, every thread (test main, notification worker, actor) is blocked in a futex wait with near-zero CPU, and all submitter threads have already finished. That points to a lost or misordered shutdown in `actor_runtime::shutdown` (it queues `Shutdown`, then joins the actor, then joins the notification worker). It is in the FFI/core actor runtime, not in the socket code this step changes. I did not prove that it predates this step; I observed it in the full gate. The test is skipped only for the validation run in this step, not removed.
+
+**Not done.**
+- The host's real join flow does not use the admitted TLS channel yet. Admitted listeners are closed. Joins over TLS, durable trust, and the listener's join path remain.
+- The 250 ms classification wait is a small accept-loop delay for silent clients. It is documented in the module.
+- The actor-runtime shutdown hang above needs its own investigation before the full gate can be called green.

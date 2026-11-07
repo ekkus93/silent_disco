@@ -26,6 +26,9 @@ use super::secure_listener_proof::{
     server_binding,
 };
 
+/// Proof generation used for control admission. Both ends must agree.
+pub const SECURE_ADMISSION_GENERATION: u64 = 1;
+
 /// Bound on connect, handshake and each frame during admission.
 const ADMISSION_TIMEOUT: Duration = Duration::from_secs(10);
 

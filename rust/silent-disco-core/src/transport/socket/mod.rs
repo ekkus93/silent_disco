@@ -1,5 +1,8 @@
 #[cfg(test)]
 mod authoritative_delivery_tests;
+mod control_dispatch;
+#[cfg(test)]
+mod control_dispatch_tests;
 #[cfg(test)]
 mod control_writer_deadline_tests;
 mod host;

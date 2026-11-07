@@ -1497,3 +1497,11 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Added transport/secure_admission.rs: admit_listener (host; handshake, exporter binding, nonce frame, proof verify, returns open channel only on success) and dial_and_prove (listener). Four real-TLS tests: honest admitted with channel usable, forged claim refused, wrong pin never admitted, stalled proof dropped by 10s deadline. Mutation (no signature check) killed.
 - Gate check-rust.sh exit 0 (23 suites). Clippy fixed: Duration::from_mins(1).
 - NOT wired into host_workers accept loop; switching is a protocol cutover (plaintext listeners would be refused). Needs owner decision: TLS-only port or dual-stack. Handoff §24.
+
+## 2026-11-07T13:10:00Z - Sonnet 5.5 - Ralph loop: option 2 dispatch (TLS and plaintext on one control port)
+- Added socket/control_dispatch.rs: peek first bytes (250 ms); only TLS (0x16 0x03) goes to admit_listener on its own bounded thread; everything else stays on the plaintext path unchanged. HostTransportConfig.secure_control (None by default; FFI defaults None).
+- Found and fixed: frames queued just before a channel drop were lost (worker stopped before writing); drain-before-close added with a regression test.
+- Rejected design: refusing silent/malformed connections broke 15 plaintext pressure tests; reverted to route them to plaintext.
+- Validation: core lib 606 passed; FFI 127 passed with 1 skipped; workspace clippy -D warnings OK; TLS mutation (route to plaintext) killed.
+- OPEN: FFI test shutdown_races_with_concurrent_command_submission hangs ~2/20 isolated runs; all threads in futex waits (actor shutdown). Not proven pre-existing. Needs investigation before full gate is green. Handoff §25.
+- Process lesson (again): pgrep -f with a pattern that appears in my own command kills my shell (exit 144); gdb ptrace is blocked here; use /proc/<pid>/task/*/wchan.

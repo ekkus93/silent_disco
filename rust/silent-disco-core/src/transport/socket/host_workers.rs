@@ -50,6 +50,7 @@ pub(super) fn spawn_accept_loop(
         .name("silent-disco-transport-accept".to_owned())
         .spawn(move || {
             let refusal_gate = capacity_refusal::CapacityRefusalGate::default();
+            let secure_in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             while !stop.load(Ordering::Acquire) {
                 // Reap finished peer threads even when no new connections
                 // arrive, rather than retaining two handles per reconnect.
@@ -85,6 +86,18 @@ pub(super) fn spawn_accept_loop(
                             refusal_gate.spawn(stream, &config, &stop, &counters);
                             continue;
                         }
+                        let stream = match super::control_dispatch::route_control_connection(
+                            stream,
+                            remote,
+                            &config,
+                            &event_sender,
+                            &counters,
+                            &clock,
+                            &secure_in_flight,
+                        ) {
+                            super::control_dispatch::Routed::Plaintext(stream) => stream,
+                            super::control_dispatch::Routed::Handled => continue,
+                        };
                         if let Err(error) = register_peer(
                             stream,
                             remote,
