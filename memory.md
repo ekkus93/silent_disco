@@ -1487,3 +1487,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Disk: first gate run failed ENOSPC; owner freed space. Gate passed on rerun (23 suites). Test shutdown_races_with_concurrent_command_submission stalled under memory pressure (~230MB free) in one run; passes 5/5 alone. Flake risk, not fixed.
 - Process lesson (again): `pkill -f <pattern>` matched its own shell (exit 144). Kill by PID.
 - Gates: test lintDebug OK, line counts OK, desktop lock --locked OK. Handoff §22.
+
+## 2026-11-07T07:30:00Z - Sonnet 5.5 - Ralph loop: option 1 step 1, owner-thread TLS frame channel
+- Added transport/secure_frame_channel.rs (one worker per connection owns socket + rustls Connection; bounded queues; u16 frames; staged partial writes) and four real-TLS tests. Mutations killed: drop partial bytes; no send size check. Gate check-rust.sh exit 0 (23 suites).
+- Host control path (host_workers.rs) and listener join still plaintext v3. Next: host control TLS + proof on the new channel. Handoff §23.
+- Lesson: rustls writer.write_all fails when its buffer is full; bytes must be staged and retried after flush.

@@ -371,3 +371,24 @@ Completes the Android half of §21. The Keystore listener key signs through a Un
 **Not done.**
 - Neither join path uses the proof yet. Both still run protocol v3 plaintext.
 - The host object in this step is test-exercised; no production host uses it yet.
+
+## 23. 2026-11-07 — owner-thread TLS frame channel (option 1, step 1)
+
+First step of the owner's chosen design: the host and listener control connections will each be owned by one thread. The existing `TcpStream` reader/writer split cannot hold a TLS stream (it clones the socket), so the TLS record layer moves to one worker per connection.
+
+**Design (`transport/secure_frame_channel.rs`).**
+- One worker thread owns the TCP socket and the rustls `Connection`. Callers send frames through a bounded queue (64 slots) and receive through another. Nothing else touches the socket.
+- Frames are `u16` length-prefixed, 1..=65,535 bytes. An oversized or empty frame is refused at `send`, before it reaches the wire.
+- Bytes the TLS writer does not accept are staged and retried after each flush, so a large frame is never dropped or half-written.
+- The worker polls every 10 ms, so a queued frame waits at most one poll interval. A close sends `close_notify`.
+
+**Evidence (local, real TLS 1.3 on loopback, `secure_frame_channel_tests.rs`, four tests).** Frames flow in both directions over a pinned connection, including the largest legal frame, in order; a listener pinned to another key gets no application data; oversized and empty frames are refused and the channel still works; a clean close is observed by the peer.
+
+Mutations, both restored and verified identical: dropping the partially accepted bytes fails the round-trip test (the large frame is lost); removing the send size check fails the refusal test.
+
+**Gate.** `scripts/check-rust.sh` exit 0, 23 suites, strict Clippy.
+
+**Not done (the rest of option 1).**
+- The host's control path (`transport/socket/host_workers.rs`) still runs plaintext v3. The next step is to accept control connections as TLS, run the listener proof on the new channel, and only then forward the join to the actor.
+- The listener's join path (`listener.rs`) and the Android listener's join are not switched.
+- Admission still does not consult durable host trust. That is the F1 work, which follows the wiring.
