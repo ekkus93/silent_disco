@@ -1448,3 +1448,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Verified in code: PROTOCOL_VERSION=3 with no negotiation; no TLS crate in any Cargo.toml; join device_id is self-declared; secure_identity/secure_replay/secure_trust have no production callers (tests only); P2 Keystore-signed QR is not checked by join admission.
 - Wrote handoff §16 and CHECKED §0 item 3 (documentation deliverable). §0 item 1 (refresh SHA) and item 4 (preserve green CI) stay open: item 4 depends on hosted CI, which the owner watches.
 - Local HEAD = origin/master = d25828f5 at this point.
+
+## 2026-11-07T00:50:00Z - Sonnet 5.5 - Ralph loop: §0 item 2 investigated, blocked by §1
+- Under plaintext v3 the FFI refuses TrustedDevices drafts ("Legacy v3"), desktop disables the option, Android has only a placeholder enum value. The approved-only actor outcome cannot be produced through FFI until §1 lands. Recorded in TODO; box stays open. No test added because any test would only re-pin the existing refusal.
+- Stopping the loop here: remaining unchecked items are §1/§2 (TLS 1.3 stack and verified identity, multi-session work and a design choice), §3 item 2 (owner decision), §7 dependency audit (needs network tooling), §8 and §9 (CI-dependent or large).
