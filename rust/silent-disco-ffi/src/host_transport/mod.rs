@@ -1,5 +1,7 @@
 mod handle;
 #[cfg(test)]
+mod handle_tests;
+#[cfg(test)]
 mod secure_bind_tests;
 mod types;
 
