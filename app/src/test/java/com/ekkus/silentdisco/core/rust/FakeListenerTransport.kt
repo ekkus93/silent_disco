@@ -17,6 +17,7 @@ class FakeListenerTransport : ListenerTransport {
         val rawEndpoint: String,
         val localDeviceId: String,
         val localAddress: String,
+        val hostTlsPublicKeyDer: ByteArray? = null,
     )
 
     val connectCalls = mutableListOf<ConnectCall>()
@@ -46,8 +47,9 @@ class FakeListenerTransport : ListenerTransport {
         rawEndpoint: String,
         localDeviceId: String,
         localAddress: String,
+        hostTlsPublicKeyDer: ByteArray?,
     ) {
-        connectCalls += ConnectCall(rawEndpoint, localDeviceId, localAddress)
+        connectCalls += ConnectCall(rawEndpoint, localDeviceId, localAddress, hostTlsPublicKeyDer)
     }
 
     override suspend fun sendJoinRequest(displayName: String, inviteCode: String?) {

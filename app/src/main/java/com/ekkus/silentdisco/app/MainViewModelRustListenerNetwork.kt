@@ -213,6 +213,7 @@ private fun MainViewModel.connectRustListenerEndpoint(
                 rawEndpoint,
                 localListenerDeviceId,
                 LOCAL_LISTENER_BIND_ADDRESS,
+                invitedHostTlsKeys[session.id],
             )
         } catch (error: FfiListenerTransportException) {
             logger.e(

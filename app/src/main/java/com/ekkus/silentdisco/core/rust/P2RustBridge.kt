@@ -81,6 +81,11 @@ data class P2ValidatedInvitation(
      * re-validating it here.
      */
     val connectionPayloadJson: String?,
+    /**
+     * The host's TLS control-channel key, signed into the invitation. Listeners
+     * pin the TLS handshake to it; null means the host has no TLS identity.
+     */
+    val hostTlsPublicKeyDer: ByteArray? = null,
 )
 
 private fun p2StatusDescription(status: Int): String = when (status) {
@@ -230,6 +235,9 @@ class P2Database internal constructor(nativeHandle: Long) : AutoCloseable {
         issuedAtMs = value.requiredLong("issuedAtMs", "validated invitation"),
         expiresAtMs = value.requiredLong("expiresAtMs", "validated invitation"),
         connectionPayloadJson = value.optionalString("connectionPayloadJson"),
+        hostTlsPublicKeyDer = value.optionalString("hostTlsPublicKeyDer")?.let { encoded ->
+            decodeStandardBase64(encoded, "validated host TLS public key")
+        },
     )
 }
 

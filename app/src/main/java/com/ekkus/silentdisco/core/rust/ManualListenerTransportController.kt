@@ -143,6 +143,7 @@ class ManualListenerTransportController(
         localDeviceId: String,
         displayName: String,
         inviteCode: String?,
+        hostTlsPublicKeyDer: ByteArray? = null,
     ) {
         lifetime.ensureOpen()
         withContext(Dispatchers.IO) {
@@ -189,9 +190,15 @@ class ManualListenerTransportController(
                     shouldReplace = lifetime::isOpen,
                     retire = ::retireManualHandle,
                     open = {
-                        FfiListenerTransportHandle.connect(
-                            rawInput, nowMs(), localDeviceId, LOCAL_BIND_ADDRESS,
-                        )
+                        if (hostTlsPublicKeyDer == null) {
+                            FfiListenerTransportHandle.connect(
+                                rawInput, nowMs(), localDeviceId, LOCAL_BIND_ADDRESS,
+                            )
+                        } else {
+                            openPinnedListenerTransport(
+                                rawInput, nowMs(), localDeviceId, LOCAL_BIND_ADDRESS, hostTlsPublicKeyDer,
+                            )
+                        }
                     },
                     start = { handle ->
                         handle.sendJoinRequest(displayName, inviteCode)

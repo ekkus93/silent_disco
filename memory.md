@@ -1535,3 +1535,12 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Built `transport/secure_control_external_key.rs`: a host TLS identity from any `ListenerProofSigner` (rcgen issues the cert and rustls delegates CertificateVerify to the signer). Three real TLS 1.3 tests pass (pinned handshake completes; mismatched signature refused; wrong pin refused). Rust gate exit 0, 23 suites, 812 passed.
 - Mistake caught by the gate: a sed insert moved a `#[cfg(test)]` onto the wrong module line; restored, and the test module is cfg(test) again.
 - Design in handoff §30. Decision needed from the owner: reuse the invitation key (Option A) or a separate signed TLS key in the invitation (Option B, recommended). Option B reopens the desktop change in 28479017.
+
+## 2026-11-08T01:36:35Z - Haiku 5.5 - Option B: signed TLS key in invitations, listeners pin (remediation §1)
+- Invitation format: optional signed `tk` (host TLS SPKI), written only when present. Mutation kill: dropping tk from the canonical form fails the tamper tests. Pre-update listener builds reject tk (deny_unknown_fields).
+- Desktop host: separate credential-store key `profile-host-tls-v1:`; TLS identity and tk from it.
+- Android host: Keystore `silent-disco-host-tls-v1`; FFI bindSecureWithHostClock fails closed; invitations carry tk.
+- Listeners: connect_secure pins TLS to the invitation's key for the same session only; no plaintext fallback. Kotlin records pins by session id on invitation accept.
+- Device (A54): 4 instrumented tests pass (host TLS handshake, TLS join with approval, wrong pin refused both ways). Run with adb install -r and am instrument, not connectedDebugAndroidTest (it uninstalls and erases app data).
+- Mistakes this turn: (1) a Python splice dropped the tail of identity code; restored from HEAD and reapplied with asserts. (2) committed f7f8ab41 push before the line gate passed (handle.rs at 837); fixed in f7f8ab41. Lesson: check exit status before commit.
+- Not done: live desktop host to A54 run via QR; discovery-path pin verified by reading only; durable trust; downgrade and tamper tests. Handoff §31.

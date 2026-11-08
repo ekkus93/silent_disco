@@ -116,6 +116,12 @@ class MainViewModel @JvmOverloads constructor(
         application.getSharedPreferences(AUDIO_GRANT_LEDGER_PREFERENCES, Application.MODE_PRIVATE),
     )
 
+    /**
+     * TLS keys signed into verified invitations, by session id. A listener joining
+     * that session pins its handshake to this key; a session without one stays plaintext.
+     */
+    internal val invitedHostTlsKeys = mutableMapOf<String, ByteArray>()
+
     internal val _uiState = MutableStateFlow(
         AppUiState(
             permissions = PermissionCatalogue.requiredPermissions().map {
@@ -504,6 +510,9 @@ class MainViewModel @JvmOverloads constructor(
 
     fun prefillManualEndpointFromInvitation(invitation: P2ValidatedInvitation) =
         prefillManualEndpointFromInvitationImpl(invitation)
+
+    fun rememberInvitedHostTlsKey(invitation: P2ValidatedInvitation) =
+        rememberInvitedHostTlsKeyImpl(invitation)
 
     fun updateInviteCode(code: String) {
         _uiState.value = _uiState.value.copy(

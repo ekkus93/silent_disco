@@ -96,3 +96,130 @@ fn a_host_whose_key_stays_on_the_platform_is_verified_by_a_pinned_listener_over_
         .expect("host verifies the listener proof");
     assert_eq!(verified.listener_fingerprint.len(), 32);
 }
+
+/// Two free loopback ports, found by binding and releasing them.
+fn free_ports() -> (u16, u16, u16) {
+    let ports: Vec<u16> = (0..3)
+        .map(|_| {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .expect("probe port")
+                .local_addr()
+                .expect("probe address")
+                .port()
+        })
+        .collect();
+    (ports[0], ports[1], ports[2])
+}
+
+fn endpoint_payload(session: &str, control: u16, sync: u16, audio: u16) -> String {
+    format!(
+        r#"{{"hostAddress":"127.0.0.1","controlPort":{control},"syncPort":{sync},"audioPort":{audio},"sessionId":"{session}","protocolVersion":{},"inviteCodeRequired":false,"expiresAtMs":null}}"#,
+        silent_disco_core::runtime::current_protocol_version()
+    )
+}
+
+#[test]
+fn a_pinned_listener_joins_a_platform_key_host_over_tls_and_is_approved_on_the_same_channel() {
+    use super::types::FfiHostTransportEvent;
+    use crate::listener_transport::FfiListenerTransportEvent;
+    use crate::listener_transport::FfiListenerTransportHandle;
+    use std::time::{Duration, Instant};
+
+    let session = "tls-join-session";
+    let (control, sync, audio) = free_ports();
+    let host = FfiHostTransportHandle::bind_secure_with_host_clock(
+        "127.0.0.1".to_owned(),
+        control,
+        sync,
+        audio,
+        session.to_owned(),
+        0,
+        signer(false),
+    )
+    .expect("secure host binds");
+    let host_spki = {
+        let key = SigningKey::from_slice(&[61_u8; 32]).expect("fixture key");
+        key.verifying_key()
+            .to_public_key_der()
+            .expect("spki")
+            .as_bytes()
+            .to_vec()
+    };
+    let listener = FfiListenerTransportHandle::connect_secure(
+        endpoint_payload(session, control, sync, audio),
+        0,
+        "tls-listener-device".to_owned(),
+        "127.0.0.1".to_owned(),
+        host_spki,
+        signer(false),
+    )
+    .expect("pinned listener connects over TLS");
+    listener
+        .send_join_request("Pinned listener".to_owned(), None)
+        .expect("join request");
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut requested = false;
+    while !requested && Instant::now() < deadline {
+        if let Some(FfiHostTransportEvent::JoinRequestReceived { device_id, .. }) =
+            host.poll_event(200).expect("host event")
+        {
+            requested = device_id == "tls-listener-device";
+        }
+    }
+    assert!(
+        requested,
+        "the host must see the TLS listener's join request"
+    );
+    host.send_join_approval("tls-listener-device".to_owned(), false)
+        .expect("approval");
+
+    let mut approved = false;
+    while !approved && Instant::now() < deadline {
+        if let Some(FfiListenerTransportEvent::JoinApproved { .. }) =
+            listener.poll_event(200).expect("listener event")
+        {
+            approved = true;
+        }
+    }
+    assert!(
+        approved,
+        "the approval must return over the same TLS channel"
+    );
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn a_listener_pinned_to_another_key_never_connects_to_a_platform_key_host() {
+    use crate::listener_transport::FfiListenerTransportHandle;
+
+    let (control, sync, audio) = free_ports();
+    let host = FfiHostTransportHandle::bind_secure_with_host_clock(
+        "127.0.0.1".to_owned(),
+        control,
+        sync,
+        audio,
+        "tls-pin-session".to_owned(),
+        0,
+        signer(false),
+    )
+    .expect("secure host binds");
+    let other_key = SigningKey::from_slice(&[62_u8; 32]).expect("other key");
+    let other_spki = other_key
+        .verifying_key()
+        .to_public_key_der()
+        .expect("spki")
+        .as_bytes()
+        .to_vec();
+    let outcome = FfiListenerTransportHandle::connect_secure(
+        endpoint_payload("tls-pin-session", control, sync, audio),
+        0,
+        "pin-listener-device".to_owned(),
+        "127.0.0.1".to_owned(),
+        other_spki,
+        signer(false),
+    );
+    assert!(outcome.is_err(), "a mismatched pin must not connect");
+    host.shutdown().expect("host shutdown");
+}

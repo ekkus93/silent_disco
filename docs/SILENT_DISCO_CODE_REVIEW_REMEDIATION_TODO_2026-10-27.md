@@ -105,3 +105,5 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 - [ ] **[DEFERRED: HARDWARE]** Real-device edit/Stop/replay/late join/reconnect/network-loss and physical accessibility/manual screen-reader acceptance.
 
 No physical phone, owner Wi-Fi credentials or private keys are needed for the preceding software tasks. Leave these three boxes unchecked until the owner explicitly authorizes device work and supplies independently inspectable evidence.
+
+**Option B landed (handoff [§29](SILENT_DISCO_CODE_REVIEW_REMEDIATION_HANDOFF_2026-10-28.md)–[§31](SILENT_DISCO_CODE_REVIEW_REMEDIATION_HANDOFF_2026-10-28.md)).** Invitations carry a signed TLS key; desktop and Android hosts present it; Android listeners pin the handshake to the key from their invitation. Device-verified on the A54 (Keystore on both sides). Still open: a live desktop-host ↔ A54 run through the QR, durable trust (item 5), downgrade and tamper tests (item 4).

@@ -98,6 +98,7 @@ internal fun MainViewModel.connectManualEndpointImpl() {
             localDeviceId = localListenerDeviceId,
             displayName = "This Android Listener",
             inviteCode = form.inviteCode.ifBlank { null },
+            hostTlsPublicKeyDer = form.sessionId?.let { invitedHostTlsKeys[it] },
         )
     }
 }
@@ -118,6 +119,11 @@ internal fun MainViewModel.connectManualEndpointImpl() {
  * peer-to-peer QR flow) -- callers are expected to gate on that themselves,
  * but this stays defensive rather than silently misbehaving if they don't.
  */
+internal fun MainViewModel.rememberInvitedHostTlsKeyImpl(invitation: P2ValidatedInvitation) {
+    val key = invitation.hostTlsPublicKeyDer ?: return
+    invitedHostTlsKeys[invitation.sessionId] = key
+}
+
 internal fun MainViewModel.prefillManualEndpointFromInvitationImpl(invitation: P2ValidatedInvitation) {
     val connectionPayloadJson = invitation.connectionPayloadJson ?: return
     updateManualEndpointInputImpl(connectionPayloadJson)

@@ -531,3 +531,30 @@ Mutations, both restored and verified identical: dropping the partially accepted
 - *Option B: separate TLS key (recommended).* The TLS SPKI is carried in the invitation as a new field, signed by the invitation key, so the invitation signature authenticates the TLS pin. This changes the invitation format on Android, desktop and the core. It also means the desktop change pushed in `28479017` (TLS identity derived from the invitation key) would switch to a separate desktop TLS key too.
 
 **Not done.** Kotlin and FFI wiring, the Keystore signer, the instrumented test on the A54 (a TLS handshake whose CertificateVerify is produced by the Keystore key, and a mutation that uses the wrong alias), and the decision above.
+
+## 31. 2026-11-08 — Option B: invitations carry a signed TLS key; listeners pin it
+
+**Decision (owner).** Option B: the host's TLS control-channel key is separate from its invitation-signing key, and its public half is signed into each invitation. A listener pins the TLS handshake to that key, so the invitation signature authenticates the pin.
+
+**Stage 1 — invitation format (core, `3122f8db`).** Optional `tk` (base64url SPKI, P-256, bounded) in the signed document. It is written only when present, so invitations without it keep their signed bytes. Mutation check: dropping `tk` from the canonical form fails both tamper tests. Compatibility: pre-update builds use `deny_unknown_fields`, so they reject invitations that carry `tk`. Listeners and hosts ship from this repo together, but an installed old listener cannot join a new host by QR.
+
+**Stage 2 — desktop host (`de15c258`).** A second P-256 key per profile in the credential store (`profile-host-tls-v1:`), created on first open. The TLS identity and the invitation's `tk` both come from it. Tests: the invitation carries the TLS key and not the signing key; the listener proof verifies against the TLS key; the TLS key differs from the signing key.
+
+**Stage 3 — Android host (`0dc1ef2b`, `f7f8ab41`).** Keystore alias `silent-disco-host-tls-v1`. FFI `bindSecureWithHostClock` and `FfiProofHostListener.bindWithPlatformKey` take a platform signer and fail closed. `HostTransportController` binds secure by default. Invitations carry the Keystore key as `tk`. FFI tests: binds with a key, refuses when the key cannot supply its SPKI, loopback proof verified by the host.
+
+**Stage 4 — listeners pin (this commit).**
+- FFI `connect_secure(raw, now, device, addr, host_tls_spki, proof_signer)`: TLS pinned to the key. Plaintext `connect` is unchanged. A pin never falls back to plaintext.
+- Core/FFI tests: a pinned listener joins over TLS and is approved on the same channel; a listener pinned to another key never connects.
+- Kotlin: `P2ValidatedInvitation.hostTlsPublicKeyDer`. The view model records the key by session id when the user accepts an invitation (`rememberInvitedHostTlsKey`, both the direct QR and the discovery QR paths). Both connect paths look it up by session id. A session with no recorded key stays plaintext. A session id is used only for its own invitation's pin, so a different host on the LAN with the same session id fails the handshake.
+
+**Device (A54, Keystore on both sides, same process).**
+- `HostTlsKeystoreInstrumentedTest`: a pinned listener completes TLS and its proof against the Keystore host key; a wrong pin is refused. 2 pass.
+- `TlsJoinKeystoreInstrumentedTest`: a complete join over TLS (join seen by the host, approval back over the same channel); a wrong pin never connects. 2 pass.
+- Run with `adb install -r` and `am instrument`. `connectedDebugAndroidTest` was not used because it uninstalls the app and erases its data.
+
+**Gates.** Rust `check-rust.sh` exit 0, 23 suites, 821 passed. Android `testDebugUnitTest` exit 0. Desktop `cargo check --all-targets` exit 0; desktop clippy `-D warnings` exit 0 (stage 2); desktop tests 402 passed (stage 2). Line-count gate exit 0 (876 files). `npm run check` not run.
+
+**Not done.**
+- A live desktop host ↔ A54 run through the invitation QR. Its TLS path is the same core code exercised by the device test, but the cross-device run is still outstanding.
+- Discovery-path joins to an Android host carry the invitation pin only when the session id matches; that path was verified by code reading, not on a device.
+- Durable trust binding (item 5). Downgrade and tamper negative tests across the app (item 4). The admission-deadline test for a silent TLS peer, and the bound on post-join partial frames (§28).

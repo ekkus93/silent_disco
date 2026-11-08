@@ -223,6 +223,7 @@ fun SilentDiscoApp(
     fun startVerifiedQrJoin() {
         val invitation = p2UiState.validatedInvitation ?: return
         showVerifiedQrDialog = false
+        viewModel.rememberInvitedHostTlsKey(invitation)
         pendingQrJoin = true
         qrJoinScanObserved = false
         viewModel.selectRole(AppRole.LISTENER)
@@ -242,6 +243,7 @@ fun SilentDiscoApp(
         showVerifiedQrDialog = false
         p2ViewModel.dismissValidatedInvitation()
         viewModel.selectRole(AppRole.LISTENER)
+        viewModel.rememberInvitedHostTlsKey(invitation)
         viewModel.prefillManualEndpointFromInvitation(invitation)
         requestPermissionThen(PermissionAction.DIRECT_QR_CONNECT)
     }

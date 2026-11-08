@@ -1,5 +1,7 @@
 package com.ekkus.silentdisco.core.rust
 
+import com.ekkus.silentdisco.core.identity.KeystoreListenerProofSigner
+import com.ekkus.silentdisco.core.identity.ListenerIdentityManager
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
@@ -33,11 +35,17 @@ interface ListenerTransport : AutoCloseable {
         events.collect { consumer(it) }
     }
 
+    /**
+     * Opens the transport. A non-null [hostTlsPublicKeyDer] (the key a verified
+     * invitation signed for this session) makes the control channel TLS pinned
+     * to that key; null keeps the plaintext transport.
+     */
     suspend fun connect(
         scope: CoroutineScope,
         rawEndpoint: String,
         localDeviceId: String,
         localAddress: String,
+        hostTlsPublicKeyDer: ByteArray? = null,
     )
 
     suspend fun sendJoinRequest(displayName: String, inviteCode: String?)
@@ -72,6 +80,12 @@ class ListenerTransportController(
     ) -> FfiListenerTransportHandle = { endpoint, now, device, address ->
         FfiListenerTransportHandle.connect(endpoint, now, device, address)
     },
+    // Test seam only: production pins TLS to the invitation key with the Keystore listener key.
+    private val openPinnedHandle: (
+        rawEndpoint: String, nowMs: ULong, localDeviceId: String, localAddress: String, hostTlsPublicKeyDer: ByteArray,
+    ) -> FfiListenerTransportHandle = { endpoint, now, device, address, pin ->
+        openPinnedListenerTransport(endpoint, now, device, address, pin)
+    },
 ) : ListenerTransport {
     private val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
     // A delayed IO bind must not resurrect a socket after Leave, or replace a newer join.
@@ -103,6 +117,7 @@ class ListenerTransportController(
         rawEndpoint: String,
         localDeviceId: String,
         localAddress: String,
+        hostTlsPublicKeyDer: ByteArray?,
     ) {
         check(!closed.get()) { "Listener transport controller is closed" }
         val requestedGeneration = connectionGeneration.incrementAndGet()
@@ -112,7 +127,13 @@ class ListenerTransportController(
                     !closed.get() && connectionGeneration.get() == requestedGeneration
                 },
                 retire = { retireHandle(it, reason = null) },
-                open = { openHandle(rawEndpoint, nowMs(), localDeviceId, localAddress) },
+                open = {
+                    if (hostTlsPublicKeyDer == null) {
+                        openHandle(rawEndpoint, nowMs(), localDeviceId, localAddress)
+                    } else {
+                        openPinnedHandle(rawEndpoint, nowMs(), localDeviceId, localAddress, hostTlsPublicKeyDer)
+                    }
+                },
                 start = {
                     eventQueue.discardRetiredEvents()
                     startEventLoop(scope, it)
@@ -359,3 +380,23 @@ internal suspend fun retireListenerTransportOffMain(
         retire()
     }
 }
+
+/**
+ * Opens a listener transport whose control channel is TLS pinned to the host key
+ * an invitation signed. The listener proves its Keystore key over that channel.
+ * A failed handshake or proof is an error; there is no plaintext retry.
+ */
+internal fun openPinnedListenerTransport(
+    rawEndpoint: String,
+    nowMs: ULong,
+    localDeviceId: String,
+    localAddress: String,
+    hostTlsPublicKeyDer: ByteArray,
+): FfiListenerTransportHandle = FfiListenerTransportHandle.connectSecure(
+    rawEndpoint,
+    nowMs,
+    localDeviceId,
+    localAddress,
+    hostTlsPublicKeyDer,
+    KeystoreListenerProofSigner(ListenerIdentityManager()),
+)

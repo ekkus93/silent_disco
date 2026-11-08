@@ -11,11 +11,12 @@ use silent_disco_core::protocol::{
 use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_OPERATION_TIMEOUT, DEFAULT_TRANSPORT_EVENT_CAPACITY,
     DEFAULT_TRANSPORT_QUEUE_CAPACITY, ListenerTransportConfig, ListenerTransportNode,
-    ManualHostEndpoint, SystemTransportClock, TransportChannel, TransportClock, TransportEvent,
-    TransportFactory, production_transport_factory,
+    ManualHostEndpoint, SecureHostTarget, SystemTransportClock, TransportChannel, TransportClock,
+    TransportEvent, TransportFactory, production_transport_factory,
 };
 
 use crate::listener_playback::{FfiListenerPlaybackHandle, FfiSyncConfidence};
+use crate::listener_proof::{CallbackSigner, FfiListenerProofSigner};
 
 use super::types::{
     FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,
@@ -108,7 +109,7 @@ struct Inner {
 )]
 #[uniffi::export]
 impl FfiListenerTransportHandle {
-    /// Parses the raw connection payload and opens a real listener transport.
+    /// Parses the raw connection payload and opens a plaintext listener transport.
     #[allow(
         clippy::needless_pass_by_value,
         reason = "uniffi::export requires owned String parameters at the foreign boundary"
@@ -120,38 +121,43 @@ impl FfiListenerTransportHandle {
         local_device_id: String,
         local_address: String,
     ) -> Result<Arc<Self>, FfiListenerTransportError> {
-        let endpoint = ManualHostEndpoint::parse(&raw_endpoint, now_wall_clock_ms)?;
-        let device_id = DeviceId::new(local_device_id)
-            .map_err(|error| FfiListenerTransportError::InvalidEndpoint(error.to_string()))?;
-        let local_address: IpAddr = local_address.parse().map_err(|_| {
-            FfiListenerTransportError::InvalidEndpoint("local bind address is malformed".to_owned())
-        })?;
-        let session_id = endpoint.session_id.clone();
-        let config = ListenerTransportConfig {
-            session_id: session_id.clone(),
-            device_id: device_id.clone(),
-            endpoint: endpoint.endpoint,
+        Self::open(
+            raw_endpoint,
+            now_wall_clock_ms,
+            local_device_id,
             local_address,
-            outbound_queue_capacity: DEFAULT_TRANSPORT_QUEUE_CAPACITY,
-            event_queue_capacity: DEFAULT_TRANSPORT_EVENT_CAPACITY,
-            io_timeout: DEFAULT_IO_TIMEOUT,
-            operation_timeout: DEFAULT_OPERATION_TIMEOUT,
-            secure_host: None,
+            None,
+        )
+    }
+
+    /// Like [`Self::connect`], but over TLS pinned to `host_tls_public_key_der`,
+    /// the host key an invitation signed. The listener proves its key through
+    /// `proof_signer`. A failed handshake or proof is an error, never a plaintext
+    /// retry.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "uniffi::export requires owned parameters at the foreign boundary"
+    )]
+    #[uniffi::constructor]
+    pub fn connect_secure(
+        raw_endpoint: String,
+        now_wall_clock_ms: u64,
+        local_device_id: String,
+        local_address: String,
+        host_tls_public_key_der: Vec<u8>,
+        proof_signer: Arc<dyn FfiListenerProofSigner>,
+    ) -> Result<Arc<Self>, FfiListenerTransportError> {
+        let target = SecureHostTarget {
+            host_spki: host_tls_public_key_der,
+            signer: Arc::new(CallbackSigner(proof_signer)),
         };
-        let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
-        let transport =
-            production_transport_factory().connect_listener(config, Arc::clone(&clock))?;
-        Ok(Arc::new(Self {
-            playback: Mutex::new(None),
-            forwarded_audio: AtomicU64::new(0),
-            closed: AtomicBool::new(false),
-            inner: RwLock::new(Some(Inner {
-                transport,
-                session_id,
-                device_id,
-                clock,
-            })),
-        }))
+        Self::open(
+            raw_endpoint,
+            now_wall_clock_ms,
+            local_device_id,
+            local_address,
+            Some(target),
+        )
     }
 
     /// Sends the shared Rust `JoinRequest` for this session.
@@ -589,6 +595,54 @@ fn map_control_frame(
         | ControlMessage::Heartbeat(_)
         | ControlMessage::ResyncNotice(_)
         | ControlMessage::SynchronizationReport(_) => None,
+    }
+}
+
+impl FfiListenerTransportHandle {
+    /// Shared connect path. `secure_host` selects TLS for the control channel.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "mirrors the exported connect constructors, which take owned String parameters"
+    )]
+    fn open(
+        raw_endpoint: String,
+        now_wall_clock_ms: u64,
+        local_device_id: String,
+        local_address: String,
+        secure_host: Option<SecureHostTarget>,
+    ) -> Result<Arc<Self>, FfiListenerTransportError> {
+        let endpoint = ManualHostEndpoint::parse(&raw_endpoint, now_wall_clock_ms)?;
+        let device_id = DeviceId::new(local_device_id)
+            .map_err(|error| FfiListenerTransportError::InvalidEndpoint(error.to_string()))?;
+        let local_address: IpAddr = local_address.parse().map_err(|_| {
+            FfiListenerTransportError::InvalidEndpoint("local bind address is malformed".to_owned())
+        })?;
+        let session_id = endpoint.session_id.clone();
+        let config = ListenerTransportConfig {
+            session_id: session_id.clone(),
+            device_id: device_id.clone(),
+            endpoint: endpoint.endpoint,
+            local_address,
+            outbound_queue_capacity: DEFAULT_TRANSPORT_QUEUE_CAPACITY,
+            event_queue_capacity: DEFAULT_TRANSPORT_EVENT_CAPACITY,
+            io_timeout: DEFAULT_IO_TIMEOUT,
+            operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            secure_host,
+        };
+        let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
+        let transport =
+            production_transport_factory().connect_listener(config, Arc::clone(&clock))?;
+        Ok(Arc::new(Self {
+            playback: Mutex::new(None),
+            forwarded_audio: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
+            inner: RwLock::new(Some(Inner {
+                transport,
+                session_id,
+                device_id,
+                clock,
+            })),
+        }))
     }
 }
 
