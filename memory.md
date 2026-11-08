@@ -1530,3 +1530,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Tests: SPKI pinned to invitation key, stability, transport config carries identity (mutation killed, restored), desktop listener proves to invitation identity. Desktop fmt/clippy(-D warnings)/test 407 passed, line-count gate green. `npm run check` not run.
 - Android host still has no TLS identity (Keystore non-exportable; needs Keystore-backed rustls signer). Listener apps not yet passing invitation key/signer. Handoff §29.
 - Mistake: a cp-based backup command wrote to a path outside the repo; it was denied (not root), so nothing stray was created. Verified repo status is only the intended files.
+
+## 2026-11-08T01:01:15Z - Haiku 5.5 - Android host TLS identity design and external-key spike
+- Built `transport/secure_control_external_key.rs`: a host TLS identity from any `ListenerProofSigner` (rcgen issues the cert and rustls delegates CertificateVerify to the signer). Three real TLS 1.3 tests pass (pinned handshake completes; mismatched signature refused; wrong pin refused). Rust gate exit 0, 23 suites, 812 passed.
+- Mistake caught by the gate: a sed insert moved a `#[cfg(test)]` onto the wrong module line; restored, and the test module is cfg(test) again.
+- Design in handoff §30. Decision needed from the owner: reuse the invitation key (Option A) or a separate signed TLS key in the invitation (Option B, recommended). Option B reopens the desktop change in 28479017.

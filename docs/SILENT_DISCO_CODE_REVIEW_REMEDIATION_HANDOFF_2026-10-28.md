@@ -509,3 +509,25 @@ Mutations, both restored and verified identical: dropping the partially accepted
 - Android host: the key is non-exportable in Keystore, so its TLS signer needs a Keystore-backed rustls signing key. Still `secure_control: None`, so TLS listeners to an Android host are refused with a visible reason.
 - Listener app wiring: the FFI listener config and the Kotlin and desktop listener join paths do not yet pass `secure_host` (invitation key plus signer). Listeners still join over plaintext.
 - Trust binding (item 5), downgrade and tamper negative tests (item 4), device runs (items 5–6), and the admission-deadline and post-join trickle tests from §28.
+
+## 30. 2026-11-08 — Android host TLS identity from a Keystore key: design and spike
+
+**Problem.** The Android host's control-port key is non-exportable in Android Keystore, so the in-process `host_tls_identity_from_pkcs8` path (used by the desktop) cannot build its TLS identity. Until it can, the Android host runs with `secure_control: None` and refuses TLS listeners with a visible reason.
+
+**Spike (built and tested).** `transport/secure_control_external_key.rs` builds a `HostTlsIdentity` from any `ListenerProofSigner`, so the key is reached only through `spki_der()` and `sign_der()`:
+- The certificate is issued with the same signer through rcgen's `SigningKey` trait (`PublicKeyData` supplies the P-256 point, `sign` delegates to `sign_der`). The SPKI, certificate and handshake key therefore come from one source.
+- The rustls `SigningKey`/`Signer` delegates each CertificateVerify to the signer. rustls passes the unhashed message; the signer hashes it with SHA-256, which matches `SHA256withECDSA` on Keystore.
+- Tests in `secure_control_external_key_tests.rs` (real loopback TLS 1.3): a pinned handshake completes and echoes; a signer whose signature does not match its advertised key is refused; a client pinned to another key refuses the host. Full Rust gate exit 0, 23 suites, 812 passed.
+
+**Proposed Android design.**
+1. *Keystore key.* A new alias `silent-disco-host-tls-v1`, created by a `KeystoreEcKey` with the same parameters as the host invitation key (P-256, SHA-256, `setUserAuthenticationRequired(false)`, non-exportable).
+2. *FFI callback.* Reuse the listener's callback shape (`spkiDer`, `signDer`) as a host-side callback interface. The Kotlin side wraps the alias in a `KeystoreHostTlsSigner`, mirroring `KeystoreListenerProofSigner` and its error mapping.
+3. *Host configuration.* The FFI host config gains an optional signer. When it is set, the core builds the identity through `host_tls_identity_from_external_key` at bind time. If the Keystore signer cannot provide the SPKI or the certificate cannot be issued, bind fails visibly; the host never silently runs without TLS.
+4. *Pin.* The invitation carries the SPKI of whichever key the TLS identity uses, so listeners pin what the handshake proves.
+5. *Continuity.* The existing `HostKeyContinuity` check applies to the TLS alias the same way it does to the invitation key. A replaced key changes the pinned SPKI, so old invitations stop working, and the UI reports it.
+
+**Decision needed before implementation: same key or a separate TLS key.**
+- *Option A: reuse the invitation key* (`silent-disco-host-identity-v1`). Nothing changes on the wire, and the existing invitation pin already covers TLS. The cost is one key doing two jobs: invitation signatures and TLS CertificateVerify signatures. The two message formats differ, so this is not an exploitable confusion I can show, but it weakens domain separation and standard practice is to avoid it.
+- *Option B: separate TLS key (recommended).* The TLS SPKI is carried in the invitation as a new field, signed by the invitation key, so the invitation signature authenticates the TLS pin. This changes the invitation format on Android, desktop and the core. It also means the desktop change pushed in `28479017` (TLS identity derived from the invitation key) would switch to a separate desktop TLS key too.
+
+**Not done.** Kotlin and FFI wiring, the Keystore signer, the instrumented test on the A54 (a TLS handshake whose CertificateVerify is produced by the Keystore key, and a mutation that uses the wrong alias), and the decision above.
