@@ -1544,3 +1544,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Device (A54): 4 instrumented tests pass (host TLS handshake, TLS join with approval, wrong pin refused both ways). Run with adb install -r and am instrument, not connectedDebugAndroidTest (it uninstalls and erases app data).
 - Mistakes this turn: (1) a Python splice dropped the tail of identity code; restored from HEAD and reapplied with asserts. (2) committed f7f8ab41 push before the line gate passed (handle.rs at 837); fixed in f7f8ab41. Lesson: check exit status before commit.
 - Not done: live desktop host to A54 run via QR; discovery-path pin verified by reading only; durable trust; downgrade and tamper tests. Handoff §31.
+
+## 2026-11-08T01:44:56Z - Haiku 5.5 - TLS join negative tests; close-path frame loss fixed (remediation §1)
+- Added FFI negative tests: pinned listener never downgrades to plaintext; malformed pin refused; pinned listener for another session never approved.
+- Found a real bug while gating: secure_frame_channel close path could drop the last queued frame (try_recv consumed a frame; close alert hid decrypted plaintext; drain exited before handshake completed). Measured 6/40 failures before, 0/80 after. Handoff §32.
+- Full gate exit 0, 824 passed; desktop check and line gate pass.

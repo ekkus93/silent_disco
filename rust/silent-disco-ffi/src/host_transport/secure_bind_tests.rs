@@ -223,3 +223,124 @@ fn a_listener_pinned_to_another_key_never_connects_to_a_platform_key_host() {
     assert!(outcome.is_err(), "a mismatched pin must not connect");
     host.shutdown().expect("host shutdown");
 }
+
+#[test]
+fn a_pinned_listener_never_downgrades_to_plaintext_against_a_host_without_tls() {
+    use crate::listener_transport::FfiListenerTransportHandle;
+
+    let (control, sync, audio) = free_ports();
+    // A host with no TLS identity: plaintext only.
+    let host = FfiHostTransportHandle::bind_with_host_clock(
+        "127.0.0.1".to_owned(),
+        control,
+        sync,
+        audio,
+        "downgrade-session".to_owned(),
+        0,
+    )
+    .expect("plaintext host binds");
+    let host_spki = SigningKey::from_slice(&[63_u8; 32])
+        .expect("pin key")
+        .verifying_key()
+        .to_public_key_der()
+        .expect("spki")
+        .as_bytes()
+        .to_vec();
+    let outcome = FfiListenerTransportHandle::connect_secure(
+        endpoint_payload("downgrade-session", control, sync, audio),
+        0,
+        "downgrade-listener".to_owned(),
+        "127.0.0.1".to_owned(),
+        host_spki,
+        signer(false),
+    );
+    assert!(
+        outcome.is_err(),
+        "a pinned listener must not fall back to plaintext"
+    );
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn a_malformed_pin_is_refused_before_any_connection() {
+    use crate::listener_transport::FfiListenerTransportHandle;
+
+    let (control, sync, audio) = free_ports();
+    let host = FfiHostTransportHandle::bind_secure_with_host_clock(
+        "127.0.0.1".to_owned(),
+        control,
+        sync,
+        audio,
+        "malformed-pin-session".to_owned(),
+        0,
+        signer(false),
+    )
+    .expect("secure host binds");
+    let outcome = FfiListenerTransportHandle::connect_secure(
+        endpoint_payload("malformed-pin-session", control, sync, audio),
+        0,
+        "malformed-pin-listener".to_owned(),
+        "127.0.0.1".to_owned(),
+        vec![1, 2, 3],
+        signer(false),
+    );
+    assert!(
+        outcome.is_err(),
+        "a pin that is not a P-256 SPKI must not connect"
+    );
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn a_pinned_listener_for_another_session_is_never_approved_by_the_host() {
+    use super::types::FfiHostTransportEvent;
+    use crate::listener_transport::FfiListenerTransportHandle;
+    use std::time::{Duration, Instant};
+
+    let (control, sync, audio) = free_ports();
+    let host = FfiHostTransportHandle::bind_secure_with_host_clock(
+        "127.0.0.1".to_owned(),
+        control,
+        sync,
+        audio,
+        "host-session".to_owned(),
+        0,
+        signer(false),
+    )
+    .expect("secure host binds");
+    let host_spki = SigningKey::from_slice(&[61_u8; 32])
+        .expect("host key")
+        .verifying_key()
+        .to_public_key_der()
+        .expect("spki")
+        .as_bytes()
+        .to_vec();
+    // The listener names a different session than the host runs.
+    let listener = FfiListenerTransportHandle::connect_secure(
+        endpoint_payload("other-session", control, sync, audio),
+        0,
+        "session-mismatch-listener".to_owned(),
+        "127.0.0.1".to_owned(),
+        host_spki,
+        signer(false),
+    );
+    // Refusal at connect is also a correct outcome; only an accepted connection can reach the join check.
+    if let Ok(listener) = listener {
+        let _ = listener.send_join_request("Mismatch".to_owned(), None);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut saw_join = false;
+        while Instant::now() < deadline {
+            if let Ok(Some(FfiHostTransportEvent::JoinRequestReceived { device_id, .. })) =
+                host.poll_event(100)
+            {
+                saw_join |= device_id == "session-mismatch-listener";
+            }
+        }
+        assert!(
+            !saw_join,
+            "a join for another session must not reach the host actor"
+        );
+        listener.shutdown().expect("listener shutdown");
+    }
+    host.shutdown().expect("host shutdown");
+}

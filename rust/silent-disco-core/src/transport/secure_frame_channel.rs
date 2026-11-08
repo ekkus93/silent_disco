@@ -189,6 +189,10 @@ fn run_worker(
             Ok(0) => break None,
             Ok(_) => {
                 if let Err(error) = connection.process_new_packets() {
+                    // Plaintext decrypted before the alert (a frame followed by
+                    // close_notify) must still reach the peer before the failure.
+                    let _ = read_plaintext(connection, &mut assembly);
+                    let _ = deliver_frames(&mut assembly, inbound);
                     break Some(SecureChannelError::Tls(error));
                 }
             }
@@ -225,7 +229,25 @@ fn drain_before_close(
         if flush_tls(tcp, connection).is_err() {
             return;
         }
-        if staged.is_empty() && !connection.wants_write() && outbound.try_recv().is_err() {
+        if connection.is_handshaking() {
+            // Application data written before the handshake completes is sent
+            // only after it does, so finish the handshake before closing.
+            match connection.read_tls(tcp) {
+                Ok(0) => return,
+                Ok(_) => {
+                    if connection.process_new_packets().is_err() {
+                        return;
+                    }
+                }
+                Err(error) if is_poll_timeout(&error) => {}
+                Err(_) => return,
+            }
+            continue;
+        }
+        // `write_pending_frames` has already moved every queued frame into
+        // `staged` (or stopped only because `staged` is full). Probing the
+        // queue here with `try_recv` would consume and discard a frame.
+        if staged.is_empty() && !connection.wants_write() {
             return;
         }
     }

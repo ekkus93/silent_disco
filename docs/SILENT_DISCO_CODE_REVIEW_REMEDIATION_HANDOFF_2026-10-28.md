@@ -558,3 +558,19 @@ Mutations, both restored and verified identical: dropping the partially accepted
 - A live desktop host ↔ A54 run through the invitation QR. Its TLS path is the same core code exercised by the device test, but the cross-device run is still outstanding.
 - Discovery-path joins to an Android host carry the invitation pin only when the session id matches; that path was verified by code reading, not on a device.
 - Durable trust binding (item 5). Downgrade and tamper negative tests across the app (item 4). The admission-deadline test for a silent TLS peer, and the bound on post-join partial frames (§28).
+
+## 32. 2026-11-08 — Negative tests for the TLS join; close-path data loss fixed
+
+**Negative tests (FFI, real loopback TLS, `secure_bind_tests.rs`).**
+- Downgrade: a pinned listener against a host with no TLS identity fails to connect. It never falls back to plaintext.
+- Malformed pin (not a P-256 SPKI) is refused before any connection.
+- Session mismatch: a pinned listener for another session is never approved. The test accepts a refusal at connect as a correct outcome, and otherwise checks that no join reaches the host actor.
+
+**Bug found and fixed: queued frames could be lost at channel close (`secure_frame_channel.rs`).** An existing test (`a_frame_queued_just_before_the_channel_is_dropped_still_reaches_the_peer`) failed intermittently in the full gate. Three causes, each fixed:
+1. The drain's exit test called `outbound.try_recv()`. A successful probe pops and discards a queued frame. The exit now depends only on `staged` and the TLS write state.
+2. When `process_new_packets` returned the close alert, the loop broke before reading the plaintext decrypted in that same read. That plaintext (the last frame) is now delivered first.
+3. A channel dropped before its handshake finished buffered the frame until the handshake completed, and the drain exited first. The drain now completes the handshake, bounded by the existing pass limit.
+
+Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full gate: exit 0, 23 suites, 824 passed. Desktop check and line gate pass.
+
+**Not done.** Durable trust binding (item 5) and a live desktop-host ↔ A54 run through the QR. The post-join trickle bound and the silent-peer deadline test are still open (§28).
