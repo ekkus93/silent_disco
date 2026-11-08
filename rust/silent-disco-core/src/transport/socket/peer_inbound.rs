@@ -237,6 +237,18 @@ fn validate_host_frame(peer: &PeerState, frame: &ProtocolFrame) -> Result<(), Tr
                     "peer identity is poisoned",
                 )
             })?;
+            if let Some(verified) = &peer.verified {
+                // A TLS-proven listener is identified by its key alone. The
+                // claimed ID must be the one that key maps to, or the join is
+                // refused before it reaches the host actor.
+                if request.device.device_id != verified.canonical_device_id() {
+                    return Err(TransportError::new(
+                        TransportErrorKind::Unauthorized,
+                        TransportChannel::Control,
+                        "claimed device ID does not match the verified listener key",
+                    ));
+                }
+            }
             if identity
                 .as_ref()
                 .is_some_and(|current| current != &request.device.device_id)

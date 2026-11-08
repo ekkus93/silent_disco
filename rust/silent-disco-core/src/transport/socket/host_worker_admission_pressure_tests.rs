@@ -28,6 +28,7 @@ fn worker_start_failure_after_accept_emits_terminal_and_releases_peer_slot() {
         shutdown_stream: Mutex::new(shutdown_copy),
         last_inbound_millis: AtomicU64::new(1),
         silence_armed: AtomicBool::new(false),
+        verified: None,
     });
     let registry = Mutex::new(HashMap::from([(peer.number, peer.clone())]));
     let (sender, receiver) = sync_channel(2);

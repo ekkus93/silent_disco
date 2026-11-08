@@ -12,6 +12,7 @@ use super::FfiHostTransportHandle;
 use super::types::FfiHostTransportError;
 use crate::host_control::FfiBridgeError;
 use crate::listener_proof::{FfiListenerProofSigner, FfiProofHostListener, listener_prove_to_host};
+use crate::listener_transport::FfiListenerTransportError;
 
 /// A platform signer that holds a key, or fails on request.
 struct PlatformSigner {
@@ -148,7 +149,7 @@ fn a_pinned_listener_joins_a_platform_key_host_over_tls_and_is_approved_on_the_s
     let listener = FfiListenerTransportHandle::connect_secure(
         endpoint_payload(session, control, sync, audio),
         0,
-        "tls-listener-device".to_owned(),
+        listener_id(),
         "127.0.0.1".to_owned(),
         host_spki,
         signer(false),
@@ -164,14 +165,14 @@ fn a_pinned_listener_joins_a_platform_key_host_over_tls_and_is_approved_on_the_s
         if let Some(FfiHostTransportEvent::JoinRequestReceived { device_id, .. }) =
             host.poll_event(200).expect("host event")
         {
-            requested = device_id == "tls-listener-device";
+            requested = device_id == listener_id();
         }
     }
     assert!(
         requested,
         "the host must see the TLS listener's join request"
     );
-    host.send_join_approval("tls-listener-device".to_owned(), false)
+    host.send_join_approval(listener_id(), false)
         .expect("approval");
 
     let mut approved = false;
@@ -215,7 +216,7 @@ fn a_listener_pinned_to_another_key_never_connects_to_a_platform_key_host() {
     let outcome = FfiListenerTransportHandle::connect_secure(
         endpoint_payload("tls-pin-session", control, sync, audio),
         0,
-        "pin-listener-device".to_owned(),
+        listener_id(),
         "127.0.0.1".to_owned(),
         other_spki,
         signer(false),
@@ -249,7 +250,7 @@ fn a_pinned_listener_never_downgrades_to_plaintext_against_a_host_without_tls() 
     let outcome = FfiListenerTransportHandle::connect_secure(
         endpoint_payload("downgrade-session", control, sync, audio),
         0,
-        "downgrade-listener".to_owned(),
+        listener_id(),
         "127.0.0.1".to_owned(),
         host_spki,
         signer(false),
@@ -279,7 +280,7 @@ fn a_malformed_pin_is_refused_before_any_connection() {
     let outcome = FfiListenerTransportHandle::connect_secure(
         endpoint_payload("malformed-pin-session", control, sync, audio),
         0,
-        "malformed-pin-listener".to_owned(),
+        listener_id(),
         "127.0.0.1".to_owned(),
         vec![1, 2, 3],
         signer(false),
@@ -319,7 +320,7 @@ fn a_pinned_listener_for_another_session_is_never_approved_by_the_host() {
     let listener = FfiListenerTransportHandle::connect_secure(
         endpoint_payload("other-session", control, sync, audio),
         0,
-        "session-mismatch-listener".to_owned(),
+        listener_id(),
         "127.0.0.1".to_owned(),
         host_spki,
         signer(false),
@@ -333,7 +334,7 @@ fn a_pinned_listener_for_another_session_is_never_approved_by_the_host() {
             if let Ok(Some(FfiHostTransportEvent::JoinRequestReceived { device_id, .. })) =
                 host.poll_event(100)
             {
-                saw_join |= device_id == "session-mismatch-listener";
+                saw_join |= device_id == listener_id();
             }
         }
         assert!(
@@ -342,5 +343,57 @@ fn a_pinned_listener_for_another_session_is_never_approved_by_the_host() {
         );
         listener.shutdown().expect("listener shutdown");
     }
+    host.shutdown().expect("host shutdown");
+}
+
+/// The device ID the fixture listener key (seed 61) is bound to. TLS joins must
+/// claim exactly this ID.
+fn listener_id() -> String {
+    let spki = SigningKey::from_slice(&[61_u8; 32])
+        .expect("listener key")
+        .verifying_key()
+        .to_public_key_der()
+        .expect("spki")
+        .as_bytes()
+        .to_vec();
+    silent_disco_core::transport::secure_identity::device_id_for_listener_key(&spki)
+        .as_str()
+        .to_owned()
+}
+
+#[test]
+fn a_pinned_listener_cannot_claim_a_device_id_its_key_is_not_bound_to() {
+    use crate::listener_transport::FfiListenerTransportHandle;
+
+    let (control, sync, audio) = free_ports();
+    let host = FfiHostTransportHandle::bind_secure_with_host_clock(
+        "127.0.0.1".to_owned(),
+        control,
+        sync,
+        audio,
+        "claim-session".to_owned(),
+        0,
+        signer(false),
+    )
+    .expect("secure host binds");
+    let host_spki = SigningKey::from_slice(&[61_u8; 32])
+        .expect("host key")
+        .verifying_key()
+        .to_public_key_der()
+        .expect("spki")
+        .as_bytes()
+        .to_vec();
+    let outcome = FfiListenerTransportHandle::connect_secure(
+        endpoint_payload("claim-session", control, sync, audio),
+        0,
+        "someone-else".to_owned(),
+        "127.0.0.1".to_owned(),
+        host_spki,
+        signer(false),
+    );
+    assert!(
+        matches!(outcome, Err(FfiListenerTransportError::InvalidEndpoint(_))),
+        "a pinned listener must claim its key-bound device ID"
+    );
     host.shutdown().expect("host shutdown");
 }

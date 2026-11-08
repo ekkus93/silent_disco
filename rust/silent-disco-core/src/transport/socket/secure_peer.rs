@@ -52,7 +52,8 @@ pub(super) fn register_secure_peer(
     }
     let number = registry.next_peer.fetch_add(1, Ordering::AcqRel);
     let (write_sender, write_receiver) = registry.writer_queue();
-    let peer = registry.new_peer(number, remote, write_sender, shutdown);
+    let verified = Some(admitted.verified);
+    let peer = registry.new_peer(number, remote, write_sender, shutdown, verified);
     registry
         .peers
         .lock()

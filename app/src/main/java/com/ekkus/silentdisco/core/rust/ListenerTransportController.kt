@@ -7,6 +7,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
+import com.ekkus.silentdisco.core.uniffi.listenerDeviceIdForKey
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -82,9 +83,9 @@ class ListenerTransportController(
     },
     // Test seam only: production pins TLS to the invitation key with the Keystore listener key.
     private val openPinnedHandle: (
-        rawEndpoint: String, nowMs: ULong, localDeviceId: String, localAddress: String, hostTlsPublicKeyDer: ByteArray,
-    ) -> FfiListenerTransportHandle = { endpoint, now, device, address, pin ->
-        openPinnedListenerTransport(endpoint, now, device, address, pin)
+        rawEndpoint: String, nowMs: ULong, localAddress: String, hostTlsPublicKeyDer: ByteArray,
+    ) -> FfiListenerTransportHandle = { endpoint, now, address, pin ->
+        openPinnedListenerTransport(endpoint, now, address, pin)
     },
 ) : ListenerTransport {
     private val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
@@ -131,7 +132,7 @@ class ListenerTransportController(
                     if (hostTlsPublicKeyDer == null) {
                         openHandle(rawEndpoint, nowMs(), localDeviceId, localAddress)
                     } else {
-                        openPinnedHandle(rawEndpoint, nowMs(), localDeviceId, localAddress, hostTlsPublicKeyDer)
+                        openPinnedHandle(rawEndpoint, nowMs(), localAddress, hostTlsPublicKeyDer)
                     }
                 },
                 start = {
@@ -389,14 +390,17 @@ internal suspend fun retireListenerTransportOffMain(
 internal fun openPinnedListenerTransport(
     rawEndpoint: String,
     nowMs: ULong,
-    localDeviceId: String,
     localAddress: String,
     hostTlsPublicKeyDer: ByteArray,
-): FfiListenerTransportHandle = FfiListenerTransportHandle.connectSecure(
-    rawEndpoint,
-    nowMs,
-    localDeviceId,
-    localAddress,
-    hostTlsPublicKeyDer,
-    KeystoreListenerProofSigner(ListenerIdentityManager()),
-)
+): FfiListenerTransportHandle {
+    // A pinned join must claim the device ID its listener key is bound to.
+    val listenerIdentity = ListenerIdentityManager()
+    return FfiListenerTransportHandle.connectSecure(
+        rawEndpoint,
+        nowMs,
+        listenerDeviceIdForKey(listenerIdentity.publicKeyDer()),
+        localAddress,
+        hostTlsPublicKeyDer,
+        KeystoreListenerProofSigner(listenerIdentity),
+    )
+}

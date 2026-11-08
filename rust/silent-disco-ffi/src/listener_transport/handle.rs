@@ -147,6 +147,18 @@ impl FfiListenerTransportHandle {
         host_tls_public_key_der: Vec<u8>,
         proof_signer: Arc<dyn FfiListenerProofSigner>,
     ) -> Result<Arc<Self>, FfiListenerTransportError> {
+        // The host admits a TLS listener only under the device ID its proof key
+        // maps to. Refuse any other ID here, before a connection is attempted.
+        let spki = proof_signer
+            .spki_der()
+            .map_err(|error| FfiListenerTransportError::InvalidEndpoint(error.to_string()))?;
+        let bound_device =
+            silent_disco_core::transport::secure_identity::device_id_for_listener_key(&spki);
+        if local_device_id != bound_device.as_str() {
+            return Err(FfiListenerTransportError::InvalidEndpoint(
+                "local device ID must be the one bound to the listener key".to_owned(),
+            ));
+        }
         let target = SecureHostTarget {
             host_spki: host_tls_public_key_der,
             signer: Arc::new(CallbackSigner(proof_signer)),

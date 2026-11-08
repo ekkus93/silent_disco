@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use crate::domain::DeviceId;
+use crate::transport::secure_identity::VerifiedListenerKey;
 
 use super::super::{HostTransportConfig, TransportClock, TransportEvent};
 use super::host::{PeerRoute, PeerState, terminal_mailbox::TerminalEventMailbox};
@@ -54,6 +55,7 @@ impl PeerRegistry {
         remote: SocketAddr,
         write_sender: SyncSender<ControlWrite>,
         shutdown: TcpStream,
+        verified: Option<VerifiedListenerKey>,
     ) -> Arc<PeerState> {
         Arc::new(PeerState {
             number,
@@ -74,6 +76,7 @@ impl PeerRegistry {
             // Use registration time so a new peer is not already stale.
             last_inbound_millis: AtomicU64::new(self.clock.now().get()),
             silence_armed: AtomicBool::new(false),
+            verified,
         })
     }
 

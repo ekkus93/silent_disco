@@ -170,7 +170,7 @@ fn register_peer(
     })?;
     let number = registry.next_peer.fetch_add(1, Ordering::AcqRel);
     let (write_sender, write_receiver) = registry.writer_queue();
-    let peer = registry.new_peer(number, remote, write_sender, shutdown_copy);
+    let peer = registry.new_peer(number, remote, write_sender, shutdown_copy, None);
     registry
         .peers
         .lock()

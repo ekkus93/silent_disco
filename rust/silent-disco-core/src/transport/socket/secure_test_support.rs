@@ -106,3 +106,9 @@ pub(super) fn is_join_frame(event: &TransportEvent) -> bool {
         }
     )
 }
+
+/// The device ID a listener proving `key(seed)` is bound to. A join must claim
+/// exactly this ID once its key is verified.
+pub(super) fn listener_device(seed: u8) -> DeviceId {
+    crate::transport::secure_identity::device_id_for_listener_key(&spki_of(seed))
+}

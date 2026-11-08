@@ -46,6 +46,11 @@ pub(in crate::transport::socket) struct PeerState {
     /// probing) or by delivering a stream start (it is now expected to);
     /// disarmed by delivering a stream stop.
     pub(in crate::transport::socket) silence_armed: AtomicBool,
+    /// The listener key this connection proved over TLS, if any. Plaintext
+    /// peers have none. A verified peer's join must claim exactly the device
+    /// ID derived from this key, so a claimed ID can never stand in for it.
+    pub(in crate::transport::socket) verified:
+        Option<crate::transport::secure_identity::VerifiedListenerKey>,
 }
 
 impl PeerState {

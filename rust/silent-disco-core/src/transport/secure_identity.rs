@@ -65,14 +65,25 @@ impl VerifiedListenerKey {
     /// its documented validation rules.
     #[must_use]
     pub fn canonical_device_id(&self) -> DeviceId {
-        use std::fmt::Write;
-        let mut value = String::with_capacity(3 + self.fingerprint.len() * 2);
-        value.push_str("v4-");
-        for byte in self.fingerprint {
-            write!(&mut value, "{byte:02x}").expect("writing to String cannot fail");
-        }
-        DeviceId::new(value).expect("fixed-length hexadecimal device ID is valid")
+        device_id_from_fingerprint(&self.fingerprint)
     }
+}
+
+/// The device ID a verified listener key maps to. Any join claiming a different
+/// ID while presenting this key is refused.
+#[must_use]
+pub fn device_id_for_listener_key(listener_public_key_der: &[u8]) -> DeviceId {
+    device_id_from_fingerprint(&fingerprint(listener_public_key_der))
+}
+
+fn device_id_from_fingerprint(fingerprint: &[u8; 32]) -> DeviceId {
+    use std::fmt::Write;
+    let mut value = String::with_capacity(3 + fingerprint.len() * 2);
+    value.push_str("v4-");
+    for byte in fingerprint {
+        write!(&mut value, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    DeviceId::new(value).expect("fixed-length hexadecimal device ID is valid")
 }
 
 fn fingerprint(public_key_der: &[u8]) -> [u8; 32] {

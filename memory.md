@@ -1549,3 +1549,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Added FFI negative tests: pinned listener never downgrades to plaintext; malformed pin refused; pinned listener for another session never approved.
 - Found a real bug while gating: secure_frame_channel close path could drop the last queued frame (try_recv consumed a frame; close alert hid decrypted plaintext; drain exited before handshake completed). Measured 6/40 failures before, 0/80 after. Handoff §32.
 - Full gate exit 0, 824 passed; desktop check and line gate pass.
+
+## 2026-11-08T02:21:04Z - Haiku 5.5 - Durable trust step 1: verified TLS listener device ID bound to its key (remediation §1, F1)
+- Verified TLS peers must claim device_id_for_listener_key(spki); other claims refused as Unauthorized before the actor. Mutation kill confirmed; restored.
+- FFI connect_secure refuses a non-bound device ID; Android computes the ID from the Keystore listener key. Test helpers now derive IDs from keys.
+- Gate: 826 passed; A54 TLS device tests pass. Handoff §33.
+- Open: live trust decision (actor gets verify_and_classify_join output), storage decision (credential store JSON per secure_trust design vs Rust SQLite per CLAUDE.md), enrollment UX.

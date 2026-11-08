@@ -25,6 +25,19 @@ use silent_disco_core::transport::secure_listener_proof::{
 
 use crate::FfiBridgeError;
 
+/// The device ID a listener proving `listener_spki_der` is bound to. A TLS
+/// join must claim exactly this ID.
+#[uniffi::export]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "uniffi::export requires owned Vec parameters at the foreign boundary"
+)]
+pub fn listener_device_id_for_key(listener_spki_der: Vec<u8>) -> String {
+    silent_disco_core::transport::secure_identity::device_id_for_listener_key(&listener_spki_der)
+        .as_str()
+        .to_owned()
+}
+
 /// The platform's listener proof key. Implemented by the app over Keystore.
 #[uniffi::export(with_foreign)]
 pub trait FfiListenerProofSigner: Send + Sync {

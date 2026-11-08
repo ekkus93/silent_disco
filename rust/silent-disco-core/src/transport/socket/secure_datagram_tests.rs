@@ -6,12 +6,14 @@ use std::net::{SocketAddr, UdpSocket};
 
 use crate::domain::{MonotonicMillis, SessionId};
 use crate::protocol::{ProtocolFrame, SyncRequest, encode_frame};
-use crate::transport::test_support::{id_device, wait_for_authorized};
+use crate::transport::test_support::wait_for_authorized;
 use crate::transport::{
     HostTransportNode, ListenerDatagramRoutes, TransportChannel, TransportErrorKind, TransportEvent,
 };
 
-use super::secure_test_support::{host_with_secure, join_over_tls, wait_for_event};
+use super::secure_test_support::{
+    host_with_secure, join_over_tls, listener_device, wait_for_event,
+};
 
 fn loopback_socket() -> UdpSocket {
     UdpSocket::bind("127.0.0.1:0").expect("loopback UDP socket")
@@ -29,7 +31,7 @@ fn probe(session: &SessionId, correlation_id: u64) -> ProtocolFrame {
 fn a_tls_joined_listener_sync_is_accepted_only_from_its_authorized_route() {
     let session = SessionId::new("datagram-tls").expect("session");
     let (mut host, host_spki) = host_with_secure(61, &session);
-    let device = id_device("tls-sync-listener");
+    let device = listener_device(62);
     let _listener = join_over_tls(&host, &host_spki, &session, &device, 62);
     wait_for_event(&mut host, |event| {
         matches!(

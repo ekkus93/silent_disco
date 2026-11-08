@@ -17,7 +17,8 @@ use crate::transport::{HostTransportNode, TransportChannel, TransportErrorKind, 
 
 use super::SocketHostTransport;
 use super::secure_test_support::{
-    control_address, host_with_secure, is_join_frame, join_over_tls, key, spki_of, wait_for_event,
+    control_address, host_with_secure, is_join_frame, join_over_tls, key, listener_device, spki_of,
+    wait_for_event,
 };
 use crate::transport::{HostTransportConfig, ManualTransportClock};
 use std::sync::Arc;
@@ -40,7 +41,7 @@ impl ListenerProofSigner for ForgingSigner {
 fn an_admitted_tls_listener_joins_the_host_actor_and_receives_the_approval_on_the_same_channel() {
     let session = SessionId::new("dispatch-join").expect("session");
     let (mut host, host_spki) = host_with_secure(41, &session);
-    let listener_id = DeviceId::new("tls-listener").expect("device");
+    let listener_id = listener_device(42);
 
     let listener = join_over_tls(&host, &host_spki, &session, &listener_id, 42);
     let joined = wait_for_event(&mut host, is_join_frame);
@@ -231,4 +232,41 @@ fn a_silent_or_malformed_connection_is_left_to_the_plaintext_path_not_refused_he
         }
     }
     host.shutdown().expect("shutdown");
+}
+
+#[test]
+fn a_verified_tls_listener_claiming_another_device_id_is_refused_before_the_actor() {
+    let session = SessionId::new("dispatch-claim").expect("session");
+    let (mut host, host_spki) = host_with_secure(47, &session);
+    // The key proves as seed 48, but the join claims seed 49's device ID.
+    let claimed = listener_device(49);
+    let _listener = join_over_tls(&host, &host_spki, &session, &claimed, 48);
+
+    let rejected = wait_for_event(&mut host, |event| {
+        matches!(
+            event,
+            TransportEvent::Rejected {
+                channel: TransportChannel::Control,
+                ..
+            } | TransportEvent::PeerDisconnected { .. }
+        )
+    });
+    if let TransportEvent::Rejected { error, .. } = &rejected {
+        assert_eq!(
+            error.kind,
+            TransportErrorKind::Unauthorized,
+            "{}",
+            error.message
+        );
+    }
+    // The claim must never reach the host actor as a join.
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        if let Ok(event) = host.recv_event(Duration::from_millis(50)) {
+            assert!(
+                !is_join_frame(&event),
+                "a claimed device ID must not reach the actor"
+            );
+        }
+    }
 }

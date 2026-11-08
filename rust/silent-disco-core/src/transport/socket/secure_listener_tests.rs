@@ -14,7 +14,9 @@ use crate::transport::{
 };
 
 use super::SocketListenerTransport;
-use super::secure_test_support::{host_with_secure, is_join_frame, key, spki_of, wait_for_event};
+use super::secure_test_support::{
+    host_with_secure, is_join_frame, key, listener_device, spki_of, wait_for_event,
+};
 
 fn connect_tls_listener(
     endpoint: crate::runtime::NetworkEndpoint,
@@ -53,7 +55,7 @@ fn wait_listener_event(
 fn a_listener_pinned_to_the_host_joins_over_tls_and_receives_its_approval() {
     let session = SessionId::new("listener-tls-join").expect("session");
     let (mut host, host_spki) = host_with_secure(71, &session);
-    let device = id_device("tls-listener-join");
+    let device = listener_device(72);
     let listener = connect_tls_listener(host.endpoint(), &host_spki, &session, &device, 72)
         .expect("pinned listener connects");
 
@@ -113,7 +115,7 @@ fn a_listener_pinned_to_another_host_key_never_connects() {
 fn a_tls_listener_sends_sync_on_its_authorized_route_and_the_host_sees_its_identity() {
     let session = SessionId::new("listener-tls-sync").expect("session");
     let (mut host, host_spki) = host_with_secure(76, &session);
-    let device = id_device("tls-listener-sync");
+    let device = listener_device(77);
     let listener = connect_tls_listener(host.endpoint(), &host_spki, &session, &device, 77)
         .expect("pinned listener connects");
     listener
@@ -154,7 +156,7 @@ fn a_tls_listener_sends_sync_on_its_authorized_route_and_the_host_sees_its_ident
 fn a_tls_listener_shutdown_is_observed_by_the_host_as_a_departure() {
     let session = SessionId::new("listener-tls-leave").expect("session");
     let (mut host, host_spki) = host_with_secure(78, &session);
-    let device = id_device("tls-listener-leave");
+    let device = listener_device(79);
     let mut listener = connect_tls_listener(host.endpoint(), &host_spki, &session, &device, 79)
         .expect("pinned listener connects");
     listener
@@ -182,7 +184,7 @@ fn a_tls_listener_shutdown_is_observed_by_the_host_as_a_departure() {
 fn a_tls_listener_that_leaves_can_rejoin_with_the_same_device_and_be_approved_again() {
     let session = SessionId::new("listener-tls-rejoin").expect("session");
     let (mut host, host_spki) = host_with_secure(80, &session);
-    let device = id_device("tls-listener-rejoin");
+    let device = listener_device(81);
 
     let mut first = connect_tls_listener(host.endpoint(), &host_spki, &session, &device, 81)
         .expect("first connection");
@@ -195,7 +197,7 @@ fn a_tls_listener_that_leaves_can_rejoin_with_the_same_device_and_be_approved_ag
         matches!(event, TransportEvent::PeerDisconnected { .. })
     });
 
-    let second = connect_tls_listener(host.endpoint(), &host_spki, &session, &device, 82)
+    let second = connect_tls_listener(host.endpoint(), &host_spki, &session, &device, 81)
         .expect("reconnect");
     second
         .send_control(&join_request(&session, &device, "second"))

@@ -196,7 +196,7 @@ class ManualListenerTransportController(
                             )
                         } else {
                             openPinnedListenerTransport(
-                                rawInput, nowMs(), localDeviceId, LOCAL_BIND_ADDRESS, hostTlsPublicKeyDer,
+                                rawInput, nowMs(), LOCAL_BIND_ADDRESS, hostTlsPublicKeyDer,
                             )
                         }
                     },

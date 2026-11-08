@@ -10,6 +10,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
+import com.ekkus.silentdisco.core.uniffi.listenerDeviceIdForKey
 import java.net.ServerSocket
 import java.security.KeyStore
 import java.util.UUID
@@ -30,7 +31,8 @@ class TlsJoinKeystoreInstrumentedTest {
     private val hostAlias = "silent-disco-tls-join-host-${UUID.randomUUID()}"
     private val listenerAlias = "silent-disco-tls-join-listener-${UUID.randomUUID()}"
     private val session = "tls-join-${UUID.randomUUID()}"
-    private val deviceId = "tls-join-listener-device"
+    // A pinned join must claim the device ID its listener key is bound to.
+    private fun deviceId(): String = listenerDeviceIdForKey(ListenerIdentityManager(listenerAlias).publicKeyDer())
 
     @After
     fun deleteKeys() {
@@ -55,13 +57,13 @@ class TlsJoinKeystoreInstrumentedTest {
         )
         val pin = HostTlsIdentityManager(hostAlias).publicKeyDer()
         val listener = FfiListenerTransportHandle.connectSecure(
-            endpointPayload(ports), 0UL, deviceId, "127.0.0.1", pin,
+            endpointPayload(ports), 0UL, deviceId(), "127.0.0.1", pin,
             KeystoreListenerProofSigner(ListenerIdentityManager(listenerAlias)),
         )
         try {
             listener.sendJoinRequest("Pinned listener", null)
             assertTrue("the host must receive the TLS join", awaitHostJoin(host))
-            host.sendJoinApproval(deviceId, false)
+            host.sendJoinApproval(deviceId(), false)
             assertTrue("the approval must return over the same TLS channel", awaitApproval(listener))
         } finally {
             listener.shutdown()
@@ -81,7 +83,7 @@ class TlsJoinKeystoreInstrumentedTest {
         try {
             assertThrows(FfiListenerTransportException::class.java) {
                 FfiListenerTransportHandle.connectSecure(
-                    endpointPayload(ports), 0UL, deviceId, "127.0.0.1", wrongPin,
+                    endpointPayload(ports), 0UL, deviceId(), "127.0.0.1", wrongPin,
                     KeystoreListenerProofSigner(ListenerIdentityManager(listenerAlias)),
                 )
             }
@@ -94,7 +96,7 @@ class TlsJoinKeystoreInstrumentedTest {
         val deadline = System.currentTimeMillis() + 15_000
         while (System.currentTimeMillis() < deadline) {
             val event = host.pollEvent(200UL)
-            if (event is FfiHostTransportEvent.JoinRequestReceived && event.deviceId == deviceId) return true
+            if (event is FfiHostTransportEvent.JoinRequestReceived && event.deviceId == deviceId()) return true
         }
         return false
     }

@@ -574,3 +574,26 @@ Mutations, both restored and verified identical: dropping the partially accepted
 Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full gate: exit 0, 23 suites, 824 passed. Desktop check and line gate pass.
 
 **Not done.** Durable trust binding (item 5) and a live desktop-host ↔ A54 run through the QR. The post-join trickle bound and the silent-peer deadline test are still open (§28).
+
+## 33. 2026-11-08 — Durable trust, step 1: a verified TLS listener's device ID is its key's
+
+**Where durable trust stands.** The core already had the policy pieces: `secure_trust::HostVerifiedTrust` (enroll only from a verified key, revoke, disposition, versioned JSON snapshot) and `secure_host_admission::verify_and_classify_join` (refuses revoked keys, ignores the claimed trust state). Nothing on the live path used them, and the actor still received trust from the app. This step binds identity on the live TLS path.
+
+**Change.** `PeerState` keeps the verified key a TLS listener proved. For a verified peer, the JoinRequest must claim exactly `device_id_for_listener_key(spki)`. Any other claim is refused as `Unauthorized` before it reaches the actor. Plaintext peers are unchanged.
+- `device_id_for_listener_key` is the single derivation, used by `canonical_device_id`, the tests and the FFI.
+- FFI `connect_secure` refuses a caller-supplied device ID that is not the key's, before connecting. `listenerDeviceIdForKey` is exported for Android.
+- Android pinned joins compute the ID from the Keystore listener key.
+
+**Test changes.** Existing TLS join tests used hand-picked device IDs, which the binding correctly refuses. They now derive IDs from their keys, and the rejoin test reuses its key, which is the honest rejoin.
+
+**Tests.**
+- `a_verified_tls_listener_claiming_another_device_id_is_refused_before_the_actor`. Mutation check: disabling the comparison fails it. Restored.
+- FFI: `a_pinned_listener_cannot_claim_a_device_id_its_key_is_not_bound_to`.
+
+**Gates and device.** Rust `check-rust.sh` exit 0, 23 suites, 826 passed. Desktop check and line gate pass. Android unit tests pass. On the A54, the four TLS tests pass (`TlsJoinKeystoreInstrumentedTest`, `HostTlsKeystoreInstrumentedTest`).
+
+**Not done (open decisions and remaining work).**
+1. Trust decision on the live path: the actor must receive a trust state computed by `verify_and_classify_join` from host-owned records. The app's trust mapping must stop supplying it.
+2. Storage. `secure_trust` is designed as a JSON snapshot protected by the OS credential store, but CLAUDE.md says domain state lives in Rust SQLite. I need your decision before storage is built.
+3. Enrollment UX (Always allow / Approve once), revocation UI, and key-rotation handling.
+4. Live desktop ↔ A54 run through the QR.
