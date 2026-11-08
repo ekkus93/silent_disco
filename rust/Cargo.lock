@@ -1053,6 +1053,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "jni",
+ "p256",
  "serde_json",
  "silent-disco-core",
  "uniffi",

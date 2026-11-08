@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.core.identity.FileHostKeyRecord
 import com.ekkus.silentdisco.core.identity.HostIdentityManager
+import com.ekkus.silentdisco.core.identity.HostTlsIdentityManager
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
@@ -76,6 +77,7 @@ class P2ViewModel @JvmOverloads constructor(
         record = FileHostKeyRecord(File(application.noBackupFilesDir, "host-key-fingerprint.txt")),
     ),
 ) : AndroidViewModel(application) {
+    private val hostTlsIdentity = HostTlsIdentityManager()
     private val _uiState = MutableStateFlow(P2UiState())
     val uiState: StateFlow<P2UiState> = _uiState.asStateFlow()
 
@@ -175,6 +177,7 @@ class P2ViewModel @JvmOverloads constructor(
                     issuedAtMs = now,
                     expiresAtMs = now + QR_INVITATION_LIFETIME_MS,
                     nonce = UUID.randomUUID().toString(),
+                    tlsPublicKeyDer = hostTlsIdentity.publicKeyDer(),
                 )
                 P2RustBridge.finalizeQr(
                     unsignedJson = unsigned,

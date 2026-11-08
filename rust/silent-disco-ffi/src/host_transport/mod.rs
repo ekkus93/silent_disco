@@ -1,4 +1,6 @@
 mod handle;
+#[cfg(test)]
+mod secure_bind_tests;
 mod types;
 
 pub use handle::FfiHostTransportHandle;

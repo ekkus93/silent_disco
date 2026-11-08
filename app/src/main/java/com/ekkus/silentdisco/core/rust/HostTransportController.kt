@@ -1,10 +1,13 @@
 package com.ekkus.silentdisco.core.rust
 
 import android.os.SystemClock
+import com.ekkus.silentdisco.core.identity.HostTlsIdentityManager
+import com.ekkus.silentdisco.core.identity.KeystoreHostTlsSigner
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
+import com.ekkus.silentdisco.core.uniffi.FfiListenerProofSigner
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,12 +42,19 @@ class HostTransportController(
      * [Dispatchers.IO] because it blocks inside native `pollEvent`.
      */
     private val callDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * Presents the host's TLS control-channel identity; its key stays in Keystore.
+     * The binding fails closed if the key cannot be read, so the host never runs
+     * with TLS silently absent.
+     */
+    private val hostTlsSigner: FfiListenerProofSigner = KeystoreHostTlsSigner(HostTlsIdentityManager()),
     /** Opens the native host transport; replaced only by JVM tests that record broadcasts. */
     private val bindHandle: (String, UShort, UShort, UShort, String) -> FfiHostTransportHandle =
         { localAddress, controlPort, syncPort, audioPort, sessionId ->
-            FfiHostTransportHandle.bindWithHostClock(
+            FfiHostTransportHandle.bindSecureWithHostClock(
                 localAddress, controlPort, syncPort, audioPort, sessionId,
                 SystemClock.elapsedRealtime().toULong(),
+                hostTlsSigner,
             )
         },
     /** Capture t3 at the native send, not while the reply waits for IO. */

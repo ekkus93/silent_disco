@@ -17,3 +17,6 @@ uniffi = "=0.31.0"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+p256 = { version = "=0.13.2", features = ["ecdsa", "pkcs8"] }

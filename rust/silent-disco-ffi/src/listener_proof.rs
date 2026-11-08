@@ -15,6 +15,7 @@ use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 
 use silent_disco_core::domain::SessionId;
+use silent_disco_core::transport::secure_control_external_key::host_tls_identity_from_external_key;
 use silent_disco_core::transport::secure_control_tls::{
     HostTlsIdentity, host_tls_identity_from_pkcs8,
 };
@@ -41,7 +42,7 @@ pub trait FfiListenerProofSigner: Send + Sync {
 }
 
 /// Adapts the platform signer to the core trait.
-struct CallbackSigner(Arc<dyn FfiListenerProofSigner>);
+pub(crate) struct CallbackSigner(pub(crate) Arc<dyn FfiListenerProofSigner>);
 
 impl ListenerProofSigner for CallbackSigner {
     fn spki_der(&self) -> Result<Vec<u8>, ProofExchangeError> {
@@ -123,6 +124,28 @@ impl FfiProofHostListener {
         host_pkcs8_key: Vec<u8>,
     ) -> Result<Arc<Self>, FfiBridgeError> {
         let identity = host_tls_identity_from_pkcs8(&host_pkcs8_key)
+            .map_err(|error| FfiBridgeError::Core(error.to_string()))?;
+        let listener = TcpListener::bind(&local_address)
+            .map_err(|error| FfiBridgeError::Core(format!("bind failed: {error}")))?;
+        Ok(Arc::new(Self { listener, identity }))
+    }
+
+    /// Like [`Self::bind`], but the host key stays on the platform (Android
+    /// Keystore): the pinned SPKI and every handshake signature come from `tls_signer`.
+    ///
+    /// # Errors
+    /// Returns an error if the address cannot be bound or the platform key cannot
+    /// supply its SPKI or certificate.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "uniffi::export requires owned parameters at the foreign boundary"
+    )]
+    #[uniffi::constructor]
+    pub fn bind_with_platform_key(
+        local_address: String,
+        tls_signer: Arc<dyn FfiListenerProofSigner>,
+    ) -> Result<Arc<Self>, FfiBridgeError> {
+        let identity = host_tls_identity_from_external_key(Arc::new(CallbackSigner(tls_signer)))
             .map_err(|error| FfiBridgeError::Core(error.to_string()))?;
         let listener = TcpListener::bind(&local_address)
             .map_err(|error| FfiBridgeError::Core(format!("bind failed: {error}")))?;

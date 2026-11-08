@@ -9,6 +9,8 @@ use silent_disco_core::protocol::{
     AudioCodec, AudioDatagram, ControlMessage, Disconnect, JoinApproval, JoinRejection, Pause,
     ProtocolFrame, Stop, StreamStart, SyncResponse, TrackBoundary,
 };
+use silent_disco_core::transport::secure_control_external_key::host_tls_identity_from_external_key;
+use silent_disco_core::transport::secure_control_tls::HostTlsIdentity;
 use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_TRANSPORT_PEERS,
     DEFAULT_OPERATION_TIMEOUT, DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
@@ -21,6 +23,7 @@ use super::types::{
     FfiHostTransportCounters, FfiHostTransportDelivery, FfiHostTransportError,
     FfiHostTransportEvent,
 };
+use crate::listener_proof::{CallbackSigner, FfiListenerProofSigner};
 
 /// Opaque, bounded handle around the shared Rust `SocketHostTransport`.
 ///
@@ -93,47 +96,51 @@ impl FfiHostTransportHandle {
         session_id: String,
         host_now_elapsed_ms: u64,
     ) -> Result<Arc<Self>, FfiHostTransportError> {
-        let bind_address: IpAddr = local_address.parse().map_err(|_| {
-            FfiHostTransportError::InvalidConfiguration(
-                "local bind address is malformed".to_owned(),
-            )
-        })?;
-        let session_id = SessionId::new(session_id)
-            .map_err(|error| FfiHostTransportError::InvalidConfiguration(error.to_string()))?;
-        let config = HostTransportConfig {
-            session_id: session_id.clone(),
-            bind_address,
+        Self::bind_configured(
+            local_address,
             control_port,
             sync_port,
             audio_port,
-            outbound_queue_capacity: DEFAULT_TRANSPORT_QUEUE_CAPACITY,
-            event_queue_capacity: DEFAULT_TRANSPORT_EVENT_CAPACITY,
-            max_peers: DEFAULT_MAX_TRANSPORT_PEERS,
-            io_timeout: DEFAULT_IO_TIMEOUT,
-            operation_timeout: DEFAULT_OPERATION_TIMEOUT,
-            max_consecutive_failures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
-            peer_inbound_silence_timeout: DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
-            secure_control: None,
-        };
-        let clock: Arc<dyn TransportClock> = Arc::new(if host_now_elapsed_ms == 0 {
-            SystemTransportClock::default()
-        } else {
-            #[cfg(target_os = "android")]
-            {
-                SystemTransportClock::android_boot_relative()
-            }
-            #[cfg(not(target_os = "android"))]
-            {
-                SystemTransportClock::starting_at(host_now_elapsed_ms)
-            }
-        });
-        let transport = production_transport_factory().bind_host(config, clock)?;
-        Ok(Arc::new(Self {
-            inner: Mutex::new(Some(Inner {
-                transport,
-                session_id,
-            })),
-        }))
+            session_id,
+            host_now_elapsed_ms,
+            None,
+        )
+    }
+
+    /// Binds like [`Self::bind_with_host_clock`], presenting a TLS control-channel
+    /// identity whose private key stays in the platform (Android Keystore). That
+    /// key's SPKI is the `tk` the host's invitations carry, so listeners pin what
+    /// their handshake proves. Fails closed: if the platform cannot supply its
+    /// public key or certificate, nothing binds.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "uniffi::export requires owned String and Arc parameters at the foreign boundary"
+    )]
+    #[uniffi::constructor]
+    pub fn bind_secure_with_host_clock(
+        local_address: String,
+        control_port: u16,
+        sync_port: u16,
+        audio_port: u16,
+        session_id: String,
+        host_now_elapsed_ms: u64,
+        tls_signer: Arc<dyn FfiListenerProofSigner>,
+    ) -> Result<Arc<Self>, FfiHostTransportError> {
+        let identity = host_tls_identity_from_external_key(Arc::new(CallbackSigner(tls_signer)))
+            .map_err(|error| {
+                FfiHostTransportError::InvalidConfiguration(format!(
+                    "host TLS identity unavailable: {error}"
+                ))
+            })?;
+        Self::bind_configured(
+            local_address,
+            control_port,
+            sync_port,
+            audio_port,
+            session_id,
+            host_now_elapsed_ms,
+            Some(Arc::new(identity)),
+        )
     }
 
     /// Sends a session-only join approval to one identified listener.
@@ -670,6 +677,67 @@ fn map_control_frame(
         | ControlMessage::Pause(_)
         | ControlMessage::Stop(_)
         | ControlMessage::SynchronizationReport(_) => None,
+    }
+}
+
+impl FfiHostTransportHandle {
+    /// Shared bind path. `secure_control` is the TLS identity presented on the
+    /// control port; `None` leaves TLS listeners refused.
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::needless_pass_by_value,
+        reason = "mirrors the exported bind constructors one-for-one, including owned String parameters"
+    )]
+    fn bind_configured(
+        local_address: String,
+        control_port: u16,
+        sync_port: u16,
+        audio_port: u16,
+        session_id: String,
+        host_now_elapsed_ms: u64,
+        secure_control: Option<Arc<HostTlsIdentity>>,
+    ) -> Result<Arc<Self>, FfiHostTransportError> {
+        let bind_address: IpAddr = local_address.parse().map_err(|_| {
+            FfiHostTransportError::InvalidConfiguration(
+                "local bind address is malformed".to_owned(),
+            )
+        })?;
+        let session_id = SessionId::new(session_id)
+            .map_err(|error| FfiHostTransportError::InvalidConfiguration(error.to_string()))?;
+        let config = HostTransportConfig {
+            session_id: session_id.clone(),
+            bind_address,
+            control_port,
+            sync_port,
+            audio_port,
+            outbound_queue_capacity: DEFAULT_TRANSPORT_QUEUE_CAPACITY,
+            event_queue_capacity: DEFAULT_TRANSPORT_EVENT_CAPACITY,
+            max_peers: DEFAULT_MAX_TRANSPORT_PEERS,
+            io_timeout: DEFAULT_IO_TIMEOUT,
+            operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            max_consecutive_failures: DEFAULT_MAX_CONSECUTIVE_FAILURES,
+            peer_inbound_silence_timeout: DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
+            secure_control,
+        };
+        let clock: Arc<dyn TransportClock> = Arc::new(if host_now_elapsed_ms == 0 {
+            SystemTransportClock::default()
+        } else {
+            #[cfg(target_os = "android")]
+            {
+                SystemTransportClock::android_boot_relative()
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                SystemTransportClock::starting_at(host_now_elapsed_ms)
+            }
+        });
+        let transport = production_transport_factory().bind_host(config, clock)?;
+        Ok(Arc::new(Self {
+            inner: Mutex::new(Some(Inner {
+                transport,
+                session_id,
+            })),
+        }))
     }
 }
 
