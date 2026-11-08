@@ -1561,3 +1561,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - FFI host control holds HostVerifiedTrust (set_host_trust_snapshot); submit_join_request derives trust from it; FfiJoinRequestInput.trust_state removed. Android updated.
 - Gates: Rust 829 passed (second full run), desktop check, line gate, Android unit tests, A54 TLS device tests 4/4.
 - Open: one intermittent failure of shutdown_races_with_concurrent_command_submission... in the first full run (actor=failed); not reproduced in 120 isolated runs or 6 full runs. Needs investigation. Handoff §34.
+
+## 2026-11-08T02:54:50Z - Haiku 5.5 - Investigation: intermittent shutdown-race failure (not reproduced)
+- Shutdown race test: 0/120 isolated, 0/600 under 4-way contention, 0/25 full FFI suite with actor error instrumented. Slow observer did not force overflow. Mechanisms (notification overflow, disconnected worker, closed channel) not confirmed. Tree reverted clean. Handoff §35.

@@ -617,3 +617,19 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 - Desktop host mapping (F1 item 4) still uses unconditional session-only trust.
 - The intermittent shutdown race above.
 - The live desktop-host ↔ A54 run through the QR.
+
+## 35. 2026-11-08 — Investigation: intermittent shutdown-race failure (not reproduced)
+
+**Observed.** `shutdown_races_with_concurrent_command_submission_and_notification_delivery` failed once, in the first of two full Rust gate runs, with `shutdown_failed: ... actor=failed`. The second full gate run passed.
+
+**Mechanism.** `join_actor` reports `actor=failed` when the actor worker returns an error or panics. The actor's error exits are: a full notification queue (`QueueOverflow`, fatal by design); a notification worker that has disconnected (`worker_stopped`); or the actor's command channel closing without a stop request (`worker_stopped`). The notification worker records a failure and exits only if the observer panics or returns a non-refusable error.
+
+**Experiments (all temporary, reverted).**
+- Shutdown test, isolated: 0 of 120 failures.
+- Shutdown test under four-way parallel contention: 0 of 600 runs.
+- Full FFI library suite: 0 of 25 runs (and 0 of 6 earlier). Instrumentation printed the actor's error code on every run; none occurred.
+- A slow observer (20 ms per notification) with 200 commands did not force an overflow; shutdown returned `Ok`.
+
+**Conclusion.** Not reproduced. I found no code path that makes the test fail deterministically, so I did not change the actor or the test. The one observed failure happened during the first full gate run; the trust change did not touch notifications or shutdown. The likely candidates are the notification-queue overflow path (fatal under backpressure, which the test may hit only with unusual scheduling) and the channel-closed path. Neither is confirmed.
+
+**Next step if it recurs.** Keep the `join_actor` error-code print (temporary) in the gate run, so the actual error code is captured on the first failure.
