@@ -597,3 +597,23 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 2. Storage. `secure_trust` is designed as a JSON snapshot protected by the OS credential store, but CLAUDE.md says domain state lives in Rust SQLite. I need your decision before storage is built.
 3. Enrollment UX (Always allow / Approve once), revocation UI, and key-rotation handling.
 4. Live desktop ↔ A54 run through the QR.
+
+## 34. 2026-11-08 — Durable trust, step 2: the join's trust comes from host records
+
+**Change.**
+- A device ID in the key-bound form (`v4-` plus the listener-key fingerprint) can be claimed only by a TLS-proven listener. A plaintext peer claiming one is refused as `Unauthorized` before the actor (`key_bound_namespace_tests.rs`; mutation kill confirmed).
+- The FFI host control handle holds the host's trust registry (`set_host_trust_snapshot`, `handle_trust.rs`). `submit_join_request` derives the join's trust from the verified ID and the registry. The app no longer supplies a trust state: `FfiJoinRequestInput.trust_state` is removed.
+- A revoked or unknown key is session-only. In approved-devices mode the actor then rejects it with `DeviceNotApproved`. The reason is less specific for revoked keys; I left that for the UX step.
+
+**Tests.** `handle/tests.rs`: a verified listener is trusted only while the host's records say so, and revocation removes trust; a plaintext ID never receives trust. Android: `HostJoinTrustProjectionTest` now checks only the device ID.
+
+**Gates.** Rust `check-rust.sh` exit 0, 23 suites, 829 passed on the second full run. Desktop check and line gate pass. Android unit tests pass. A54 TLS device tests pass (4 of 4) after rebuild.
+
+**Known intermittent failure (open).** `shutdown_races_with_concurrent_command_submission_and_notification_delivery` failed once in two full gate runs (`actor=failed`). The failure happened in the actor's shutdown path; the trust change does not touch it. Isolated: 0 of 120; full FFI suite: 0 of 6; the next full gate passed. The actor loop returns `worker_stopped` when it exits without a stop request, so a race in the notification or shutdown ordering is the likely cause. This needs its own investigation.
+
+**Still open.**
+- Persistence of the trust records (decision needed: credential-store JSON or Rust SQLite).
+- Enrollment UX (Always allow, Approve once, revoke) on Android and desktop.
+- Desktop host mapping (F1 item 4) still uses unconditional session-only trust.
+- The intermittent shutdown race above.
+- The live desktop-host ↔ A54 run through the QR.

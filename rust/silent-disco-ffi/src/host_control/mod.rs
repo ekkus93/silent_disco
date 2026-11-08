@@ -1,5 +1,6 @@
 mod conversions;
 mod handle;
+mod handle_trust;
 mod types;
 
 pub use handle::FfiCoreHandle;

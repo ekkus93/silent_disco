@@ -76,10 +76,43 @@ pub fn device_id_for_listener_key(listener_public_key_der: &[u8]) -> DeviceId {
     device_id_from_fingerprint(&fingerprint(listener_public_key_der))
 }
 
+/// Prefix of every device ID derived from a verified listener key. Only a
+/// TLS-proven peer may claim one, so the prefix itself marks a verified join.
+pub const KEY_BOUND_DEVICE_ID_PREFIX: &str = "v4-";
+
+/// The listener-key fingerprint a key-bound device ID encodes, or `None` if the
+/// ID is not in that form. A plaintext peer can never make a valid claim here,
+/// so a `Some` result for a join means its key was proven over TLS.
+#[must_use]
+pub fn key_bound_fingerprint(device_id: &DeviceId) -> Option<[u8; 32]> {
+    let hex = device_id
+        .as_str()
+        .strip_prefix(KEY_BOUND_DEVICE_ID_PREFIX)?;
+    if hex.len() != 64
+        || !hex
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let mut fingerprint = [0_u8; 32];
+    for (index, pair) in hex.as_bytes().chunks(2).enumerate() {
+        let text = std::str::from_utf8(pair).ok()?;
+        fingerprint[index] = u8::from_str_radix(text, 16).ok()?;
+    }
+    Some(fingerprint)
+}
+
+/// True when a device ID is in the key-bound namespace, whether or not it parses.
+#[must_use]
+pub fn claims_key_bound_namespace(device_id: &DeviceId) -> bool {
+    device_id.as_str().starts_with(KEY_BOUND_DEVICE_ID_PREFIX)
+}
+
 fn device_id_from_fingerprint(fingerprint: &[u8; 32]) -> DeviceId {
     use std::fmt::Write;
     let mut value = String::with_capacity(3 + fingerprint.len() * 2);
-    value.push_str("v4-");
+    value.push_str(KEY_BOUND_DEVICE_ID_PREFIX);
     for byte in fingerprint {
         write!(&mut value, "{byte:02x}").expect("writing to String cannot fail");
     }

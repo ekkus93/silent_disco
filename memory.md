@@ -1555,3 +1555,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - FFI connect_secure refuses a non-bound device ID; Android computes the ID from the Keystore listener key. Test helpers now derive IDs from keys.
 - Gate: 826 passed; A54 TLS device tests pass. Handoff §33.
 - Open: live trust decision (actor gets verify_and_classify_join output), storage decision (credential store JSON per secure_trust design vs Rust SQLite per CLAUDE.md), enrollment UX.
+
+## 2026-11-08T02:42:37Z - Haiku 5.5 - Durable trust step 2: join trust derived from host records (remediation §1, F1)
+- Key-bound device IDs (v4-<fingerprint>) can be claimed only by TLS-proven listeners; plaintext claims refused before the actor (mutation killed).
+- FFI host control holds HostVerifiedTrust (set_host_trust_snapshot); submit_join_request derives trust from it; FfiJoinRequestInput.trust_state removed. Android updated.
+- Gates: Rust 829 passed (second full run), desktop check, line gate, Android unit tests, A54 TLS device tests 4/4.
+- Open: one intermittent failure of shutdown_races_with_concurrent_command_submission... in the first full run (actor=failed); not reproduced in 120 isolated runs or 6 full runs. Needs investigation. Handoff §34.

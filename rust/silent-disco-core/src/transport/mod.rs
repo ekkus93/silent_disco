@@ -22,6 +22,8 @@ mod authorization_tests;
 #[cfg(test)]
 mod handshake_tests;
 #[cfg(test)]
+mod key_bound_namespace_tests;
+#[cfg(test)]
 mod late_join_liveness_tests;
 #[cfg(test)]
 mod liveness_tests;

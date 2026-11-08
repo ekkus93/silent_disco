@@ -41,7 +41,6 @@ internal fun MainViewModel.handleHostTransportEvent(
                         requestId = requestId,
                         deviceId = event.deviceId,
                         displayName = event.displayName,
-                        trustState = FfiTrustState.UNKNOWN,
                         inviteCode = event.inviteCode,
                         receivedAtMs = SystemClock.elapsedRealtime().toULong(),
                     ),

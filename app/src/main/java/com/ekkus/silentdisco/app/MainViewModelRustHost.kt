@@ -212,7 +212,6 @@ internal fun MainViewModel.submitDemoRustJoinRequest() {
             requestId = UUID.randomUUID().toString(),
             deviceId = UUID.randomUUID().toString(),
             displayName = "Listener ${_uiState.value.pendingJoinRequests.size + 1}",
-            trustState = FfiTrustState.SESSION_ONLY,
             inviteCode = null,
             receivedAtMs = SystemClock.elapsedRealtime().toULong(),
         ),

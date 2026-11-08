@@ -1,7 +1,7 @@
 use silent_disco_ffi::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCoreHandle,
     FfiCoreNotification, FfiCoreObserver, FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput,
-    FfiPlatformCompletion, FfiPlatformEffect, FfiTransportEffect, FfiTrustState,
+    FfiPlatformCompletion, FfiPlatformEffect, FfiTransportEffect,
 };
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -117,7 +117,6 @@ fn uniffi_admission_reaches_delivery_first_actor_handlers() {
             request_id: "request-ffi-1".to_owned(),
             device_id: "listener-ffi-1".to_owned(),
             display_name: "Listener FFI".to_owned(),
-            trust_state: FfiTrustState::SessionOnly,
             invite_code: None,
             received_at_ms: 100,
         })

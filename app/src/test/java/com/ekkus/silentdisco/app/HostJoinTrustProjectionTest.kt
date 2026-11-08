@@ -37,7 +37,7 @@ class HostJoinTrustProjectionTest {
     }
 
     @Test
-    fun claimedDeviceIdReachesTheActorAsUnknownTrust() = runTest(dispatcher) {
+    fun claimedDeviceIdReachesTheActorWithoutAppSuppliedTrust() = runTest(dispatcher) {
         val native = Mockito.mock(FfiHostTransportHandle::class.java)
         Mockito.doAnswer { Thread.sleep(10); null }.`when`(native).pollEvent(500uL)
         val transport = HostTransportController(
@@ -63,7 +63,6 @@ class HostJoinTrustProjectionTest {
             val submitted = harness.hostCoreController.submitJoinRequestCalls
             assertThat(submitted).hasSize(1)
             assertThat(submitted.single().deviceId).isEqualTo("previously-approved-device")
-            assertThat(submitted.single().trustState).isEqualTo(FfiTrustState.UNKNOWN)
         } finally {
             transport.close()
         }

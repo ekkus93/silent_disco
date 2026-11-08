@@ -237,6 +237,19 @@ fn validate_host_frame(peer: &PeerState, frame: &ProtocolFrame) -> Result<(), Tr
                     "peer identity is poisoned",
                 )
             })?;
+            // The key-bound ID namespace is reserved for TLS-proven listeners. A
+            // plaintext peer cannot claim it, so such a claim never reaches the actor.
+            if peer.verified.is_none()
+                && crate::transport::secure_identity::claims_key_bound_namespace(
+                    &request.device.device_id,
+                )
+            {
+                return Err(TransportError::new(
+                    TransportErrorKind::Unauthorized,
+                    TransportChannel::Control,
+                    "key-bound device IDs require a TLS-proven listener key",
+                ));
+            }
             if let Some(verified) = &peer.verified {
                 // A TLS-proven listener is identified by its key alone. The
                 // claimed ID must be the one that key maps to, or the join is

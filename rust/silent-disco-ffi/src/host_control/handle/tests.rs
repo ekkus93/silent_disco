@@ -143,6 +143,10 @@ mod concurrency_tests {
 mod legacy_v3_trust_boundary_tests {
     use super::*;
     use crate::host_control::types::{FfiCoreNotification, FfiTransportState, FfiTrustState};
+    use silent_disco_core::domain::SessionId;
+    use silent_disco_core::transport::secure_identity::{
+        PendingListenerProof, VerifiedListenerKey,
+    };
 
     struct NoopObserver;
 
@@ -157,18 +161,6 @@ mod legacy_v3_trust_boundary_tests {
         let handle = FfiCoreHandle::open("legacy-host".to_owned(), Arc::new(NoopObserver))
             .expect("open core");
         for state in [FfiTrustState::Trusted, FfiTrustState::Revoked] {
-            let request = FfiJoinRequestInput {
-                request_id: "join-1".to_owned(),
-                device_id: "claimed-listener".to_owned(),
-                display_name: "Claimed listener".to_owned(),
-                trust_state: state,
-                invite_code: None,
-                received_at_ms: 1,
-            };
-            assert!(matches!(
-                handle.submit_join_request(request),
-                Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
-            ));
             let listener = FfiListenerSummary {
                 device_id: "claimed-listener".to_owned(),
                 display_name: "Claimed listener".to_owned(),
@@ -220,6 +212,95 @@ mod legacy_v3_trust_boundary_tests {
         ));
         assert!(reject_legacy_durable_host_draft(FfiApprovalMode::Manual, false).is_ok());
         assert!(reject_legacy_durable_host_draft(FfiApprovalMode::InviteCode, false).is_ok());
+        handle.shutdown().expect("shutdown");
+    }
+
+    /// Fixture host and listener keys (seeds 3 and 5) and a proof verified over a
+    /// fixed challenge, the same way a TLS admission verifies a listener.
+    fn verified_listener() -> (Vec<u8>, Vec<u8>, VerifiedListenerKey) {
+        use p256::{
+            ecdsa::{Signature, SigningKey, signature::Signer},
+            pkcs8::EncodePublicKey,
+        };
+        let spki_of = |seed: u8| {
+            SigningKey::from_slice(&[seed; 32])
+                .expect("fixture key")
+                .verifying_key()
+                .to_public_key_der()
+                .expect("spki")
+                .as_bytes()
+                .to_vec()
+        };
+        let host = spki_of(3);
+        let listener = spki_of(5);
+        let signing = SigningKey::from_slice(&[5_u8; 32]).expect("listener key");
+        let mut challenge = PendingListenerProof::new(
+            SessionId::new("trust-session").expect("session"),
+            1,
+            &host,
+            [11; 32],
+            [19; 32],
+        )
+        .expect("challenge");
+        let transcript = challenge.signing_transcript(&listener).expect("transcript");
+        let signed: Signature = signing.sign(&transcript);
+        let verified = challenge
+            .verify_and_consume(&listener, signed.to_der().as_bytes())
+            .expect("verified listener");
+        (host, listener, verified)
+    }
+
+    #[test]
+    fn a_verified_listener_is_trusted_only_while_the_host_records_say_so() {
+        let (host, _listener, verified) = verified_listener();
+        let device = verified.canonical_device_id();
+        let handle = FfiCoreHandle::open("trust-host".to_owned(), Arc::new(NoopObserver))
+            .expect("open core");
+        // No records loaded: a verified key is still session-only.
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::SessionOnly
+        );
+
+        let mut registry = HostVerifiedTrust::new(&host).expect("registry");
+        registry.enroll(verified, "Kitchen").expect("enroll");
+        handle
+            .set_host_trust_snapshot(host.clone(), registry.to_json().expect("json"))
+            .expect("load records");
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::Trusted
+        );
+
+        assert!(registry.revoke(&verified));
+        handle
+            .set_host_trust_snapshot(host.clone(), registry.to_json().expect("json"))
+            .expect("load revoked records");
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::SessionOnly,
+            "a revoked key must not be trusted"
+        );
+        handle.shutdown().expect("shutdown");
+    }
+
+    #[test]
+    fn a_device_id_outside_the_key_bound_namespace_is_never_trusted() {
+        let (host, _listener, _verified) = verified_listener();
+        let handle = FfiCoreHandle::open("trust-host".to_owned(), Arc::new(NoopObserver))
+            .expect("open core");
+        let mut registry = HostVerifiedTrust::new(&host).expect("registry");
+        let (_, _, verified) = verified_listener();
+        registry.enroll(verified, "Kitchen").expect("enroll");
+        handle
+            .set_host_trust_snapshot(host, registry.to_json().expect("json"))
+            .expect("load records");
+        let plain = DeviceId::new("claimed-listener").expect("device");
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &plain).expect("state"),
+            TrustState::SessionOnly,
+            "a claimed plaintext ID must never receive trust"
+        );
         handle.shutdown().expect("shutdown");
     }
 }

@@ -16,12 +16,16 @@ use silent_disco_core::runtime::{
     ListenerSummary, PlatformEvent, QueueEntry, SessionAdvertisement, SnapshotRevision,
     StorageCompletion, StorageEvent, SynchronizationSummary, TransportEvent,
 };
+use silent_disco_core::transport::secure_trust::HostVerifiedTrust;
 use std::sync::{Arc, Mutex};
 
 #[derive(uniffi::Object)]
 pub struct FfiCoreHandle {
     runtime: Mutex<Option<CoreActorRuntime>>,
     handle: CoreActorHandle,
+    /// The host's durable listener trust, when the app has loaded it. Absent
+    /// trust leaves every verified listener session-only.
+    pub(super) host_trust: Mutex<Option<HostVerifiedTrust>>,
 }
 
 #[allow(
@@ -49,6 +53,7 @@ impl FfiCoreHandle {
         Ok(Arc::new(Self {
             runtime: Mutex::new(Some(runtime)),
             handle,
+            host_trust: Mutex::new(None),
         }))
     }
 
@@ -393,7 +398,8 @@ impl FfiCoreHandle {
 
     pub fn submit_join_request(&self, request: FfiJoinRequestInput) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
-        let trust_state = legacy_v3_unverified_trust(request.trust_state)?;
+        let device_id = device_id_from_string(request.device_id)?;
+        let trust_state = super::handle_trust::join_trust_state(self, &device_id)?;
         let snapshot = self.handle.current_snapshot()?;
         let invite_code_valid = match snapshot.host_draft.approval_mode {
             ApprovalMode::InviteCode => {
@@ -403,7 +409,7 @@ impl FfiCoreHandle {
         };
         let request = JoinRequestSummary::new(
             request_id_from_string(request.request_id)?,
-            device_id_from_string(request.device_id)?,
+            device_id,
             request.display_name,
             trust_state,
             invite_code_valid,

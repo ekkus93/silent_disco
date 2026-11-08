@@ -167,7 +167,14 @@ impl HostVerifiedTrust {
         if key.host_fingerprint() != &self.host_fingerprint {
             return VerifiedTrustDisposition::Unknown;
         }
-        match self.listeners.get(key.fingerprint()) {
+        self.disposition_for_fingerprint(key.fingerprint())
+    }
+
+    /// Classifies a listener-key fingerprint. Only call this for a key whose
+    /// possession was proven, such as a TLS-verified join's key-bound device ID.
+    #[must_use]
+    pub fn disposition_for_fingerprint(&self, fingerprint: &[u8; 32]) -> VerifiedTrustDisposition {
+        match self.listeners.get(fingerprint) {
             Some(record) if record.revoked => VerifiedTrustDisposition::Revoked,
             Some(_) => VerifiedTrustDisposition::Trusted,
             None => VerifiedTrustDisposition::Unknown,
