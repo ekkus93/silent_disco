@@ -167,3 +167,79 @@ fn a_frame_queued_just_before_the_channel_is_dropped_still_reaches_the_peer() {
     );
     host.close();
 }
+
+/// Host channel on a completed TLS 1.3 connection, plus the raw client socket
+/// (with its TLS state) so a test can write bytes outside the frame protocol.
+fn raw_client_pair(
+    host_seed: u8,
+    pinned_spki: &[u8],
+) -> (
+    super::secure_frame_channel::SecureFrameChannel,
+    TcpStream,
+    rustls::ClientConnection,
+) {
+    let identity = host_tls_identity_from_pkcs8(&host_pkcs8(host_seed)).expect("identity");
+    let server = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = server.local_addr().expect("address");
+    let server_config = host_server_config(
+        identity.certificate.clone(),
+        Arc::clone(&identity.signing_key),
+    )
+    .expect("server config");
+    let host_thread = std::thread::spawn(move || {
+        let (tcp, _) = server.accept().expect("accept");
+        let connection = ServerConnection::new(server_config).expect("server connection");
+        spawn_secure_frame_channel(tcp, Connection::Server(connection)).expect("host channel")
+    });
+    let client_config = pinned_client_config(pinned_spki).expect("client config");
+    let name = ServerName::try_from(HOST_SERVER_NAME).expect("name");
+    let mut client_connection =
+        rustls::ClientConnection::new(client_config, name).expect("client connection");
+    let mut tcp = TcpStream::connect(address).expect("connect");
+    client_connection
+        .complete_io(&mut tcp)
+        .expect("TLS handshake completes");
+    (
+        host_thread.join().expect("host thread"),
+        tcp,
+        client_connection,
+    )
+}
+
+#[test]
+fn a_partial_tls_record_that_never_completes_fails_at_the_frame_deadline() {
+    use super::secure_frame_channel::FRAME_DEADLINE;
+    use std::io::Write;
+
+    let host_spki = spki_of(26);
+    let (host, mut raw, _client) = raw_client_pair(26, &host_spki);
+    // A TLS application-data record header claiming 64 bytes, then only one.
+    raw.write_all(&[0x17, 0x03, 0x03, 0x00, 0x40, 0x01])
+        .expect("partial record sent");
+    let started = std::time::Instant::now();
+    let outcome = host.recv_timeout(FRAME_DEADLINE * 4);
+    assert!(
+        matches!(outcome, Err(SecureChannelError::FrameDeadline)),
+        "a stalled partial frame must fail at the deadline, got {outcome:?}"
+    );
+    assert!(
+        started.elapsed() < FRAME_DEADLINE * 3,
+        "failure must be prompt"
+    );
+    host.close();
+}
+
+#[test]
+fn an_idle_channel_with_no_bytes_is_not_timed_by_the_frame_deadline() {
+    use super::secure_frame_channel::FRAME_DEADLINE;
+
+    let host_spki = spki_of(27);
+    let (host, _raw, _client) = raw_client_pair(27, &host_spki);
+    // No bytes arrive: an approved, idle listener must not be cut off.
+    let outcome = host.recv_timeout(FRAME_DEADLINE + Duration::from_secs(1));
+    assert!(
+        !matches!(outcome, Err(SecureChannelError::FrameDeadline)),
+        "an idle channel must not fail the frame deadline, got {outcome:?}"
+    );
+    host.close();
+}

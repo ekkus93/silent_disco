@@ -633,3 +633,18 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 **Conclusion.** Not reproduced. I found no code path that makes the test fail deterministically, so I did not change the actor or the test. The one observed failure happened during the first full gate run; the trust change did not touch notifications or shutdown. The likely candidates are the notification-queue overflow path (fatal under backpressure, which the test may hit only with unusual scheduling) and the channel-closed path. Neither is confirmed.
 
 **Next step if it recurs.** Keep the `join_actor` error-code print (temporary) in the gate run, so the actual error code is captured on the first failure.
+
+## 36. 2026-11-08 — Silent-peer deadline test and post-join trickle bound
+
+**Silent peer (admission deadline).** A TLS listener that proves its key and never joins is disconnected at the host's operation timeout. The pump already had this check. `a_verified_tls_peer_that_never_joins_is_disconnected_at_the_admission_deadline` covers it; disabling the check fails the test.
+
+**Trickle (frame deadline).** Bytes that arrive without completing a frame now fail the TLS frame channel after `FRAME_DEADLINE` (3 s). The timer starts when bytes arrive without a frame completing, and clears when a frame completes. Bytes read during the handshake do not start it, so the client's final handshake record is not a trickle. An idle channel with no bytes is never timed. The failure is `SecureChannelError::FrameDeadline`, which the pump reports as a protocol rejection, so the peer is disconnected.
+
+**Tests.**
+- `a_partial_tls_record_that_never_completes_fails_at_the_frame_deadline` (raw TLS client sends a partial record; mutation disabling the check fails it).
+- `an_idle_channel_with_no_bytes_is_not_timed_by_the_frame_deadline`.
+- The existing frame-channel tests still pass.
+
+**Gates.** Rust `check-rust.sh` exit 0, 23 suites, 832 passed. Desktop check and line gate pass. A54 TLS device tests 4/4 after rebuild.
+
+**Limits.** `FRAME_DEADLINE` is a fixed constant, not a host setting. Partial frames over plaintext are unchanged, and the TCP reader already has its own frame deadline.

@@ -1564,3 +1564,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-08T02:54:50Z - Haiku 5.5 - Investigation: intermittent shutdown-race failure (not reproduced)
 - Shutdown race test: 0/120 isolated, 0/600 under 4-way contention, 0/25 full FFI suite with actor error instrumented. Slow observer did not force overflow. Mechanisms (notification overflow, disconnected worker, closed channel) not confirmed. Tree reverted clean. Handoff §35.
+
+## 2026-11-08T03:12:36Z - Haiku 5.5 - Silent-peer deadline test and TLS frame deadline (remediation §1)
+- Added test: verified TLS peer that never joins is disconnected at the admission deadline (mutation kill confirmed).
+- Added FRAME_DEADLINE (3s) to the TLS frame channel: partial frames that never complete fail with FrameDeadline; handshake reads and idle channels exempt. Mutation kill confirmed. Tests: partial record, idle channel.
+- Gate: 832 passed; A54 TLS tests 4/4. Handoff §36.

@@ -270,3 +270,29 @@ fn a_verified_tls_listener_claiming_another_device_id_is_refused_before_the_acto
         }
     }
 }
+
+#[test]
+fn a_verified_tls_peer_that_never_joins_is_disconnected_at_the_admission_deadline() {
+    let session = SessionId::new("dispatch-silent").expect("session");
+    let (mut host, host_spki) = host_with_secure(55, &session);
+    let address = control_address(&host);
+    // The listener proves its key, then sends nothing: no join ever arrives.
+    let _silent = dial_and_prove(address, &host_spki, &session, 1, &key(56)).expect("proved");
+
+    let rejected = wait_for_event(&mut host, |event| {
+        matches!(
+            event,
+            TransportEvent::Rejected {
+                channel: TransportChannel::Control,
+                ..
+            }
+        )
+    });
+    let TransportEvent::Rejected { error, .. } = rejected else {
+        panic!("not a rejection");
+    };
+    assert_eq!(error.kind, TransportErrorKind::Timeout, "{}", error.message);
+    wait_for_event(&mut host, |event| {
+        matches!(event, TransportEvent::PeerDisconnected { .. })
+    });
+}

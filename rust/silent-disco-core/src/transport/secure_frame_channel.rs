@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustls::Connection;
 
@@ -35,6 +35,12 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// Frames waiting in each direction before a sender is refused.
 const QUEUE_CAPACITY: usize = 64;
 
+/// Longest time bytes may arrive on the channel without completing a frame.
+/// Each frame starts with a complete protocol header, so a peer that stops
+/// partway through a frame, or trickles bytes forever, is cut off here. An idle
+/// channel with no bytes arriving is not timed by this.
+pub const FRAME_DEADLINE: Duration = Duration::from_secs(3);
+
 #[derive(Debug)]
 pub enum SecureChannelError {
     /// The frame is empty or larger than [`MAX_SECURE_FRAME_BYTES`].
@@ -47,6 +53,8 @@ pub enum SecureChannelError {
     QueueFull,
     /// The TLS handshake or record layer failed.
     Tls(rustls::Error),
+    /// Bytes arrived but no complete frame followed within [`FRAME_DEADLINE`].
+    FrameDeadline,
     Io(std::io::Error),
 }
 
@@ -60,6 +68,9 @@ impl std::fmt::Display for SecureChannelError {
             Self::Closed => formatter.write_str("secure channel is closed"),
             Self::QueueFull => formatter.write_str("secure channel outbound queue is full"),
             Self::Tls(error) => write!(formatter, "TLS failed: {error}"),
+            Self::FrameDeadline => {
+                formatter.write_str("secure channel frame not completed before the deadline")
+            }
             Self::Io(error) => write!(formatter, "socket failed: {error}"),
         }
     }
@@ -171,6 +182,7 @@ fn run_worker(
 ) {
     let mut assembly: VecDeque<u8> = VecDeque::new();
     let mut staged: VecDeque<u8> = VecDeque::new();
+    let mut partial_since: Option<Instant> = None;
     let failure = loop {
         if stop.load(Ordering::Acquire) {
             // Deliver frames queued before the stop, then close the session.
@@ -185,9 +197,14 @@ fn run_worker(
         if let Err(error) = flush_tls(tcp, connection) {
             break Some(error);
         }
+        let mut read_bytes = false;
+        // Handshake records are not frames: bytes read while the handshake is
+        // still completing must not start the frame deadline.
+        let handshaking_before_read = connection.is_handshaking();
         match connection.read_tls(tcp) {
             Ok(0) => break None,
             Ok(_) => {
+                read_bytes = true;
                 if let Err(error) = connection.process_new_packets() {
                     // Plaintext decrypted before the alert (a frame followed by
                     // close_notify) must still reach the peer before the failure.
@@ -202,8 +219,22 @@ fn run_worker(
         if let Err(error) = read_plaintext(connection, &mut assembly) {
             break Some(error);
         }
-        if let Err(error) = deliver_frames(&mut assembly, inbound) {
-            break Some(error);
+        let delivered = match deliver_frames(&mut assembly, inbound) {
+            Ok(count) => count,
+            Err(error) => break Some(error),
+        };
+        // `partial_since` marks the first moment bytes arrived without a frame
+        // completing after them. It is cleared only when a frame completes.
+        if delivered > 0 && assembly.is_empty() {
+            partial_since = None;
+        } else if !handshaking_before_read
+            && (read_bytes || !assembly.is_empty())
+            && partial_since.is_none()
+        {
+            partial_since = Some(Instant::now());
+        }
+        if partial_since.is_some_and(|since| since.elapsed() > FRAME_DEADLINE) {
+            break Some(SecureChannelError::FrameDeadline);
         }
     };
     if let Some(error) = failure {
@@ -321,10 +352,11 @@ fn read_plaintext(
 fn deliver_frames(
     assembly: &mut VecDeque<u8>,
     inbound: &SyncSender<Result<Vec<u8>, SecureChannelError>>,
-) -> Result<(), SecureChannelError> {
+) -> Result<usize, SecureChannelError> {
+    let mut delivered = 0_usize;
     loop {
         if assembly.len() < 4 {
-            return Ok(());
+            return Ok(delivered);
         }
         let length = u32::from_be_bytes([assembly[0], assembly[1], assembly[2], assembly[3]]);
         let length = usize::try_from(length).unwrap_or(usize::MAX);
@@ -332,12 +364,13 @@ fn deliver_frames(
             return Err(SecureChannelError::FrameTooLarge { length });
         }
         if assembly.len() < 4 + length {
-            return Ok(());
+            return Ok(delivered);
         }
         assembly.drain(..4);
         let frame: Vec<u8> = assembly.drain(..length).collect();
         if inbound.send(Ok(frame)).is_err() {
             return Err(SecureChannelError::Closed);
         }
+        delivered += 1;
     }
 }
