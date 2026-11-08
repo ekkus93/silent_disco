@@ -162,14 +162,14 @@ mod tests {
     }
 
     #[test]
-    fn a_desktop_listener_proves_to_a_host_presenting_the_invitation_identity() {
-        // The host's TLS identity is built from its invitation key, so the key
-        // a listener pins from the invitation is the key the host proves.
+    fn a_desktop_listener_proves_to_a_host_presenting_the_invitation_tls_key() {
+        // The host's TLS identity is built from its TLS key, whose SPKI the
+        // invitation carries; a listener pins that key and the host must prove it.
         let root = owner_only_directory();
         let directory = root.path().join("profile");
         let signing =
             crate::platform::invitation_identity::tests_support::fixed_identity_for_tests(21);
-        let invitation_host_key = signing.public_key_der().to_vec();
+        let invitation_host_key = signing.tls_public_key_der().to_vec();
         let identity = signing.host_tls_identity().expect("host tls identity");
         let session = SessionId::new("invitation-identity-session").expect("session");
         let server = TcpListener::bind("127.0.0.1:0").expect("bind");

@@ -22,24 +22,36 @@ use std::fmt;
 
 const KEYRING_SERVICE: &str = "com.ekkus.silent-disco.desktop";
 const SIGNING_ACCOUNT_PREFIX: &str = "profile-invitation-signing-v1:";
+/// Separate from the invitation key: the TLS key authenticates the control
+/// channel, and its public half is signed into each invitation.
+const TLS_ACCOUNT_PREFIX: &str = "profile-host-tls-v1:";
 /// Retries against an astronomically unlikely (~2^-128 per attempt) invalid
 /// P-256 scalar from a healthy CSPRNG -- not a realistic failure path, but
 /// failing closed after bounded retries is still better than an unbounded
 /// loop if the source of randomness were ever degraded.
 const MAX_KEY_GENERATION_ATTEMPTS: u32 = 8;
 
-/// A profile's persistent host-signing keypair. The private scalar lives
-/// only in this struct and the OS credential store it was loaded from.
+/// A profile's persistent host keys: the invitation-signing key and the TLS
+/// control-channel key. Private scalars live only in this struct and the OS
+/// credential store they were loaded from.
 #[derive(Clone)]
 pub struct DesktopHostSigningIdentity {
     signing_key: SigningKey,
     public_key_der: Vec<u8>,
+    tls_signing_key: SigningKey,
+    tls_public_key_der: Vec<u8>,
 }
 
 impl DesktopHostSigningIdentity {
     #[must_use]
     pub fn public_key_der(&self) -> &[u8] {
         &self.public_key_der
+    }
+
+    /// SPKI DER of the TLS control-channel key. Signed into each invitation.
+    #[must_use]
+    pub fn tls_public_key_der(&self) -> &[u8] {
+        &self.tls_public_key_der
     }
 
     /// Signs `message` and returns a `DER`-encoded `ECDSA` signature,
@@ -51,11 +63,9 @@ impl DesktopHostSigningIdentity {
         URL_SAFE_NO_PAD.encode(signature.to_der().as_bytes())
     }
 
-    /// Builds the TLS identity this host presents on its control port. It is
-    /// derived from the same key that signs invitations, so the SPKI a listener
-    /// pins from an invitation is the key its TLS handshake proves. The PKCS#8
-    /// copy exists only for this call and is zeroed afterwards; it never
-    /// leaves the process.
+    /// Builds the TLS identity this host presents on its control port from the
+    /// TLS key. The PKCS#8 copy exists only for this call and is zeroed
+    /// afterwards; it never leaves the process.
     ///
     /// # Errors
     ///
@@ -63,7 +73,7 @@ impl DesktopHostSigningIdentity {
     /// key cannot be encoded or the TLS identity cannot be built from it.
     pub fn host_tls_identity(&self) -> Result<HostTlsIdentity, DesktopHostSigningIdentityError> {
         let mut pkcs8 = self
-            .signing_key
+            .tls_signing_key
             .to_pkcs8_der()
             .map_err(|_| DesktopHostSigningIdentityError::EncodePrivateKey)?
             .as_bytes()
@@ -74,16 +84,17 @@ impl DesktopHostSigningIdentity {
         identity
     }
 
-    fn from_signing_key(signing_key: SigningKey) -> Result<Self, DesktopHostSigningIdentityError> {
-        let public_key_der = signing_key
-            .verifying_key()
-            .to_public_key_der()
-            .map_err(|_| DesktopHostSigningIdentityError::EncodePublicKey)?
-            .as_bytes()
-            .to_vec();
+    fn from_keys(
+        signing_key: SigningKey,
+        tls_signing_key: SigningKey,
+    ) -> Result<Self, DesktopHostSigningIdentityError> {
+        let public_key_der = encode_public_key(&signing_key)?;
+        let tls_public_key_der = encode_public_key(&tls_signing_key)?;
         Ok(Self {
             signing_key,
             public_key_der,
+            tls_signing_key,
+            tls_public_key_der,
         })
     }
 }
@@ -111,43 +122,56 @@ impl DesktopHostSigningIdentityProvider for SystemDesktopHostSigningIdentityProv
         &self,
         profile_id: &ProfileId,
     ) -> Result<DesktopHostSigningIdentity, DesktopHostSigningIdentityError> {
-        let account = format!("{SIGNING_ACCOUNT_PREFIX}{}", profile_id.as_str());
-        let entry = Entry::new(KEYRING_SERVICE, &account)
-            .map_err(DesktopHostSigningIdentityError::OpenCredentialStore)?;
+        let signing_key =
+            load_or_create_key(&format!("{SIGNING_ACCOUNT_PREFIX}{}", profile_id.as_str()))?;
+        let tls_signing_key =
+            load_or_create_key(&format!("{TLS_ACCOUNT_PREFIX}{}", profile_id.as_str()))?;
+        DesktopHostSigningIdentity::from_keys(signing_key, tls_signing_key)
+    }
+}
 
-        let der = match entry.get_secret() {
-            Ok(der) => der,
-            Err(KeyringError::NoEntry) => {
-                let signing_key = generate_signing_key()?;
-                let mut generated = signing_key
-                    .to_pkcs8_der()
-                    .map_err(|_| DesktopHostSigningIdentityError::EncodePrivateKey)?
-                    .as_bytes()
-                    .to_vec();
-                if let Err(error) = entry.set_secret(&generated) {
+/// Loads one persistent P-256 key from the credential store under `account`,
+/// generating and verifying it on first use. Fails closed on any storage error.
+fn load_or_create_key(account: &str) -> Result<SigningKey, DesktopHostSigningIdentityError> {
+    let entry = Entry::new(KEYRING_SERVICE, account)
+        .map_err(DesktopHostSigningIdentityError::OpenCredentialStore)?;
+    let der = match entry.get_secret() {
+        Ok(der) => der,
+        Err(KeyringError::NoEntry) => {
+            let signing_key = generate_signing_key()?;
+            let mut generated = signing_key
+                .to_pkcs8_der()
+                .map_err(|_| DesktopHostSigningIdentityError::EncodePrivateKey)?
+                .as_bytes()
+                .to_vec();
+            if let Err(error) = entry.set_secret(&generated) {
+                generated.fill(0);
+                return Err(DesktopHostSigningIdentityError::PersistSecret(error));
+            }
+            match entry.get_secret() {
+                Ok(stored) => {
                     generated.fill(0);
-                    return Err(DesktopHostSigningIdentityError::PersistSecret(error));
+                    stored
                 }
-                match entry.get_secret() {
-                    Ok(stored) => {
-                        generated.fill(0);
-                        stored
-                    }
-                    Err(error) => {
-                        generated.fill(0);
-                        return Err(DesktopHostSigningIdentityError::VerifyPersistedSecret(
-                            error,
-                        ));
-                    }
+                Err(error) => {
+                    generated.fill(0);
+                    return Err(DesktopHostSigningIdentityError::VerifyPersistedSecret(
+                        error,
+                    ));
                 }
             }
-            Err(error) => return Err(DesktopHostSigningIdentityError::ReadSecret(error)),
-        };
+        }
+        Err(error) => return Err(DesktopHostSigningIdentityError::ReadSecret(error)),
+    };
 
-        let signing_key = SigningKey::from_pkcs8_der(&der)
-            .map_err(|_| DesktopHostSigningIdentityError::InvalidStoredKey);
-        DesktopHostSigningIdentity::from_signing_key(signing_key?)
-    }
+    SigningKey::from_pkcs8_der(&der).map_err(|_| DesktopHostSigningIdentityError::InvalidStoredKey)
+}
+
+fn encode_public_key(key: &SigningKey) -> Result<Vec<u8>, DesktopHostSigningIdentityError> {
+    key.verifying_key()
+        .to_public_key_der()
+        .map_err(|_| DesktopHostSigningIdentityError::EncodePublicKey)
+        .map(|der| der.as_bytes().to_vec())
 }
 
 /// Generates a fresh P-256 signing key from CSPRNG bytes, retrying on the
@@ -250,7 +274,10 @@ pub(crate) mod tests_support {
     #[must_use]
     pub(crate) fn fixed_identity_for_tests(seed: u8) -> DesktopHostSigningIdentity {
         let signing_key = SigningKey::from_bytes((&[seed; 32]).into()).expect("fixed test key");
-        DesktopHostSigningIdentity::from_signing_key(signing_key).expect("build test identity")
+        // A distinct TLS key, so tests can tell the two apart.
+        let tls_key = SigningKey::from_bytes((&[seed.wrapping_add(100); 32]).into())
+            .expect("fixed TLS test key");
+        DesktopHostSigningIdentity::from_keys(signing_key, tls_key).expect("build test identity")
     }
 }
 
@@ -263,8 +290,11 @@ mod tests {
     #[test]
     fn a_generated_key_signs_and_its_own_public_key_verifies() {
         let signing_key = generate_signing_key().expect("generate key");
-        let identity =
-            DesktopHostSigningIdentity::from_signing_key(signing_key).expect("build identity");
+        let identity = DesktopHostSigningIdentity::from_keys(
+            signing_key,
+            generate_signing_key().expect("tls key"),
+        )
+        .expect("build identity");
         let signature_base64url = identity.sign_base64url(b"hello invitation");
         let signature_der = base64::Engine::decode(
             &base64::engine::general_purpose::URL_SAFE_NO_PAD,
@@ -289,12 +319,16 @@ mod tests {
 
     #[test]
     fn a_signature_does_not_verify_against_a_different_key() {
-        let identity_a =
-            DesktopHostSigningIdentity::from_signing_key(generate_signing_key().expect("key a"))
-                .expect("identity a");
-        let identity_b =
-            DesktopHostSigningIdentity::from_signing_key(generate_signing_key().expect("key b"))
-                .expect("identity b");
+        let identity_a = DesktopHostSigningIdentity::from_keys(
+            generate_signing_key().expect("key a"),
+            generate_signing_key().expect("tls a"),
+        )
+        .expect("identity a");
+        let identity_b = DesktopHostSigningIdentity::from_keys(
+            generate_signing_key().expect("key b"),
+            generate_signing_key().expect("tls b"),
+        )
+        .expect("identity b");
         let signature_base64url = identity_a.sign_base64url(b"message");
         let signature_der = base64::Engine::decode(
             &base64::engine::general_purpose::URL_SAFE_NO_PAD,
@@ -314,11 +348,17 @@ mod host_tls_identity_tests {
     use super::tests_support::fixed_identity_for_tests;
 
     #[test]
-    fn host_tls_identity_pins_the_same_key_the_invitation_carries() {
+    fn host_tls_identity_pins_the_tls_key_the_invitation_carries() {
         let identity = fixed_identity_for_tests(7);
         let tls = identity.host_tls_identity().expect("tls identity");
-        // A listener pins the invitation's public key; the handshake must prove it.
-        assert_eq!(tls.spki, identity.public_key_der());
+        // A listener pins the invitation's TLS key; the handshake must prove it.
+        assert_eq!(tls.spki, identity.tls_public_key_der());
+    }
+
+    #[test]
+    fn the_tls_key_is_separate_from_the_invitation_signing_key() {
+        let identity = fixed_identity_for_tests(7);
+        assert_ne!(identity.tls_public_key_der(), identity.public_key_der());
     }
 
     #[test]

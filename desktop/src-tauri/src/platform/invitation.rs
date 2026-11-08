@@ -57,7 +57,7 @@ pub(crate) fn build_signed_invitation(
         session_name: advertisement.session_name.clone(),
         host_name: HOST_DISPLAY_NAME.to_owned(),
         host_public_key_der: identity.public_key_der().to_vec(),
-        host_tls_public_key_der: None,
+        host_tls_public_key_der: Some(identity.tls_public_key_der().to_vec()),
         approval_mode: p2_wire_name(advertisement.approval_mode).to_owned(),
         invite_code: if advertisement.approval_mode == ApprovalMode::InviteCode {
             host_draft.invite_code.clone()
@@ -279,5 +279,37 @@ mod tests {
             1_000_000_u64,
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn the_invitation_carries_the_tls_key_the_host_presents_not_the_signing_key() {
+        let draft = HostDraft::default();
+        let host_identity = identity();
+        let invitation = build_signed_invitation(
+            &advertisement(ApprovalMode::Manual),
+            endpoint(),
+            &draft,
+            &host_identity,
+            1_000_000_u64,
+        )
+        .expect("build invitation");
+        let tls_key = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            host_identity.tls_public_key_der(),
+        );
+        let signing_key = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            host_identity.public_key_der(),
+        );
+        assert!(
+            invitation
+                .payload
+                .contains(&format!("\"tk\":\"{tls_key}\""))
+        );
+        assert!(
+            invitation
+                .payload
+                .contains(&format!("\"pk\":\"{signing_key}\""))
+        );
     }
 }
