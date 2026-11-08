@@ -1524,3 +1524,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Gate: check-rust.sh exit 0, 23 suites. desktop cargo check --locked --all-features --all-targets exit 0. Line-count gate: all under 800.
 - NOT done: desktop/Android hosts have no TLS identity (secure_control None); app listeners do not pass invitation key or signer; durable trust binding; downgrade/tamper tests; device tests. Handoff §28.
 - Decision: host lands before listener app wiring, or TLS joins would break against current hosts. Option 2 keeps plaintext unchanged.
+
+## 2026-11-08T00:39:02Z - Haiku 5.5 - Desktop host presents TLS identity (remediation §1, host side)
+- Desktop host builds its control-port TLS identity from the invitation signing key (`invitation_identity.rs` `host_tls_identity`); set at profile open in `app_state/construct.rs`, fail-closed; passed to `HostTransportConfig.secure_control` in `network/host_control.rs`. Same key as the invitation, so the pinned SPKI and the proven SPKI match by construction.
+- Tests: SPKI pinned to invitation key, stability, transport config carries identity (mutation killed, restored), desktop listener proves to invitation identity. Desktop fmt/clippy(-D warnings)/test 407 passed, line-count gate green. `npm run check` not run.
+- Android host still has no TLS identity (Keystore non-exportable; needs Keystore-backed rustls signer). Listener apps not yet passing invitation key/signer. Handoff §29.
+- Mistake: a cp-based backup command wrote to a path outside the repo; it was denied (not root), so nothing stray was created. Verified repo status is only the intended files.

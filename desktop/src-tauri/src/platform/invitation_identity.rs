@@ -15,6 +15,9 @@ use p256::{
     ecdsa::{Signature, SigningKey, signature::Signer},
     pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey},
 };
+use silent_disco_core::transport::secure_control_tls::{
+    HostTlsIdentity, host_tls_identity_from_pkcs8,
+};
 use std::fmt;
 
 const KEYRING_SERVICE: &str = "com.ekkus.silent-disco.desktop";
@@ -46,6 +49,29 @@ impl DesktopHostSigningIdentity {
     pub fn sign_base64url(&self, message: &[u8]) -> String {
         let signature: Signature = self.signing_key.sign(message);
         URL_SAFE_NO_PAD.encode(signature.to_der().as_bytes())
+    }
+
+    /// Builds the TLS identity this host presents on its control port. It is
+    /// derived from the same key that signs invitations, so the SPKI a listener
+    /// pins from an invitation is the key its TLS handshake proves. The PKCS#8
+    /// copy exists only for this call and is zeroed afterwards; it never
+    /// leaves the process.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DesktopHostSigningIdentityError::HostTlsIdentity`] when the
+    /// key cannot be encoded or the TLS identity cannot be built from it.
+    pub fn host_tls_identity(&self) -> Result<HostTlsIdentity, DesktopHostSigningIdentityError> {
+        let mut pkcs8 = self
+            .signing_key
+            .to_pkcs8_der()
+            .map_err(|_| DesktopHostSigningIdentityError::EncodePrivateKey)?
+            .as_bytes()
+            .to_vec();
+        let identity = host_tls_identity_from_pkcs8(&pkcs8)
+            .map_err(|error| DesktopHostSigningIdentityError::HostTlsIdentity(error.to_string()));
+        pkcs8.fill(0);
+        identity
     }
 
     fn from_signing_key(signing_key: SigningKey) -> Result<Self, DesktopHostSigningIdentityError> {
@@ -151,6 +177,7 @@ pub enum DesktopHostSigningIdentityError {
     InvalidStoredKey,
     EncodePrivateKey,
     EncodePublicKey,
+    HostTlsIdentity(String),
 }
 
 impl fmt::Display for DesktopHostSigningIdentityError {
@@ -187,6 +214,9 @@ impl fmt::Display for DesktopHostSigningIdentityError {
             Self::EncodePublicKey => {
                 formatter.write_str("could not encode the host signing public key")
             }
+            Self::HostTlsIdentity(reason) => {
+                write!(formatter, "could not build the host TLS identity: {reason}")
+            }
         }
     }
 }
@@ -202,7 +232,8 @@ impl std::error::Error for DesktopHostSigningIdentityError {
             | Self::KeyGenerationExhausted
             | Self::InvalidStoredKey
             | Self::EncodePrivateKey
-            | Self::EncodePublicKey => None,
+            | Self::EncodePublicKey
+            | Self::HostTlsIdentity(_) => None,
         }
     }
 }
@@ -275,5 +306,26 @@ mod tests {
         let wrong_key = VerifyingKey::from_public_key_der(identity_b.public_key_der())
             .expect("valid public key DER");
         assert!(wrong_key.verify(b"message", &signature).is_err());
+    }
+}
+
+#[cfg(test)]
+mod host_tls_identity_tests {
+    use super::tests_support::fixed_identity_for_tests;
+
+    #[test]
+    fn host_tls_identity_pins_the_same_key_the_invitation_carries() {
+        let identity = fixed_identity_for_tests(7);
+        let tls = identity.host_tls_identity().expect("tls identity");
+        // A listener pins the invitation's public key; the handshake must prove it.
+        assert_eq!(tls.spki, identity.public_key_der());
+    }
+
+    #[test]
+    fn host_tls_identity_is_stable_for_one_key() {
+        let identity = fixed_identity_for_tests(9);
+        let first = identity.host_tls_identity().expect("first");
+        let second = identity.host_tls_identity().expect("second");
+        assert_eq!(first.spki, second.spki);
     }
 }

@@ -28,6 +28,7 @@ use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::{
     CoreActorHandle, NetworkEndpoint, SessionAdvertisement, TransportEffect,
 };
+use silent_disco_core::transport::secure_control_tls::HostTlsIdentity;
 use silent_disco_core::transport::{
     HostTransportConfig, SystemTransportClock, TransportClock, TransportFactory,
     production_transport_factory,
@@ -64,6 +65,9 @@ pub(super) struct NetworkState {
     /// the Settings command, so a restart does not silently revert to
     /// refusing an address the operator deliberately chose.
     pub(super) allow_shared_address_space: bool,
+    /// TLS identity presented on the control port. `None` refuses TLS
+    /// listeners with a visible reason; plaintext listeners are unaffected.
+    pub(super) secure_control: Option<Arc<HostTlsIdentity>>,
     pub(super) active: Option<ActiveBinding>,
 }
 
@@ -102,6 +106,7 @@ impl DesktopHostNetworkControl {
             state: Mutex::new(NetworkState {
                 preference: BindPreference::Automatic,
                 allow_shared_address_space: false,
+                secure_control: None,
                 active: None,
             }),
         }
@@ -245,6 +250,24 @@ impl DesktopHostNetworkControl {
         )
     }
 
+    /// Sets the TLS identity the next host start presents on its control port.
+    /// Set once while the profile opens, before any host is started.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when the network state is poisoned.
+    pub(crate) fn set_host_tls_identity(
+        &self,
+        identity: HostTlsIdentity,
+    ) -> Result<(), DesktopErrorDto> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        state.secure_control = Some(Arc::new(identity));
+        Ok(())
+    }
+
     fn start_host_with_sink(
         &self,
         advertisement: &SessionAdvertisement,
@@ -273,6 +296,7 @@ impl DesktopHostNetworkControl {
         config.control_port = self.ports.control;
         config.sync_port = self.ports.sync;
         config.audio_port = self.ports.audio;
+        config.secure_control.clone_from(&state.secure_control);
         let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
         let node = self
             .transport_factory

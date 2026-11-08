@@ -344,6 +344,41 @@ fn one_private_lan_address_is_selected_and_bound_through_shared_factory() {
 /// usable -- but it must also never be silently swallowed. It has to show
 /// up, honestly, in the snapshot the UI reads.
 #[test]
+fn host_start_hands_the_host_tls_identity_to_the_transport() {
+    let address = Ipv4Addr::new(192, 168, 50, 10);
+    let records = vec![interface("enp1s0", 2, IpAddr::V4(address))];
+    let provider = Arc::new(SequenceProvider::new([records.clone(), records]));
+    let shutdown_called = Arc::new(AtomicBool::new(false));
+    let factory = Arc::new(FakeTransportFactory::new(Arc::clone(&shutdown_called)));
+    let control = DesktopHostNetworkControl::with_components(
+        provider,
+        factory.clone(),
+        TestHostPorts::default(),
+    );
+    let identity = crate::platform::invitation_identity::tests_support::fixed_identity_for_tests(5)
+        .host_tls_identity()
+        .expect("tls identity");
+    let expected_spki = identity.spki.clone();
+    control
+        .set_host_tls_identity(identity)
+        .expect("set tls identity");
+
+    control
+        .start_host_inner(&advertisement())
+        .expect("bind host endpoint");
+    let seen = factory.seen_config.lock().expect("seen config");
+    let presented = seen
+        .as_ref()
+        .expect("host config")
+        .secure_control
+        .as_ref()
+        .expect("secure control identity");
+    assert_eq!(presented.spki, expected_spki);
+    drop(seen);
+    control.stop_host_inner().expect("stop host");
+}
+
+#[test]
 fn a_publish_failure_does_not_fail_host_start_but_is_visible_in_the_snapshot() {
     let address = Ipv4Addr::new(192, 168, 50, 11);
     let records = vec![interface("enp1s0", 2, IpAddr::V4(address))];

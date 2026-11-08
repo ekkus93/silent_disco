@@ -86,6 +86,27 @@ pub(super) fn open_runtime(
         }
     };
 
+    // The host presents the invitation key as its TLS identity, so a listener
+    // that pins the invitation's host key proves this host on the control
+    // port. A host that cannot build that identity must not open, or TLS
+    // listeners would be refused without a clear cause.
+    let host_tls = match signing_identity.host_tls_identity() {
+        Ok(identity) => identity,
+        Err(error) => {
+            let primary = DesktopErrorDto::new(
+                "desktop.host_tls_identity.unavailable",
+                "platform",
+                "fatal",
+                false,
+                &error.to_string(),
+            );
+            return Err(cleanup_lease(lease, primary));
+        }
+    };
+    if let Err(primary) = network.set_host_tls_identity(host_tls) {
+        return Err(cleanup_lease(lease, primary));
+    }
+
     let database_config = match DatabaseConfig::new(paths.domain_database()) {
         Ok(config) => config,
         Err(error) => {

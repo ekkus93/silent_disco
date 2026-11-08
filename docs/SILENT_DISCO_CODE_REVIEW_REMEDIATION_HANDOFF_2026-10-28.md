@@ -486,3 +486,26 @@ Mutations, both restored and verified identical: dropping the partially accepted
 - *Missing deadline test.* A TLS peer that never sends a join is cut off by the pump's admission deadline, but no test covers it yet. Post-join trickle is also unbounded (the TCP reader's frame deadline does not apply to the TLS channel). Both are noted for follow-up.
 
 **Decision recorded.** Option 2 keeps plaintext working unchanged, so no cutover is needed. A listener should use TLS only when its invitation carries a host key, and a host should accept it only once its own identity is configured. Wiring the listener side before the host side would break joins, so the host lands first.
+
+## 29. 2026-11-08 — Desktop host presents a TLS identity (remediation §1, host side)
+
+**What changed.** The desktop host now presents a TLS identity on its control port, built from the same P-256 key that signs its invitations. A listener that pins the invitation's host key therefore proves the key the host actually holds. Plaintext listeners are unaffected, because the control port still routes non-TLS bytes to the plaintext path.
+
+- `platform/invitation_identity.rs`: `DesktopHostSigningIdentity::host_tls_identity()` derives a `HostTlsIdentity` from the signing key. The PKCS#8 copy is zeroed after use and never leaves the process.
+- `platform/network/host_control.rs`: `set_host_tls_identity` stores the identity in the network state. `start_host_with_sink` copies it into `HostTransportConfig.secure_control`.
+- `app_state/construct.rs`: profile open derives and sets the identity right after the signing identity loads. Failure fails the open closed (`desktop.host_tls_identity.unavailable`), so the host never runs with TLS silently absent.
+
+**Why this key.** The listener pins the SPKI carried by the invitation. Reusing the invitation key makes the pinned value and the proven value the same by construction. A separate TLS key would need its own distribution and would drift from the invitation.
+
+**Tests (all real code paths).**
+- `host_tls_identity_pins_the_same_key_the_invitation_carries`: the TLS SPKI equals the invitation's `public_key_der`.
+- `host_tls_identity_is_stable_for_one_key`.
+- `host_start_hands_the_host_tls_identity_to_the_transport`: the transport config received at bind carries the identity. Mutation (`secure_control = None`) fails it; restored and verified.
+- `a_desktop_listener_proves_to_a_host_presenting_the_invitation_identity`: the desktop listener's `prove_to_host` verifies against the host identity built from the invitation key.
+
+**Gates.** Desktop `cargo fmt --check` exit 0; `cargo clippy --locked --all-features --all-targets -- -D warnings` exit 0; `cargo test --locked --all-features` 407 passed, 0 failed, 5 ignored; `scripts/check-source-file-line-counts.sh` exit 0 (869 files). Core was not changed in this step. `npm run check` was not run.
+
+**Not done (still open).**
+- Android host: the key is non-exportable in Keystore, so its TLS signer needs a Keystore-backed rustls signing key. Still `secure_control: None`, so TLS listeners to an Android host are refused with a visible reason.
+- Listener app wiring: the FFI listener config and the Kotlin and desktop listener join paths do not yet pass `secure_host` (invitation key plus signer). Listeners still join over plaintext.
+- Trust binding (item 5), downgrade and tamper negative tests (item 4), device runs (items 5–6), and the admission-deadline and post-join trickle tests from §28.

@@ -162,6 +162,46 @@ mod tests {
     }
 
     #[test]
+    fn a_desktop_listener_proves_to_a_host_presenting_the_invitation_identity() {
+        // The host's TLS identity is built from its invitation key, so the key
+        // a listener pins from the invitation is the key the host proves.
+        let root = owner_only_directory();
+        let directory = root.path().join("profile");
+        let signing =
+            crate::platform::invitation_identity::tests_support::fixed_identity_for_tests(21);
+        let invitation_host_key = signing.public_key_der().to_vec();
+        let identity = signing.host_tls_identity().expect("host tls identity");
+        let session = SessionId::new("invitation-identity-session").expect("session");
+        let server = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = server.local_addr().expect("address");
+
+        let client_directory = directory.clone();
+        let client_session = session.clone();
+        let client = thread::spawn(move || {
+            prove_to_host(
+                &client_directory,
+                address,
+                &invitation_host_key,
+                &client_session,
+                1,
+            )
+        });
+        accept_and_verify(
+            &server,
+            &identity.certificate,
+            &identity.signing_key,
+            &identity.spki,
+            &session,
+            1,
+        )
+        .expect("the host verifies the desktop proof against its invitation identity");
+        client
+            .join()
+            .expect("client thread")
+            .expect("desktop proof");
+    }
+
+    #[test]
     fn a_desktop_listener_refuses_to_prove_to_a_host_it_did_not_pin() {
         let root = owner_only_directory();
         let directory = root.path().join("profile");
