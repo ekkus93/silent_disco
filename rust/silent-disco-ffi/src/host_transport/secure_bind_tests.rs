@@ -99,17 +99,31 @@ fn a_host_whose_key_stays_on_the_platform_is_verified_by_a_pinned_listener_over_
 }
 
 /// Two free loopback ports, found by binding and releasing them.
+/// Three loopback ports that are free for both TCP (control) and UDP (sync and
+/// audio). The host binds all three, so probing only TCP could collide with a
+/// UDP port another test is using.
 fn free_ports() -> (u16, u16, u16) {
-    let ports: Vec<u16> = (0..3)
-        .map(|_| {
-            std::net::TcpListener::bind("127.0.0.1:0")
-                .expect("probe port")
-                .local_addr()
-                .expect("probe address")
-                .port()
-        })
-        .collect();
-    (ports[0], ports[1], ports[2])
+    loop {
+        let control = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("probe control port")
+            .local_addr()
+            .expect("probe control address")
+            .port();
+        let sync = std::net::UdpSocket::bind("127.0.0.1:0")
+            .expect("probe sync port")
+            .local_addr()
+            .expect("probe sync address")
+            .port();
+        let audio = std::net::UdpSocket::bind("127.0.0.1:0")
+            .expect("probe audio port")
+            .local_addr()
+            .expect("probe audio address")
+            .port();
+        if control != sync && control != audio && sync != audio {
+            // The probes are dropped before the host binds, so the ports can be reused.
+            return (control, sync, audio);
+        }
+    }
 }
 
 fn endpoint_payload(session: &str, control: u16, sync: u16, audio: u16) -> String {
