@@ -46,6 +46,7 @@ mod tests {
                 session_name: "Rooftop Disco".to_owned(),
                 host_name: "Phillip's host".to_owned(),
                 host_public_key_der: public_key,
+                host_tls_public_key_der: None,
                 approval_mode: "invite_code".to_owned(),
                 invite_code: Some("4826".to_owned()),
                 issued_at_ms: now,
@@ -253,5 +254,80 @@ mod tests {
             }
             other => panic!("expected InvalidQr, got {other:?}"),
         }
+    }
+
+    fn tls_spki(seed: u8) -> Vec<u8> {
+        SigningKey::from_bytes((&[seed; 32]).into())
+            .expect("fixed TLS key")
+            .verifying_key()
+            .to_public_key_der()
+            .expect("TLS SPKI")
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn a_tls_key_signed_into_the_invitation_round_trips_to_the_listener() {
+        let path = test_path("qr-tls-key-valid");
+        let now = 2_000_000_000_u64;
+        let (mut qr_input, signing_key) = input(now, None);
+        let tls = tls_spki(81);
+        qr_input.host_tls_public_key_der = Some(tls.clone());
+        let payload = sign(&qr_input, &signing_key);
+        let mut store = P2Store::open(&path).expect("open");
+        let validated = store
+            .validate_and_consume_qr(&payload, now + 1_000)
+            .expect("validate");
+        assert_eq!(validated.host_tls_public_key_der, Some(tls));
+        drop(store);
+        remove_database(&path);
+    }
+
+    #[test]
+    fn a_tls_key_replaced_after_signing_breaks_the_invitation_signature() {
+        let path = test_path("qr-tls-key-tamper");
+        let now = 2_000_000_000_u64;
+        let (mut qr_input, signing_key) = input(now, None);
+        qr_input.host_tls_public_key_der = Some(tls_spki(82));
+        let payload = sign(&qr_input, &signing_key);
+        let attacker = URL_SAFE_NO_PAD.encode(tls_spki(83));
+        let original = URL_SAFE_NO_PAD.encode(tls_spki(82));
+        let tampered = payload.replacen(&original, &attacker, 1);
+        assert_ne!(tampered, payload, "fixture must contain the signed key");
+        let mut store = P2Store::open(&path).expect("open");
+        assert!(matches!(
+            store.validate_and_consume_qr(&tampered, now + 1_000),
+            Err(P2Error::InvalidSignature)
+        ));
+        drop(store);
+        remove_database(&path);
+    }
+
+    #[test]
+    fn an_invitation_without_a_tls_key_keeps_its_signed_bytes_and_joins_over_plaintext() {
+        let path = test_path("qr-tls-key-absent");
+        let now = 2_000_000_000_u64;
+        let (qr_input, signing_key) = input(now, None);
+        let unsigned = prepare_unsigned_qr(&qr_input).expect("unsigned");
+        assert!(!unsigned.contains("\"tk\""), "absent key must not change the signed bytes");
+        let payload = sign(&qr_input, &signing_key);
+        let mut store = P2Store::open(&path).expect("open");
+        let validated = store
+            .validate_and_consume_qr(&payload, now + 1_000)
+            .expect("validate");
+        assert_eq!(validated.host_tls_public_key_der, None);
+        drop(store);
+        remove_database(&path);
+    }
+
+    #[test]
+    fn a_non_p256_tls_key_is_refused_before_signing() {
+        let now = 2_000_000_000_u64;
+        let (mut qr_input, _) = input(now, None);
+        qr_input.host_tls_public_key_der = Some(vec![1, 2, 3]);
+        assert!(matches!(
+            prepare_unsigned_qr(&qr_input),
+            Err(P2Error::InvalidArgument(_))
+        ));
     }
 }

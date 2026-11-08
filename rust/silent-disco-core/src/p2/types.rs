@@ -120,6 +120,10 @@ pub struct QrInvitationInput {
     pub session_name: String,
     pub host_name: String,
     pub host_public_key_der: Vec<u8>,
+    /// SPKI DER of the host's TLS control-channel key, signed into the invitation
+    /// so listeners pin the key their TLS handshake proves. Absent for hosts
+    /// without a TLS identity; such invitations join over plaintext only.
+    pub host_tls_public_key_der: Option<Vec<u8>>,
     pub approval_mode: String,
     pub invite_code: Option<String>,
     pub issued_at_ms: u64,
@@ -144,6 +148,8 @@ pub struct ValidatedQrInvitation {
     pub session_name: String,
     pub host_name: String,
     pub host_public_key_der: Vec<u8>,
+    /// The verified TLS control-channel key, when the invitation carries one.
+    pub host_tls_public_key_der: Option<Vec<u8>>,
     pub host_fingerprint: String,
     pub approval_mode: String,
     pub invite_code: Option<String>,
@@ -167,6 +173,8 @@ struct UnsignedQrDocument {
     sn: String,
     hn: String,
     pk: String,
+    #[serde(default)]
+    tk: Option<String>,
     am: String,
     code: Option<String>,
     iat: u64,
@@ -185,6 +193,8 @@ struct SignedQrDocument {
     sn: String,
     hn: String,
     pk: String,
+    #[serde(default)]
+    tk: Option<String>,
     am: String,
     code: Option<String>,
     iat: u64,
@@ -204,6 +214,7 @@ impl From<SignedQrDocument> for UnsignedQrDocument {
             sn: value.sn,
             hn: value.hn,
             pk: value.pk,
+            tk: value.tk,
             am: value.am,
             code: value.code,
             iat: value.iat,

@@ -111,6 +111,7 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
     session_name: JString<'_>,
     host_name: JString<'_>,
     public_key_der: JByteArray<'_>,
+    tls_public_key_der: JByteArray<'_>,
     approval_mode: JString<'_>,
     invite_code: JString<'_>,
     issued_at_ms: jlong,
@@ -123,6 +124,9 @@ pub extern "system" fn Java_com_ekkus_silentdisco_core_rust_P2RustBridge_nativeP
             session_name: java_string(&mut env, &session_name)?,
             host_name: java_string(&mut env, &host_name)?,
             host_public_key_der: java_bytes(&mut env, &public_key_der)?,
+            // A null TLS key means the host has no TLS identity; the
+            // invitation then carries no `tk` and listeners join over plaintext.
+            host_tls_public_key_der: optional_java_bytes(&mut env, &tls_public_key_der)?,
             approval_mode: java_string(&mut env, &approval_mode)?,
             invite_code: optional_java_string(&mut env, &invite_code)?,
             issued_at_ms: u64::try_from(issued_at_ms).map_err(|_| Status::InvalidArgument)?,

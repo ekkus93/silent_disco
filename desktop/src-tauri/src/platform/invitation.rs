@@ -57,6 +57,7 @@ pub(crate) fn build_signed_invitation(
         session_name: advertisement.session_name.clone(),
         host_name: HOST_DISPLAY_NAME.to_owned(),
         host_public_key_der: identity.public_key_der().to_vec(),
+        host_tls_public_key_der: None,
         approval_mode: p2_wire_name(advertisement.approval_mode).to_owned(),
         invite_code: if advertisement.approval_mode == ApprovalMode::InviteCode {
             host_draft.invite_code.clone()

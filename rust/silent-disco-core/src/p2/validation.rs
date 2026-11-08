@@ -13,6 +13,13 @@ fn unsigned_document(input: &QrInvitationInput) -> Result<UnsignedQrDocument, P2
         sn: input.session_name.clone(),
         hn: input.host_name.clone(),
         pk: URL_SAFE_NO_PAD.encode(&input.host_public_key_der),
+        tk: match &input.host_tls_public_key_der {
+            Some(key) => {
+                validate_tls_public_key(key)?;
+                Some(URL_SAFE_NO_PAD.encode(key))
+            }
+            None => None,
+        },
         am: input.approval_mode.clone(),
         code: input.invite_code.clone(),
         iat: input.issued_at_ms,
@@ -22,11 +29,30 @@ fn unsigned_document(input: &QrInvitationInput) -> Result<UnsignedQrDocument, P2
     })
 }
 
+/// Checks a TLS control-channel key: a bounded P-256 `SubjectPublicKeyInfo`.
+fn validate_tls_public_key(key: &[u8]) -> Result<(), P2Error> {
+    if key.is_empty() || key.len() > MAX_PUBLIC_KEY_BYTES {
+        return Err(P2Error::InvalidArgument(
+            "host TLS public key has an unsupported size".to_owned(),
+        ));
+    }
+    p256::ecdsa::VerifyingKey::from_public_key_der(key).map_err(|_| {
+        P2Error::InvalidArgument("host TLS public key is not a P-256 key".to_owned())
+    })?;
+    Ok(())
+}
+
 fn validate_unsigned(document: &UnsignedQrDocument, now_ms: u64) -> Result<(), P2Error> {
     if document.v != 1 || document.alg != "ES256" {
         return Err(P2Error::InvalidQr(
             "unsupported invitation version or signature algorithm".to_owned(),
         ));
+    }
+    if let Some(tk) = &document.tk {
+        let key = URL_SAFE_NO_PAD
+            .decode(tk.as_bytes())
+            .map_err(|_| P2Error::InvalidQr("host TLS key is not valid base64url".to_owned()))?;
+        validate_tls_public_key(&key).map_err(|error| P2Error::InvalidQr(error.to_string()))?;
     }
     SessionId::new(document.sid.clone())
         .map_err(|_| P2Error::InvalidQr("session identifier is invalid".to_owned()))?;
@@ -99,14 +125,21 @@ fn validate_connection_payload(value: Option<&str>, now_ms: u64) -> Result<(), P
 }
 
 fn canonical_unsigned(document: &UnsignedQrDocument) -> Result<String, P2Error> {
+    // `tk` is written only when present, so invitations without a TLS key keep
+    // exactly the bytes they were signed over before the field existed.
+    let tls_key = match &document.tk {
+        Some(tk) => format!("\"tk\":{},", json_string(tk)?),
+        None => String::new(),
+    };
     Ok(format!(
-        "{{\"v\":{},\"alg\":{},\"sid\":{},\"sn\":{},\"hn\":{},\"pk\":{},\"am\":{},\"code\":{},\"iat\":{},\"exp\":{},\"nonce\":{},\"conn\":{}}}",
+        "{{\"v\":{},\"alg\":{},\"sid\":{},\"sn\":{},\"hn\":{},\"pk\":{},{}\"am\":{},\"code\":{},\"iat\":{},\"exp\":{},\"nonce\":{},\"conn\":{}}}",
         document.v,
         json_string(&document.alg)?,
         json_string(&document.sid)?,
         json_string(&document.sn)?,
         json_string(&document.hn)?,
         json_string(&document.pk)?,
+        tls_key,
         json_string(&document.am)?,
         match &document.code {
             Some(code) => json_string(code)?,

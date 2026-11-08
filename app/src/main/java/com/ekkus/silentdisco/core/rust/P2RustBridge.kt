@@ -258,6 +258,7 @@ object P2RustBridge {
         sessionName: String,
         hostName: String,
         publicKeyDer: ByteArray,
+        tlsPublicKeyDer: ByteArray?,
         approvalMode: String,
         inviteCode: String?,
         issuedAtMs: Long,
@@ -288,6 +289,7 @@ object P2RustBridge {
         issuedAtMs: Long,
         expiresAtMs: Long,
         nonce: String,
+        tlsPublicKeyDer: ByteArray? = null,
     ): String = envelopeValue(
         invokeP2Native("prepare QR invitation") {
             nativeP2PrepareUnsignedQrJson(
@@ -295,6 +297,7 @@ object P2RustBridge {
                 sessionName,
                 hostName,
                 publicKeyDer,
+                tlsPublicKeyDer,
                 approvalMode,
                 inviteCode,
                 issuedAtMs,

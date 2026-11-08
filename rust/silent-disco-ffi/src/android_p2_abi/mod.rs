@@ -152,6 +152,17 @@ fn java_bytes(env: &mut JNIEnv<'_>, value: &JByteArray<'_>) -> Result<Vec<u8>, S
         .map_err(|_| Status::Conversion)
 }
 
+fn optional_java_bytes(
+    env: &mut JNIEnv<'_>,
+    value: &JByteArray<'_>,
+) -> Result<Option<Vec<u8>>, Status> {
+    if value.is_null() {
+        Ok(None)
+    } else {
+        java_bytes(env, value).map(Some)
+    }
+}
+
 fn new_string(env: &mut JNIEnv<'_>, value: &str) -> jstring {
     env.new_string(value).map_or(null_mut(), JString::into_raw)
 }
@@ -199,6 +210,7 @@ fn invitation_json(value: &ValidatedQrInvitation) -> Value {
         "hostName": value.host_name,
         "hostFingerprint": value.host_fingerprint,
         "hostPublicKeyDer": STANDARD.encode(&value.host_public_key_der),
+        "hostTlsPublicKeyDer": value.host_tls_public_key_der.as_ref().map(|key| STANDARD.encode(key)),
         "approvalMode": value.approval_mode,
         "inviteCode": value.invite_code,
         "issuedAtMs": value.issued_at_ms,

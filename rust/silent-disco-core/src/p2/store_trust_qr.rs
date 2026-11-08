@@ -140,6 +140,12 @@ impl P2Store {
             host_name: unsigned.hn,
             host_fingerprint: public_key_fingerprint(&public_key_der),
             host_public_key_der: public_key_der,
+            host_tls_public_key_der: unsigned
+                .tk
+                .as_deref()
+                .map(|tk| URL_SAFE_NO_PAD.decode(tk.as_bytes()))
+                .transpose()
+                .map_err(|_| P2Error::InvalidQr("host TLS key is not valid base64url".to_owned()))?,
             approval_mode: unsigned.am,
             invite_code: unsigned.code,
             issued_at_ms: unsigned.iat,
