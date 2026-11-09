@@ -59,3 +59,35 @@ The `JoinRequestSummary` trust projection must come from the **verified v4 peer 
 ## Outstanding engineering verification
 
 Before choosing exact QUIC dependency versions, confirm Android minSdk/API29 integration, Rust/UniFFI threading and JNI-backed Keystore signing, QUIC exporter/channel-binding APIs, desktop OS key-store coverage, certificate rotation, transport memory limits and GitHub-hosted CI support. If QUIC's platform signing or latency proves unsuitable, amend this ADR with a measured alternative **before** implementing any custom datagram cryptography.
+
+## UDP PCM and synchronization design (proposed, for owner review; not implemented)
+
+Status: design only. Nothing here is implemented or verified. It follows the decision above (QUIC datagrams, no hand-derived UDP AEAD).
+
+**Connection layout.** One QUIC connection per host↔listener pair, with the host as the server. Bidirectional stream 0 carries the v4 handshake, listener proof, join/approval, lifecycle, clock-control and TrackBoundary messages. QUIC DATAGRAM frames carry PCM and synchronization probes. There are no separate UDP sockets, keys or nonces: QUIC packet protection and the TLS 1.3 traffic secrets cover the datagrams.
+
+**Channel binding.** The listener proof on stream 0 uses the TLS exporter of that same connection, as the TCP admission path does now. Reconnect creates a new connection, so new keys and a new generation.
+
+**Datagram size (open constraint).** A 20 ms packet at 48 kHz stereo 16-bit is 3,840 bytes. QUIC datagrams are normally limited to about 1,200 bytes. Options:
+- (a) Split each packet into fixed fragments, with a per-fragment index and a bounded reassembly window tied to the jitter buffer. If any fragment is lost, the whole packet is dropped and the drop is counted.
+- (b) Shorten the packet (for example 5 ms, four times as many datagrams). This changes the jitter-buffer and packetizer budget.
+- (c) Send PCM on a reliable stream. Rejected: it adds head-of-line delay that breaks the sync budget.
+I recommend (a) with 3 fragments of at most 1,200 bytes, because it keeps the 20 ms packet target. This needs an owner decision.
+
+**Replay and freshness.** QUIC anti-replay is not enough. After decryption, the existing checks still apply: `session_id`, `stream_id`, a generation check, monotonic `sequence` and `first_sample_index`, and the deadline. Each check runs before the packet reaches the packetizer or scheduler.
+
+**Routing and trust.** A datagram is accepted only from the connection that holds the authorised route for its listener. The route is bound to the verified v4 principal, not to a claimed device ID.
+
+**Callback boundary.** QUIC I/O, decryption and validation run on transport threads. The native callback receives only already-validated samples through the existing render ring. It never blocks on the network.
+
+**Migration phases (matches the incremental gates above).**
+1. Add the quinn/rustls adapter behind a compile-time and runtime feature. Pin the version, confirm it is compatible with rustls `=0.23.46` and the ring provider, and confirm it builds for Android API 29 NDK targets. Keep v3 as legacy-only.
+2. Move the handshake and control messages to stream 0, with the proof bound to the exporter.
+3. Move sync probes to datagrams, then PCM with fragmentation.
+4. Remove the plaintext UDP path from production configurations.
+
+**Tests.** Two listeners with different connection keys, mixed sample rates and boundaries, Pause/Resume, late join, Stop/replay, forged or replayed datagrams, a dropped fragment (whole packet dropped and counted), and a packet capture showing no plaintext PCM or invite payload on the wire.
+
+**Risks.** QUIC congestion control can drop datagrams under load, which changes loss behaviour. CPU and memory on Android need measurement. The new dependency adds build and audit surface. The `quinn` version must be checked against the Android NDK build, since the current ring build is already pinned.
+
+**Decisions needed.** (1) Approve adding `quinn` as a dependency at implementation time. (2) Approve the 3-fragment approach or choose (b). (3) Accept that this replaces the hand-derived AEAD design in §1 item 2 of the remediation TODO.
