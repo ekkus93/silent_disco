@@ -10,7 +10,8 @@ import kotlinx.coroutines.launch
 internal fun MainViewModel.startCallbackPcmCapture() {
     if (!BuildConfig.DEBUG) return
     if (listenerCallbackCapture != null || _callbackCaptureStatus.value == "Finalizing capture") return
-    val playback = listenerPlayback ?: run {
+    // The manual listener path owns its playback runtime through its own controller.
+    val playback = listenerPlayback ?: manualListenerController.playbackRuntime ?: run {
         _callbackCaptureStatus.value = "Connect and start listener playback before recording"
         return
     }
