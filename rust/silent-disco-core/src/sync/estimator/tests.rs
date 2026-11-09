@@ -378,3 +378,32 @@ fn acquisition_never_exceeds_its_bounded_ceiling_and_steady_state_returns_to_str
     assert!(steady_state.acquisition.degraded_lock);
     assert_eq!(steady_state.snapshot.accepted_sample_count, 1);
 }
+
+/// A skew slope needs a long span: a few seconds of round-trip asymmetry
+/// must not be reported as thousands of ppm.
+#[test]
+fn skew_is_not_reported_from_a_short_drift_history() {
+    let history: std::collections::VecDeque<(LocalMonotonicMillis, f64)> =
+        [(0_u64, 62_567.5), (2_000, 62_561.5), (4_000, 62_559.5)]
+            .into_iter()
+            .map(|(time, offset)| (LocalMonotonicMillis::new(time), offset))
+            .collect();
+
+    assert_close(super::estimate_skew_ppm(&history), 0.0);
+}
+
+/// Over a long span the slope recovers a known drift.
+#[test]
+fn skew_recovers_a_known_drift_over_a_long_history() {
+    // A 100 ppm clock: the offset grows by 0.1 ms per second of local time.
+    let history: std::collections::VecDeque<(LocalMonotonicMillis, f64)> = (0..=20_u64)
+        .map(|step| {
+            let time = step * 4_000;
+            #[allow(clippy::cast_precision_loss)]
+            let offset = 1_000.0 + (time as f64) * 0.0001;
+            (LocalMonotonicMillis::new(time), offset)
+        })
+        .collect();
+
+    assert_close(super::estimate_skew_ppm(&history), 100.0);
+}

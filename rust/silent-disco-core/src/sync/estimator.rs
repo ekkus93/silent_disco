@@ -29,6 +29,11 @@ pub const MAX_DRIFT_HISTORY_SAMPLES: usize = 256;
 /// eviction only ever discards probes whose response is genuinely never
 /// coming, not a slow-but-real one.
 pub const PENDING_PROBE_MAX_AGE_MS: u64 = 5_000;
+/// Shortest span of drift history from which a skew slope is reported. Over
+/// a few seconds the offset still carries round-trip asymmetry of several
+/// milliseconds, which fits as a slope of thousands of ppm. A real device
+/// drifts tens of ppm, so the slope only means something over a longer span.
+pub const MIN_SKEW_ESTIMATE_SPAN_MS: u64 = 60_000;
 
 /// Acquisition stays strict until enough measured rejections show the default
 /// gate is unsuitable for the current path.
@@ -476,9 +481,14 @@ fn estimate_skew_ppm(history: &VecDeque<(LocalMonotonicMillis, f64)>) -> f64 {
     if history.len() < 3 {
         return 0.0;
     }
-    let Some((origin, _)) = history.front().copied() else {
+    let (Some((origin, _)), Some((newest, _))) =
+        (history.front().copied(), history.back().copied())
+    else {
         return 0.0;
     };
+    if newest.get().saturating_sub(origin.get()) < MIN_SKEW_ESTIMATE_SPAN_MS {
+        return 0.0;
+    }
     let points: Vec<(f64, f64)> = history
         .iter()
         .map(|(time, offset)| {
