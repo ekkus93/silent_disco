@@ -175,6 +175,18 @@ impl FfiListenerPlaybackHandle {
         Ok(())
     }
 
+    /// Silences output for the listener's own pause and drops what is queued,
+    /// so audio stops immediately. Returns how many buffered packets were
+    /// discarded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FfiListenerPlaybackError::Stopped`] once stopped.
+    pub fn pause_output(&self) -> Result<u64, FfiListenerPlaybackError> {
+        let discarded = self.runtime.pause_output()?;
+        Ok(u64::try_from(discarded).unwrap_or(u64::MAX))
+    }
+
     /// Registers one outbound sync probe before it is sent.
     ///
     /// # Errors

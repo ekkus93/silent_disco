@@ -319,8 +319,11 @@ class ManualListenerTransportController(
             }
             is FfiListenerTransportEvent.StreamStarted -> handleStreamStarted(scope, handle, event)
             is FfiListenerTransportEvent.TrackBoundary -> Unit
-            is FfiListenerTransportEvent.Paused ->
+            is FfiListenerTransportEvent.Paused -> {
+                // Silence at once: drop the queued audio rather than playing it out.
+                pauseOutput()
                 _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PAUSED)
+            }
             is FfiListenerTransportEvent.Stopped -> handleStreamStopped()
             is FfiListenerTransportEvent.SyncResponseReceived -> handleSyncResponse(handle, event)
             is FfiListenerTransportEvent.AudioReceived -> handleAudioReceived(event)

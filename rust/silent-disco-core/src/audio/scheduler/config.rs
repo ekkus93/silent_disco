@@ -18,6 +18,11 @@ pub const DEFAULT_STARTUP_BUFFER_TARGET_MS: u64 = 400;
 /// silence on a real device (LG G6, 2026-08-09), because that platform
 /// sets a 1000ms startup buffer.
 pub const DEFAULT_REBUFFER_TARGET_MS: u64 = 400;
+/// Buffered span, in milliseconds, a stream must rebuild before resuming
+/// after the listener's own pause. A pause flushes everything queued, so the
+/// resume is not a rebuffer over an outage; the host has already held the
+/// timeline for the pause, and only a short cushion is needed.
+pub const DEFAULT_RESUME_BUFFER_TARGET_MS: u64 = 100;
 /// Default buffered-span threshold, in milliseconds, below which
 /// [`BufferHealth::Low`](super::types::BufferHealth::Low) is reported.
 pub const DEFAULT_LOW_WATER_MS: u64 = 200;

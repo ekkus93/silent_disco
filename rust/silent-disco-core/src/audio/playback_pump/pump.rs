@@ -176,3 +176,17 @@ impl PlaybackPump {
         self.producer.capacity_frames() - self.producer.free_frames()
     }
 }
+
+impl PlaybackPump {
+    /// Silences output for the listener's own pause. The scheduler discards
+    /// everything it buffered, the converted samples not yet in the ring are
+    /// dropped, and the consumer is asked to discard what the ring holds, so
+    /// audio stops at once instead of playing out the queued backlog. Returns
+    /// how many buffered packets were discarded.
+    pub fn pause_output(&mut self) -> usize {
+        let discarded = self.scheduler.pause();
+        self.pending.clear();
+        self.producer.request_flush();
+        discarded
+    }
+}

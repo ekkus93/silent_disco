@@ -27,6 +27,8 @@ mod concealment_tests;
 #[cfg(test)]
 mod config_tests;
 #[cfg(test)]
+mod pause_tests;
+#[cfg(test)]
 mod resync_tests;
 #[cfg(test)]
 mod timing_tests;

@@ -215,6 +215,20 @@ impl ListenerPlaybackRuntime {
         Ok(())
     }
 
+    /// Silences output for the listener's own pause. Buffered audio is
+    /// discarded at once rather than played out, and the stream resumes after
+    /// a short rebuffer. Returns how many buffered packets were discarded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ListenerPlaybackError::Stopped`] once the runtime has been
+    /// stopped.
+    pub fn pause_output(&self) -> Result<usize, ListenerPlaybackError> {
+        let mut pump = self.shared.lock_pump();
+        self.ensure_running()?;
+        Ok(pump.pause_output())
+    }
+
     /// Captures every frame this stream releases toward the ring to a WAV at
     /// `path`, for offline comparison against the diagnostics counters.
     ///

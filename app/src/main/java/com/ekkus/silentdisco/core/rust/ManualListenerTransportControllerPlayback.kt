@@ -210,6 +210,17 @@ internal fun ManualListenerTransportController.startDebugCapture(runtime: FfiLis
         }
 }
 
+/**
+ * Silences playback for the host's pause: queued audio is dropped, and the
+ * stream resumes after a short rebuffer when the host resumes it.
+ */
+internal fun ManualListenerTransportController.pauseOutput() {
+    val runtime = playbackRuntime ?: return
+    runCatching { runtime.pauseOutput() }
+        .onSuccess { discarded -> logger.i("manual.audio.paused", "discardedPackets=$discarded") }
+        .onFailure { error -> handlePlaybackEngineFailure(error) }
+}
+
 internal fun ManualListenerTransportController.handleStreamStopped() {
     // The runtime drains its own buffered tail as part of stopping, so a
     // stream's final moments are played rather than discarded. The native

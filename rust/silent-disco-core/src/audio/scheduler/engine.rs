@@ -17,7 +17,7 @@ use crate::audio::{
 };
 use crate::protocol::AudioDatagram;
 
-use super::config::SchedulerConfig;
+use super::config::{DEFAULT_RESUME_BUFFER_TARGET_MS, SchedulerConfig};
 use super::errors::{SchedulerConfigError, SchedulerConfigErrorKind};
 use super::types::{
     BufferHealth, OffsetUpdateOutcome, PlaybackPhase, ScheduledFrame, SchedulerPoll, SchedulerState,
@@ -39,6 +39,10 @@ enum BufferTargetProgress {
 }
 
 #[derive(Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag tracks one independent point in the startup, rebuffer, and resume state machine"
+)]
 pub struct PlaybackScheduler {
     config: SchedulerConfig,
     jitter_buffer: JitterBuffer,
@@ -67,6 +71,9 @@ pub struct PlaybackScheduler {
     /// target every time that happens -- a real-time arrival stream would
     /// otherwise repeat "accumulate 400ms, discard 400ms" forever.
     buffer_target_progress: BufferTargetProgress,
+    /// Set by [`Self::pause`]: the next startup span uses the short resume
+    /// target instead of the rebuffer target. Cleared once playback resumes.
+    resume_buffer_pending: bool,
 }
 
 impl PlaybackScheduler {
@@ -145,6 +152,7 @@ impl PlaybackScheduler {
             resume_from_silence: true,
             has_played: false,
             buffer_target_progress: BufferTargetProgress::Accumulating,
+            resume_buffer_pending: false,
         })
     }
 
@@ -203,7 +211,9 @@ impl PlaybackScheduler {
         // A stream's first start and a mid-stream recovery are not the same
         // situation. Clamp recovery to the startup target so lowering startup
         // latency can never silently make a later recovery longer.
-        let target = if self.has_played {
+        let target = if self.resume_buffer_pending {
+            DEFAULT_RESUME_BUFFER_TARGET_MS.min(self.config.startup_buffer_target_ms)
+        } else if self.has_played {
             self.config
                 .rebuffer_target_ms
                 .min(self.config.startup_buffer_target_ms)
@@ -227,6 +237,7 @@ impl PlaybackScheduler {
 
         self.state = SchedulerState::Playing;
         self.has_played = true;
+        self.resume_buffer_pending = false;
         self.buffer_target_progress = BufferTargetProgress::Accumulating;
         None
     }
@@ -536,6 +547,24 @@ impl PlaybackScheduler {
     /// far ahead of its expected slot. Takes the absolute new value rather
     /// than a delta so repeated calls (e.g. a duplicate re-broadcast) are
     /// idempotent instead of compounding.
+    /// Stops playback for the listener's own pause. Everything buffered is
+    /// discarded, and the scheduler rebuilds only the short resume span
+    /// before it plays again. Returns how many buffered packets were dropped.
+    /// Does nothing once the scheduler is stopped.
+    pub fn pause(&mut self) -> usize {
+        if self.is_stopped() {
+            return 0;
+        }
+        let discarded = self.jitter_buffer.discard_all_for_pause();
+        self.state = SchedulerState::Buffering;
+        self.buffer_target_progress = BufferTargetProgress::Accumulating;
+        self.resume_buffer_pending = self.has_played;
+        // The resumed audio starts from silence, so it fades in from zero.
+        self.fade_in_next_real_frame = true;
+        self.resume_from_silence = true;
+        discarded
+    }
+
     pub fn set_host_start_time_ms(&mut self, host_start_time_ms: u64) {
         self.config.host_start_time_ms = host_start_time_ms;
     }

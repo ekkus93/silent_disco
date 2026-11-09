@@ -351,6 +351,21 @@ impl JitterBuffer {
         self.statistics.skipped += 1;
     }
 
+    /// Discards every buffered packet for a pause and returns how many were
+    /// dropped. The host keeps numbering the stream across a pause, so the
+    /// next expected sequence moves past the newest discarded packet and the
+    /// stream resumes at the first sequence the host sends after the pause.
+    /// Those discarded packets are not counted as skipped: the listener
+    /// chose to stop playing them, the network did not lose them.
+    pub fn discard_all_for_pause(&mut self) -> usize {
+        let discarded = self.packets.len();
+        if let Some(&newest) = self.packets.keys().next_back() {
+            self.next_expected_sequence = newest.saturating_add(1);
+        }
+        self.packets.clear();
+        discarded
+    }
+
     /// Forcibly advances to the earliest currently buffered sequence,
     /// abandoning every missing sequence before it, and returns how many were
     /// abandoned. Used when a gap is too wide to be worth covering packet by

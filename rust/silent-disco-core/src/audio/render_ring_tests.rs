@@ -254,3 +254,25 @@ fn rejects_target_fill_exceeding_capacity() {
         RenderRing::new(config).expect_err("target fill exceeding capacity must be rejected");
     assert_eq!(error.kind, RenderRingConfigErrorKind::TargetFillOutOfRange);
 }
+
+#[test]
+fn a_flush_request_discards_frames_queued_before_it_and_new_audio_plays() {
+    let ring = RenderRing::new(RenderRingConfig::new()).expect("valid config");
+    let (producer, consumer) = ring.split();
+    assert_eq!(producer.push_frames(&interleaved_sequence(0, 100)), 100);
+
+    producer.request_flush();
+    let mut output = vec![1.0_f32; RENDER_CHANNELS * 10];
+    let outcome = consumer.read_frames(&mut output);
+    assert_eq!(outcome.frames_supplied, 0);
+    assert_eq!(outcome.frames_silence_filled, 10);
+    assert!(output.iter().all(|sample| *sample == 0.0));
+
+    // Audio written after the flush is delivered from its first frame.
+    assert_eq!(producer.push_frames(&interleaved_sequence(500, 5)), 5);
+    let mut after = vec![0.0_f32; RENDER_CHANNELS * 5];
+    let outcome = consumer.read_frames(&mut after);
+    assert_eq!(outcome.frames_supplied, 5);
+    let expected = interleaved_sequence(500, 5)[0];
+    assert_eq!(after[0].to_bits(), expected.to_bits());
+}
