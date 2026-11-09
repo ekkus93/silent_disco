@@ -582,6 +582,7 @@ private fun MainViewModel.applyRuntimeSyncOutcome(outcome: FfiSyncSampleOutcome)
 internal fun FfiPlaybackDiagnostics.toPlaybackState(): PlaybackState = when {
     !syncLocked -> PlaybackState.BUFFERING
     phase == FfiPlaybackPhase.STOPPED -> PlaybackState.STOPPED
+    phase == FfiPlaybackPhase.PAUSED -> PlaybackState.PAUSED
     phase == FfiPlaybackPhase.BUFFERING || phase == FfiPlaybackPhase.AWAITING_REBUFFER ->
         PlaybackState.BUFFERING
     else -> PlaybackState.PLAYING

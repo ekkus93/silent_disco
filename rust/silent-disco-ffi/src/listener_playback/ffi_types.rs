@@ -81,6 +81,8 @@ pub enum FfiPlaybackPhase {
     Playing,
     /// Paused, re-accumulating before playback resumes.
     AwaitingRebuffer,
+    /// Held by the listener's own pause; buffered audio waits for the host to resume.
+    Paused,
     /// Stopped; no further frames will be produced.
     Stopped,
 }

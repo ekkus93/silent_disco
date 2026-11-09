@@ -211,13 +211,13 @@ internal fun ManualListenerTransportController.startDebugCapture(runtime: FfiLis
 }
 
 /**
- * Silences playback for the host's pause: queued audio is dropped, and the
- * stream resumes after a short rebuffer when the host resumes it.
+ * Silences playback for the host's pause. Queued audio is held, not dropped,
+ * and plays in order when the host resumes the stream.
  */
 internal fun ManualListenerTransportController.pauseOutput() {
     val runtime = playbackRuntime ?: return
     runCatching { runtime.pauseOutput() }
-        .onSuccess { discarded -> logger.i("manual.audio.paused", "discardedPackets=$discarded") }
+        .onSuccess { held -> logger.i("manual.audio.paused", "heldPackets=$held") }
         .onFailure { error -> handlePlaybackEngineFailure(error) }
 }
 

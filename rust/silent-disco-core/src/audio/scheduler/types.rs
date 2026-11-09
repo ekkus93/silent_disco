@@ -11,6 +11,8 @@ pub enum PlaybackPhase {
     Playing,
     /// Paused until an explicit rebuffer.
     AwaitingRebuffer,
+    /// Held by the listener's own pause; buffered audio is kept, not played.
+    Paused,
     /// Stopped; no further frames will be produced.
     Stopped,
 }
@@ -95,5 +97,6 @@ pub(super) enum SchedulerState {
     Buffering,
     Playing,
     AwaitingRebuffer,
+    Paused,
     Stopped,
 }

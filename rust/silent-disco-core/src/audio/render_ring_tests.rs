@@ -256,23 +256,36 @@ fn rejects_target_fill_exceeding_capacity() {
 }
 
 #[test]
-fn a_flush_request_discards_frames_queued_before_it_and_new_audio_plays() {
+fn deliberate_muted_silence_is_not_counted_as_an_underrun() {
     let ring = RenderRing::new(RenderRingConfig::new()).expect("valid config");
     let (producer, consumer) = ring.split();
-    assert_eq!(producer.push_frames(&interleaved_sequence(0, 100)), 100);
+    producer.set_muted(true);
+    let mut output = vec![0.0_f32; RENDER_CHANNELS * 4];
+    let _ = consumer.read_frames(&mut output);
+    assert_eq!(producer.telemetry().underrun_callbacks, 0);
+    assert_eq!(producer.telemetry().silence_filled_frames, 4);
+}
 
-    producer.request_flush();
-    let mut output = vec![1.0_f32; RENDER_CHANNELS * 10];
-    let outcome = consumer.read_frames(&mut output);
+#[test]
+fn a_muted_ring_outputs_silence_and_keeps_its_queued_frames() {
+    let ring = RenderRing::new(RenderRingConfig::new()).expect("valid config");
+    let (producer, consumer) = ring.split();
+    assert_eq!(producer.push_frames(&interleaved_sequence(0, 10)), 10);
+
+    producer.set_muted(true);
+    let mut muted = vec![1.0_f32; RENDER_CHANNELS * 4];
+    let outcome = consumer.read_frames(&mut muted);
     assert_eq!(outcome.frames_supplied, 0);
-    assert_eq!(outcome.frames_silence_filled, 10);
-    assert!(output.iter().all(|sample| *sample == 0.0));
+    assert_eq!(outcome.frames_silence_filled, 4);
+    assert!(muted.iter().all(|sample| *sample == 0.0));
 
-    // Audio written after the flush is delivered from its first frame.
-    assert_eq!(producer.push_frames(&interleaved_sequence(500, 5)), 5);
-    let mut after = vec![0.0_f32; RENDER_CHANNELS * 5];
+    // Unmuting plays the held frames from the first one, not from silence.
+    producer.set_muted(false);
+    let mut after = vec![0.0_f32; RENDER_CHANNELS * 4];
     let outcome = consumer.read_frames(&mut after);
-    assert_eq!(outcome.frames_supplied, 5);
-    let expected = interleaved_sequence(500, 5)[0];
-    assert_eq!(after[0].to_bits(), expected.to_bits());
+    assert_eq!(outcome.frames_supplied, 4);
+    // Compare bit patterns: the values are exact, but clippy rejects float ==.
+    // Frame 0 is samples 0 and 1; frame 1's left sample is 2.0.
+    assert_eq!(after[0].to_bits(), 0.0_f32.to_bits());
+    assert_eq!(after[2].to_bits(), 2.0_f32.to_bits());
 }

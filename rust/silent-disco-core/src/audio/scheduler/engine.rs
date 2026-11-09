@@ -268,6 +268,11 @@ impl PlaybackScheduler {
         match self.state {
             SchedulerState::Stopped => return SchedulerPoll::Stopped,
             SchedulerState::AwaitingRebuffer => return SchedulerPoll::AwaitingRebuffer,
+            SchedulerState::Paused => {
+                return SchedulerPoll::Waiting {
+                    buffer_health: self.buffer_health(),
+                };
+            }
             SchedulerState::Buffering => {
                 if let Some(poll) = self.advance_buffering(local_now_ms) {
                     return poll;
@@ -517,7 +522,10 @@ impl PlaybackScheduler {
         let delta_ms = (new_offset_ms - self.offset_ms).abs();
         self.offset_ms = new_offset_ms;
         if delta_ms > self.config.hard_resync_threshold_ms {
-            self.state = SchedulerState::AwaitingRebuffer;
+            // A pause holds the stream until the host resumes it.
+            if !self.is_paused() {
+                self.state = SchedulerState::AwaitingRebuffer;
+            }
             OffsetUpdateOutcome::HardResyncRequired
         } else {
             OffsetUpdateOutcome::SoftCorrected
@@ -529,6 +537,9 @@ impl PlaybackScheduler {
     /// buffer. Previously buffered packets are preserved.
     pub fn rebuffer(&mut self, new_offset_ms: f64) {
         self.offset_ms = new_offset_ms;
+        if self.is_paused() {
+            return;
+        }
         self.concealment.reset_consecutive_count();
         self.state = SchedulerState::Buffering;
         self.buffer_target_progress = BufferTargetProgress::Accumulating;
@@ -547,22 +558,36 @@ impl PlaybackScheduler {
     /// far ahead of its expected slot. Takes the absolute new value rather
     /// than a delta so repeated calls (e.g. a duplicate re-broadcast) are
     /// idempotent instead of compounding.
-    /// Stops playback for the listener's own pause. Everything buffered is
-    /// discarded, and the scheduler rebuilds only the short resume span
-    /// before it plays again. Returns how many buffered packets were dropped.
-    /// Does nothing once the scheduler is stopped.
+    /// Holds playback for the listener's own pause. Buffered packets are kept
+    /// and nothing is released until [`Self::resume`]. Returns how many
+    /// packets are held. Does nothing once the scheduler is stopped.
     pub fn pause(&mut self) -> usize {
         if self.is_stopped() {
             return 0;
         }
-        let discarded = self.jitter_buffer.discard_all_for_pause();
-        self.state = SchedulerState::Buffering;
-        self.buffer_target_progress = BufferTargetProgress::Accumulating;
-        self.resume_buffer_pending = self.has_played;
+        self.state = SchedulerState::Paused;
         // The resumed audio starts from silence, so it fades in from zero.
         self.fade_in_next_real_frame = true;
         self.resume_from_silence = true;
-        discarded
+        self.jitter_buffer.len()
+    }
+
+    /// Ends a pause. The held packets are already buffered, so only the short
+    /// resume span is rebuilt before playback continues from the first unheard
+    /// packet. Does nothing unless the scheduler is paused.
+    pub fn resume(&mut self) {
+        if !self.is_paused() {
+            return;
+        }
+        self.state = SchedulerState::Buffering;
+        self.buffer_target_progress = BufferTargetProgress::Accumulating;
+        self.resume_buffer_pending = self.has_played;
+    }
+
+    /// True while the listener's own pause holds playback.
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        matches!(self.state, SchedulerState::Paused)
     }
 
     pub fn set_host_start_time_ms(&mut self, host_start_time_ms: u64) {
@@ -600,6 +625,7 @@ impl PlaybackScheduler {
             SchedulerState::Buffering => PlaybackPhase::Buffering,
             SchedulerState::Playing => PlaybackPhase::Playing,
             SchedulerState::AwaitingRebuffer => PlaybackPhase::AwaitingRebuffer,
+            SchedulerState::Paused => PlaybackPhase::Paused,
             SchedulerState::Stopped => PlaybackPhase::Stopped,
         }
     }

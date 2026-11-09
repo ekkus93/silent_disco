@@ -39,7 +39,7 @@
 use core::fmt;
 use std::error::Error;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 /// Interleaved channel count of the fixed internal render format (stereo).
 pub const RENDER_CHANNELS: usize = 2;
@@ -165,10 +165,8 @@ struct RingInner {
     slots: Box<[AtomicU32]>,
     write_index: AtomicUsize,
     read_index: AtomicUsize,
-    /// Bumped by the producer to ask the consumer to discard queued frames.
-    flush_requested: AtomicU64,
-    /// The last flush request the consumer has applied. Only the consumer writes it.
-    flush_applied: AtomicU64,
+    /// While set, the consumer outputs silence and leaves queued frames in place.
+    muted: AtomicBool,
     telemetry: RenderRingTelemetry,
 }
 
@@ -232,8 +230,7 @@ impl RenderRing {
                 slots,
                 write_index: AtomicUsize::new(0),
                 read_index: AtomicUsize::new(0),
-                flush_requested: AtomicU64::new(0),
-                flush_applied: AtomicU64::new(0),
+                muted: AtomicBool::new(false),
                 telemetry: RenderRingTelemetry::default(),
             }),
         })
@@ -264,11 +261,10 @@ impl RenderRingProducer {
     /// without overwriting an unread frame, returning the count actually
     /// written. Any trailing samples that do not form a complete frame are
     /// ignored. Never blocks and performs no allocation.
-    /// Asks the consumer to discard every frame queued so far. The consumer
-    /// applies the request on its next read, so the callback goes silent
-    /// without the producer touching the consumer's read position.
-    pub fn request_flush(&self) {
-        self.inner.flush_requested.fetch_add(1, Ordering::Release);
+    /// Silences the consumer while `muted` is true. Queued frames are held,
+    /// not discarded, and play in order once the ring is unmuted.
+    pub fn set_muted(&self, muted: bool) {
+        self.inner.muted.store(muted, Ordering::Release);
     }
 
     #[must_use]
@@ -351,7 +347,19 @@ impl RenderRingConsumer {
     #[must_use]
     pub fn read_frames(&self, output: &mut [f32]) -> RenderReadOutcome {
         let requested_frames = output.len() / RENDER_CHANNELS;
-        self.apply_pending_flush();
+        if self.inner.muted.load(Ordering::Acquire) {
+            for sample in output.iter_mut().take(requested_frames * RENDER_CHANNELS) {
+                *sample = 0.0;
+            }
+            // Deliberate silence is not starvation: it must not count as an
+            // underrun, or the pump would realign on resume as if the output
+            // had starved.
+            self.record_muted_telemetry(requested_frames);
+            return RenderReadOutcome {
+                frames_supplied: 0,
+                frames_silence_filled: requested_frames,
+            };
+        }
         let write_index = self.inner.write_index.load(Ordering::Acquire);
         let read_index = self.inner.read_index.load(Ordering::Relaxed);
         let available_frames = write_index - read_index;
@@ -385,16 +393,14 @@ impl RenderRingConsumer {
         }
     }
 
-    /// Discards every frame queued before the newest flush request. Only the
-    /// consumer advances `read_index`, so this stays single-owner.
-    fn apply_pending_flush(&self) {
-        let requested = self.inner.flush_requested.load(Ordering::Acquire);
-        if self.inner.flush_applied.load(Ordering::Relaxed) == requested {
-            return;
-        }
-        let write_index = self.inner.write_index.load(Ordering::Acquire);
-        self.inner.read_index.store(write_index, Ordering::Release);
-        self.inner.flush_applied.store(requested, Ordering::Relaxed);
+    fn record_muted_telemetry(&self, requested: usize) {
+        let telemetry = &self.inner.telemetry;
+        telemetry
+            .frames_requested
+            .fetch_add(u64_from_usize(requested), Ordering::Relaxed);
+        telemetry
+            .silence_filled_frames
+            .fetch_add(u64_from_usize(requested), Ordering::Relaxed);
     }
 
     fn record_read_telemetry(&self, requested: usize, supplied: usize, silence_filled: usize) {

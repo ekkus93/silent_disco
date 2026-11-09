@@ -178,15 +178,22 @@ impl PlaybackPump {
 }
 
 impl PlaybackPump {
-    /// Silences output for the listener's own pause. The scheduler discards
-    /// everything it buffered, the converted samples not yet in the ring are
-    /// dropped, and the consumer is asked to discard what the ring holds, so
-    /// audio stops at once instead of playing out the queued backlog. Returns
-    /// how many buffered packets were discarded.
+    /// Holds playback for the listener's own pause. The ring is muted, so
+    /// output goes silent at once, but its queued frames and the scheduler's
+    /// buffered packets are kept. Returns how many packets are held.
     pub fn pause_output(&mut self) -> usize {
-        let discarded = self.scheduler.pause();
-        self.pending.clear();
-        self.producer.request_flush();
-        discarded
+        let held = self.scheduler.pause();
+        self.producer.set_muted(true);
+        held
+    }
+
+    /// Applies the host's re-anchored start time. If the listener was paused,
+    /// the held audio resumes from where it stopped, on the shifted timeline.
+    pub fn reanchor_presentation_time(&mut self, host_start_time_ms: u64) {
+        self.scheduler.set_host_start_time_ms(host_start_time_ms);
+        if self.scheduler.is_paused() {
+            self.scheduler.resume();
+            self.producer.set_muted(false);
+        }
     }
 }

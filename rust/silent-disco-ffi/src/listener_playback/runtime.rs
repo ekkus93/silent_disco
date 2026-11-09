@@ -210,8 +210,7 @@ impl ListenerPlaybackRuntime {
     ) -> Result<(), ListenerPlaybackError> {
         let mut pump = self.shared.lock_pump();
         self.ensure_running()?;
-        pump.scheduler_mut()
-            .set_host_start_time_ms(host_start_time_ms);
+        pump.reanchor_presentation_time(host_start_time_ms);
         Ok(())
     }
 

@@ -40,6 +40,7 @@ impl From<PlaybackPhase> for FfiPlaybackPhase {
             PlaybackPhase::Buffering => Self::Buffering,
             PlaybackPhase::Playing => Self::Playing,
             PlaybackPhase::AwaitingRebuffer => Self::AwaitingRebuffer,
+            PlaybackPhase::Paused => Self::Paused,
             PlaybackPhase::Stopped => Self::Stopped,
         }
     }
