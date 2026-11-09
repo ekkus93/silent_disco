@@ -69,6 +69,7 @@ impl DesktopHostTransportRuntime {
             &self.status.broadcast,
             &self.stop,
             frame,
+            AUDIO_ADMISSION_LIMIT_FRAMES,
         )
     }
 
@@ -151,6 +152,13 @@ impl DesktopHostTransportRuntime {
 
 const CRITICAL_CONTROL_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(500);
 const CRITICAL_CONTROL_RETRY_INTERVAL: Duration = Duration::from_millis(2);
+/// Queue slots kept free for critical controls. Audio is refused once the
+/// queue reaches `BROADCAST_FRAME_QUEUE_CAPACITY - CONTROL_HEADROOM_FRAMES`, so
+/// a Stop or Pause is never stuck behind audio that refills each freed slot.
+const CONTROL_HEADROOM_FRAMES: u64 = 32;
+/// Largest queue depth at which lossy audio is still admitted.
+const AUDIO_ADMISSION_LIMIT_FRAMES: u64 =
+    BROADCAST_FRAME_QUEUE_CAPACITY as u64 - CONTROL_HEADROOM_FRAMES;
 
 /// Audio remains lossy and nonblocking; critical controls keep their place
 /// behind earlier audio on the same ordered queue. A timeout is an EXPLICIT
@@ -161,6 +169,7 @@ fn enqueue_broadcast_frame(
     counters: &BroadcastCounters,
     stop: &AtomicBool,
     frame: ProtocolFrame,
+    audio_admission_limit: u64,
 ) -> Result<(), DesktopNetworkError> {
     if stop.load(Ordering::Acquire) {
         return Err(DesktopNetworkError::unavailable(
@@ -172,6 +181,13 @@ fn enqueue_broadcast_frame(
     // Reserve before send so the transport worker can never dequeue an
     // uncounted frame. Roll back the one reservation on any final failure.
     let reserved_depth = counters.reserve_enqueue();
+    if !critical && reserved_depth > audio_admission_limit {
+        counters.record_dequeued();
+        counters.queue_overflows.fetch_add(1, Ordering::Relaxed);
+        return Err(DesktopNetworkError::resource_limit(
+            "desktop host transport broadcast queue full; audio shed to keep room for controls",
+        ));
+    }
     let mut pending = frame;
     loop {
         if stop.load(Ordering::Acquire) {
@@ -209,8 +225,8 @@ fn enqueue_broadcast_frame(
 #[cfg(test)]
 mod critical_control_queue_tests {
     use super::{
-        AtomicBool, BroadcastCounters, CRITICAL_CONTROL_ENQUEUE_TIMEOUT, MonotonicMillis,
-        ProtocolFrame, enqueue_broadcast_frame,
+        AUDIO_ADMISSION_LIMIT_FRAMES, AtomicBool, BROADCAST_FRAME_QUEUE_CAPACITY, BroadcastCounters,
+        CRITICAL_CONTROL_ENQUEUE_TIMEOUT, MonotonicMillis, ProtocolFrame, enqueue_broadcast_frame,
     };
     use silent_disco_core::domain::{PacketSequence, SampleIndex, SessionId, StreamId};
     use silent_disco_core::protocol::{
@@ -249,7 +265,7 @@ mod critical_control_queue_tests {
         let (sender, receiver) = sync_channel(1);
         let counters = Arc::new(BroadcastCounters::default());
         let stop_flag = Arc::new(AtomicBool::new(false));
-        enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio())
+        enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio(), u64::MAX)
             .expect("first audio admitted");
         let pending_sender = sender.clone();
         let pending_counters = Arc::clone(&counters);
@@ -260,6 +276,7 @@ mod critical_control_queue_tests {
                 &pending_counters,
                 &pending_stop,
                 stop(1_200),
+                u64::MAX,
             )
         });
         thread::sleep(Duration::from_millis(25));
@@ -283,10 +300,10 @@ mod critical_control_queue_tests {
         let (sender, _receiver) = sync_channel(1);
         let counters = BroadcastCounters::default();
         let stop_flag = AtomicBool::new(false);
-        enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio())
+        enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio(), u64::MAX)
             .expect("first audio");
         let start = Instant::now();
-        assert!(enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio()).is_err());
+        assert!(enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio(), u64::MAX).is_err());
         assert!(start.elapsed() < Duration::from_millis(150));
         assert_eq!(counters.snapshot().queue_depth, 1);
         assert_eq!(counters.snapshot().queue_overflows, 1);
@@ -297,10 +314,10 @@ mod critical_control_queue_tests {
         let (sender, _receiver) = sync_channel(1);
         let counters = BroadcastCounters::default();
         let stop_flag = AtomicBool::new(false);
-        enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio())
+        enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio(), u64::MAX)
             .expect("fill queue");
         let start = Instant::now();
-        assert!(enqueue_broadcast_frame(&sender, &counters, &stop_flag, stop(1_200)).is_err());
+        assert!(enqueue_broadcast_frame(&sender, &counters, &stop_flag, stop(1_200), u64::MAX).is_err());
         assert!(start.elapsed() >= CRITICAL_CONTROL_ENQUEUE_TIMEOUT);
         assert_eq!(counters.snapshot().queue_depth, 1);
         assert_eq!(counters.snapshot().queue_overflows, 1);
@@ -311,18 +328,61 @@ mod critical_control_queue_tests {
         let (sender, _receiver) = sync_channel(1);
         let counters = Arc::new(BroadcastCounters::default());
         let stop_flag = Arc::new(AtomicBool::new(false));
-        enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio())
+        enqueue_broadcast_frame(&sender, &counters, &stop_flag, audio(), u64::MAX)
             .expect("fill queue");
         let sender_wait = sender.clone();
         let counters_wait = Arc::clone(&counters);
         let stop_wait = Arc::clone(&stop_flag);
         let waiter = thread::spawn(move || {
-            enqueue_broadcast_frame(&sender_wait, &counters_wait, &stop_wait, stop(1_300))
+            enqueue_broadcast_frame(&sender_wait, &counters_wait, &stop_wait, stop(1_300), u64::MAX)
         });
         thread::sleep(Duration::from_millis(25));
         stop_flag.store(true, Ordering::Release);
         assert!(waiter.join().expect("waiter thread").is_err());
         assert_eq!(counters.snapshot().queue_depth, 1);
         assert_eq!(counters.snapshot().queue_overflows, 0);
+    }
+
+    #[test]
+    fn control_is_admitted_immediately_once_audio_reaches_its_limit() {
+        let capacity = usize::from(BROADCAST_FRAME_QUEUE_CAPACITY);
+        let (sender, _receiver) = sync_channel(capacity);
+        let counters = BroadcastCounters::default();
+        let stop_flag = AtomicBool::new(false);
+        for _ in 0..AUDIO_ADMISSION_LIMIT_FRAMES {
+            enqueue_broadcast_frame(
+                &sender,
+                &counters,
+                &stop_flag,
+                audio(),
+                AUDIO_ADMISSION_LIMIT_FRAMES,
+            )
+            .expect("audio admitted below its limit");
+        }
+        // Audio beyond the limit is shed at once, leaving the headroom free.
+        assert!(
+            enqueue_broadcast_frame(
+                &sender,
+                &counters,
+                &stop_flag,
+                audio(),
+                AUDIO_ADMISSION_LIMIT_FRAMES,
+            )
+            .is_err()
+        );
+        assert_eq!(counters.snapshot().queue_depth, AUDIO_ADMISSION_LIMIT_FRAMES);
+        assert_eq!(counters.snapshot().queue_overflows, 1);
+
+        let start = Instant::now();
+        enqueue_broadcast_frame(
+            &sender,
+            &counters,
+            &stop_flag,
+            stop(1_400),
+            AUDIO_ADMISSION_LIMIT_FRAMES,
+        )
+        .expect("critical Stop admitted into the headroom");
+        assert!(start.elapsed() < Duration::from_millis(100));
+        assert_eq!(counters.snapshot().queue_depth, AUDIO_ADMISSION_LIMIT_FRAMES + 1);
     }
 }
