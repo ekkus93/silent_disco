@@ -64,17 +64,26 @@ internal class CallbackPcmWavWriter(
         }
         output.write(bytes)
         samplesWritten += frames
+        // Keep the header valid for the bytes written so far, so a capture that
+        // is interrupted before finish() still plays as a WAV of its real length.
+        updateSizeFields()
+    }
+
+    private fun updateSizeFields() {
+        val dataBytes = samplesWritten * 4L
+        val position = output.filePointer
+        output.seek(4)
+        output.writeLe32((36L + dataBytes).toInt())
+        output.seek(40)
+        output.writeLe32(dataBytes.toInt())
+        output.seek(position)
     }
 
     @Synchronized
     fun finish(): Long {
         if (finished) return samplesWritten
         finished = true
-        val bytes = samplesWritten * 4L
-        output.seek(4)
-        output.writeLe32((36L + bytes).toInt())
-        output.seek(40)
-        output.writeLe32(bytes.toInt())
+        updateSizeFields()
         output.close()
         return samplesWritten
     }

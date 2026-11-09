@@ -35,6 +35,28 @@ class CallbackPcmWavWriterTest {
     }
 
     @Test
+    fun headerDescribesTheCapturedBytesBeforeFinish() {
+        val file = temporaryFile()
+        val writer = CallbackPcmWavWriter(file, sampleRate = 48_000)
+        writer.append(listOf(0f, 1f, -1f, 0.5f))
+        writer.append(listOf(0.25f, -0.25f))
+        // Read while the capture is still open, as after an interrupted run.
+        val bytes = file.readBytes()
+        // Three stereo frames: 3 * 2 channels * 2 bytes = 12 data bytes.
+        assertEquals(44 + 12, bytes.size)
+        assertEquals(36 + 12, littleEndianInt(bytes, 4))
+        assertEquals(12, littleEndianInt(bytes, 40))
+        assertEquals(3L, writer.finish())
+        assertEquals(12, littleEndianInt(file.readBytes(), 40))
+    }
+
+    private fun littleEndianInt(bytes: ByteArray, offset: Int): Int =
+        (bytes[offset].toInt() and 0xff) or
+            ((bytes[offset + 1].toInt() and 0xff) shl 8) or
+            ((bytes[offset + 2].toInt() and 0xff) shl 16) or
+            ((bytes[offset + 3].toInt() and 0xff) shl 24)
+
+    @Test
     fun partialFramesAndExcessiveCaptureFailExplicitly() {
         val file = temporaryFile()
         val writer = CallbackPcmWavWriter(file, maxFrames = 1)
