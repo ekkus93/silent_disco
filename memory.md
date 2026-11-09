@@ -1569,3 +1569,12 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Added test: verified TLS peer that never joins is disconnected at the admission deadline (mutation kill confirmed).
 - Added FRAME_DEADLINE (3s) to the TLS frame channel: partial frames that never complete fail with FrameDeadline; handshake reads and idle channels exempt. Mutation kill confirmed. Tests: partial record, idle channel.
 - Gate: 832 passed; A54 TLS tests 4/4. Handoff §36.
+
+## 2026-11-09T20:37:36Z - claude-haiku-5-5 - Portrait lock, debug PCM capture, stall analysis
+- Committed 05955f51: MainActivity and zxing CaptureActivity locked to portrait (zxing forced sensorLandscape); debug-only `DebugCaptureReceiver` starts/stops the listener PCM capture via `am broadcast -a com.ekkus.silentdisco.debug.PCM_CAPTURE --es command start|stop`; capture falls back to `manualListenerController.playbackRuntime` (the harness path never sets `listenerPlayback`).
+- The start broadcast only works once the phone reports `phase=PLAYING` (sync acquisition takes about 20 s).
+- Callback WAV header is not finalised (declared data size 0); audio data is intact from byte 44. Not yet fixed.
+- Stall findings (A54, scale run): steady state has no loss. Song A had skipped=201 (about 1 s, the harness's 1 s pause), concealed=65, late=14. Song B had skipped=0, concealed=0, late=0 but 305 ring underruns (about 610 ms silence), all at its stream-start prefill.
+- Resume re-anchor (`stream_reanchored`) drains the ring to 0 and re-prefills, which is audible as a 0.4 to 0.6 s gap.
+- Desktop logged 4 undelivered packets at the pause boundary (`song-a-paused`/`song-a-resumed`), the only real loss seen.
+- Packets are 240 frames (5 ms) at 48 kHz, not the 20 ms target in CLAUDE.md. Not yet investigated.

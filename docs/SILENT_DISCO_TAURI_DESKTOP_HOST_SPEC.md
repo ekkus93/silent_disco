@@ -144,6 +144,19 @@ It supports:
 - diagnostics export;
 - deterministic shutdown.
 
+Hosting requires the host's Wi-Fi power saving to be off. With power saving on,
+a Wi-Fi radio that sleeps between bursts stalls the audio send path. Measured on
+Ubuntu 22.04 (kernel 6.8) with 5ms audio packets (about 200 per second), a power-saving host
+dropped about 1,200 of 15,000 song-B packets in one 8-second stall. With power
+saving off, four runs lost at most two packets each. The host app cannot turn
+power saving off itself without elevated rights, so the operator must do it:
+
+- Check: `iw dev <wifi-interface> get power_save` must report `off`.
+- Fix (NetworkManager): `nmcli connection modify <connection> 802-11-wireless.powersave 2`,
+  then reactivate the connection (`nmcli connection up <connection>`). Reapplying
+  the device alone does not change this setting.
+- Wired hosts and hosts without power saving need no change.
+
 ### 5.2 Lab Mode
 
 Lab Mode is a first-class development mode, clearly labeled and inaccessible from production builds unless the build intentionally includes it.
