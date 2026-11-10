@@ -168,15 +168,20 @@ impl DesktopPlaybackStreamer {
                 "the active playback stream does not support playlist updates",
             ));
         };
-        updater
-            .replace_upcoming(upcoming)
-            .map_err(|error| DesktopErrorDto::new(
+        match updater.replace_upcoming(upcoming) {
+            Ok(()) => Ok(()),
+            // The stream already reached its end, so there is no packetizer left
+            // to retarget. The queue entries are kept and the next Play builds a
+            // new stream from them, so this is not a queue failure.
+            Err(error) if error.kind == PacketizerWorkerErrorKind::Cancelled => Ok(()),
+            Err(error) => Err(DesktopErrorDto::new(
                 "desktop.playback.queue_update_failed",
                 "audio",
                 "error",
                 true,
                 &error.to_string(),
-            ))
+            )),
+        }
     }
 
     /// Signals the pump thread to stop. The pump thread itself performs the

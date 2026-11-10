@@ -1578,3 +1578,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Resume re-anchor (`stream_reanchored`) drains the ring to 0 and re-prefills, which is audible as a 0.4 to 0.6 s gap.
 - Desktop logged 4 undelivered packets at the pause boundary (`song-a-paused`/`song-a-resumed`), the only real loss seen.
 - Packets are 240 frames (5 ms) at 48 kHz, not the 20 ms target in CLAUDE.md. Not yet investigated.
+
+## 2026-11-10T13:36:23Z - claude-haiku-5-5 - Packetizer banner fix after a finished playlist
+- Cause: adding a song after a playlist reached its end called `replace_upcoming` on a terminal packetizer, which returned `Cancelled` ("playlist packetizer has already terminated"). That surfaced as a queue-update failure.
+- Fix (`desktop/src-tauri/src/platform/playback_streamer/owner.rs`): `Cancelled` from `replace_upcoming` maps to `Ok(())`. The queue is kept and the next Play builds a new stream from it.
+- Device check: on the A54 with `Revival Hall`, the queued `scale_long.wav` was accepted after a finished playlist with no banner.
+- Gates: `npm run check` 192 passed; desktop clippy `-D warnings` clean; desktop `cargo test --locked --all-features` 403 passed, 0 failed. No new regression test was added for this change.
