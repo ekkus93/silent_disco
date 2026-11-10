@@ -253,13 +253,13 @@ describe("desktop host workflow navigation", () => {
       'button "Move Afterglow.mp3 up"',
       'button "Remove Afterglow.mp3"',
       'button "Create invite"',
+      'checkbox "Remember this device"',
+      'button "Approve"',
+      'button "Reject"',
       'button "Copy host address"',
       'button "Copy session ID"',
       'button "Copy connection payload"',
       'button "Create QR invitation"',
-      'checkbox "Remember this device"',
-      'button "Approve"',
-      'button "Reject"',
       'button "View Sam\'s Phone"',
     ]);
   });

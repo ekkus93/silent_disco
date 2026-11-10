@@ -78,6 +78,11 @@ export function HostSessionScreen() {
         <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950/70 px-4 py-3 [@media(max-height:700px)]:px-3 [@media(max-height:700px)]:py-2">
           <span className="text-sm font-medium">
             {snapshot.connectedListeners.length} listeners
+            {snapshot.pendingJoinRequests.length > 0 ? (
+              <span className="ml-2 font-semibold text-amber-200">
+                · {snapshot.pendingJoinRequests.length} waiting for approval
+              </span>
+            ) : null}
           </span>
           <button
             type="button"
@@ -94,11 +99,22 @@ export function HostSessionScreen() {
         </div>
       </section>
 
-      <ConnectionDetailsPanel connection={snapshot.connection} onCopy={vm.copyValue} />
-
+      {/* Approvals come first after the live dashboard: they block a listener
+          until the host acts, so they must not sit below the setup panels. */}
       {orphanDecisionFailures.map(([requestId, error]) => (
         <ErrorAlert key={`decision-${requestId}`} error={error} />
       ))}
+      <PendingJoinRequests
+        requests={snapshot.pendingJoinRequests}
+        decisionOperations={vm.decisionOperations}
+        decisionFailures={vm.decisionFailures}
+        remember={vm.remember}
+        setRemember={vm.setRemember}
+        onDecide={vm.decide}
+      />
+
+      <ConnectionDetailsPanel connection={snapshot.connection} onCopy={vm.copyValue} />
+
       {orphanRemovalFailures.map(([listenerId, error]) => (
         <ErrorAlert key={`removal-${listenerId}`} error={error} />
       ))}
@@ -113,15 +129,6 @@ export function HostSessionScreen() {
           onCopy={vm.copyValue}
         />
       ) : null}
-
-      <PendingJoinRequests
-        requests={snapshot.pendingJoinRequests}
-        decisionOperations={vm.decisionOperations}
-        decisionFailures={vm.decisionFailures}
-        remember={vm.remember}
-        setRemember={vm.setRemember}
-        onDecide={vm.decide}
-      />
 
       <ListenerList
         listeners={snapshot.connectedListeners}

@@ -11,6 +11,7 @@ import {
   hostSession,
   listener,
   networkSnapshot,
+  pendingRequest,
   SOFT_FOCUS,
 } from "../../test/hostWorkflowFixtures";
 import { HostSessionScreen } from ".";
@@ -155,6 +156,27 @@ describe("live dashboard track boundaries", () => {
     await waitFor(() => expect(queueRows()).toEqual(["1 | Golden Hour.flac"]));
     expect(screen.getByRole("button", { name: "Play" })).toBeEnabled();
     expect(client.startHostPlayback).not.toHaveBeenCalled();
+  });
+});
+
+describe("pending join visibility", () => {
+  it("flags waiting listeners in the sticky dashboard and lists them before connection details", async () => {
+    renderScreen(hostSession({ pendingJoinRequests: [pendingRequest("jo", "Jo's Pixel")] }));
+    await screen.findByRole("heading", { name: "Pending join requests" });
+
+    expect(within(dashboard()).getByText(/1 waiting for approval/)).toBeVisible();
+    const pending = screen.getByRole("heading", { name: "Pending join requests" });
+    const connection = screen.getByRole("heading", { name: "Manual connection details" });
+    expect(
+      pending.compareDocumentPosition(connection) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("shows no approval flag when nobody is waiting", async () => {
+    renderScreen(hostSession({ pendingJoinRequests: [] }));
+    await screen.findByRole("heading", { name: "Pending join requests" });
+
+    expect(within(dashboard()).queryByText(/waiting for approval/)).toBeNull();
   });
 });
 
