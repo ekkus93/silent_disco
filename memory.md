@@ -1584,3 +1584,11 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Fix (`desktop/src-tauri/src/platform/playback_streamer/owner.rs`): `Cancelled` from `replace_upcoming` maps to `Ok(())`. The queue is kept and the next Play builds a new stream from it.
 - Device check: on the A54 with `Revival Hall`, the queued `scale_long.wav` was accepted after a finished playlist with no banner.
 - Gates: `npm run check` 192 passed; desktop clippy `-D warnings` clean; desktop `cargo test --locked --all-features` 403 passed, 0 failed. No new regression test was added for this change.
+
+## 2026-11-10T16:18:47Z - claude-opus-5-5 - Device check: queue add after a finished playlist, and the "missing" join request
+- A54 on `Revival Hall`, desktop host in the uid-1000 container: `scale_long.wav` played to the end, then a song was added to the empty, finished queue with no "playlist packetizer has already terminated" banner, and Play started it on the phone ("Playing in sync", sync EXCELLENT, RTT 7-8 ms). This confirms the `9c76a054` fix on device.
+- The apparent "join never reaches the host" was not a bug. Temporary tracing showed the plaintext join is accepted, decoded, forwarded, and registered (`desktop-join-1`). The host's "Pending join requests" card (Approve/Reject) renders below the Manual connection details and QR invitation panels, out of view in a 1000x700 window. Scroll past the QR panel to approve.
+- The `Connection reset by peer (os error 104)` finding came from an older listener socket the phone dropped. It did not block later joins.
+- Listener start-up still logs about 300 render-ring underruns before playback settles (prefill), as noted before.
+- Container notes: `docker restart` fails with a stale `/tmp/.X99-lock`. Recreate the container instead (same flags), reinstall `xclip`/`qrencode` as root, and re-tick "Allow shared address space" in Settings when the profile is fresh. In the GTK file chooser, typed paths autocomplete into `scale_scale_long.wav`; paste the path from the clipboard, or double-click the Recent entry.
+- The tracing was reverted. No code changes from this check.
