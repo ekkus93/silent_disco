@@ -262,7 +262,7 @@ internal fun MainViewModel.handleListenerTransportEvent(
                 message = "Host paused the stream",
             )
         }
-        is FfiListenerTransportEvent.Stopped -> handleTransportStreamStopped()
+        is FfiListenerTransportEvent.Stopped -> handleTransportStreamStopped(event.hostStopTimeMs)
         is FfiListenerTransportEvent.SyncResponseReceived -> handleTransportSyncResponse(event)
         is FfiListenerTransportEvent.AudioReceived -> handleTransportAudioReceived(event)
     }
@@ -321,9 +321,10 @@ private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTranspo
     )
 }
 
-internal fun MainViewModel.handleTransportStreamStopped() {
-    // The runtime drains its own buffered tail while stopping, so the
-    // stream's final moments play rather than being discarded.
+internal fun MainViewModel.handleTransportStreamStopped(hostStopTimeMs: ULong) {
+    // The runtime plays its buffered tail up to the host's stop time, so the
+    // stream's final moments play, while audio the host sent ahead past the
+    // stop is dropped rather than delaying the next stream.
     // A runtime's clock has a per-runtime epoch. Keep its periodic loop
     // from switching to the pre-runtime estimator after Stop: comparing
     // that estimator's Android elapsed-realtime offset with the runtime's
@@ -336,7 +337,7 @@ internal fun MainViewModel.handleTransportStreamStopped() {
     appliedListenerTrackBoundaries.clear()
     listenerStreamStartTrackName = null
     cancelListenerTrackBoundaryTimers()
-    stopListenerPlayback()
+    stopListenerPlayback(cutAtHostMs = hostStopTimeMs)
     propagateListenerPlaybackState(
         playbackState = PlaybackState.STOPPED,
         listenerState = ListenerLifecycleState.APPROVED,

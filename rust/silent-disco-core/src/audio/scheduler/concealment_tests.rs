@@ -386,3 +386,41 @@ fn an_arrival_outage_is_bridged_to_the_configured_bound_then_awaits_an_explicit_
     scheduler.rebuffer(0.0);
     assert!(!scheduler.is_awaiting_rebuffer());
 }
+
+#[test]
+fn a_stop_keeps_only_buffered_audio_presented_before_the_host_stop_time() {
+    let mut scheduler = buffered_scheduler(30, 8_000);
+    let first = frame_at(scheduler.poll(HOST_START_MS));
+    assert_eq!(first.sequence, 0);
+
+    // Sequence n is presented at HOST_START_MS + n * PACKET_DURATION_MS, so a
+    // stop at sequence 10's presentation time keeps 1..=9 and trims 10..=29.
+    let stop_host_ms = HOST_START_MS + 10 * u64::from(PACKET_DURATION_MS);
+    let (kept, trimmed) = scheduler.drain_remaining_before(stop_host_ms);
+
+    assert_eq!(trimmed, 20);
+    assert_eq!(kept.first().expect("frames").sequence, 1);
+    assert_eq!(kept.last().expect("frames").sequence, 9);
+    assert!(
+        kept.iter()
+            .all(|frame| frame.host_presentation_time_ms < stop_host_ms)
+    );
+    // The new last frame ends at zero rather than mid-waveform.
+    assert_eq!(kept.last().expect("frames").samples[959 * 2], 0);
+    assert_eq!(kept[3].samples[959 * 2], 8_000);
+}
+
+#[test]
+fn a_stop_after_the_buffered_audio_keeps_all_of_it() {
+    // A natural end: the host sends Stop once its last packet has played, so
+    // nothing buffered is past the stop time and the tail is not cut short.
+    let mut scheduler = buffered_scheduler(30, 8_000);
+    let _ = frame_at(scheduler.poll(HOST_START_MS));
+    let stop_host_ms = HOST_START_MS + 30 * u64::from(PACKET_DURATION_MS);
+
+    let (kept, trimmed) = scheduler.drain_remaining_before(stop_host_ms);
+
+    assert_eq!(trimmed, 0);
+    assert_eq!(kept.len(), 29);
+    assert_eq!(kept.last().expect("frames").sequence, 29);
+}

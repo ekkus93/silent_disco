@@ -84,6 +84,24 @@ class ManualListenerTransportControllerTest {
 
         assertThat(translated).isEqualTo(0uL)
     }
+
+    @Test
+    fun transportClockOriginSubtractsAContinuingRuntimesElapsedClock() {
+        // A continuing stream's runtime clock is already 42 s in; a receipt
+        // 275 ms after these readings must land at runtime time 42_275.
+        val origin = transportClockOrigin(transportNowMs = 100_000uL, runtimeNowMs = 42_000uL)
+
+        assertThat(origin).isEqualTo(58_000uL)
+        assertThat(
+            translateTransportElapsedToPumpClock(origin, 100_275uL) { error("no fallback") },
+        ).isEqualTo(42_275uL)
+    }
+
+    @Test
+    fun transportClockOriginRejectsARuntimeClockOlderThanTheTransport() {
+        assertThat(transportClockOrigin(transportNowMs = 10uL, runtimeNowMs = 11uL)).isNull()
+    }
+
     @Test
     fun cleanupFailureAggregationPreservesTheFirstFailureAndSuppressesLaterOnes() {
         val first = IllegalStateException("first")

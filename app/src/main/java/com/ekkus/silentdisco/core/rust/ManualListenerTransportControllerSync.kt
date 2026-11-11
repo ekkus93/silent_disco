@@ -93,6 +93,17 @@ internal fun translateTransportElapsedToPumpClock(
     return if (elapsedTransportMs >= origin) elapsedTransportMs - origin else 0uL
 }
 
+/**
+ * The transport clock's reading at a playback runtime's own t=0, from
+ * back-to-back readings of both clocks. A runtime continuing a session's
+ * clock is already well past zero, so its reading must be subtracted rather
+ * than assumed to be ~0. `null` (fall back to live `nowMs()`) if the runtime
+ * clock claims to be older than the transport's, which cannot happen within
+ * one session since the transport connects first.
+ */
+internal fun transportClockOrigin(transportNowMs: ULong, runtimeNowMs: ULong): ULong? =
+    if (transportNowMs >= runtimeNowMs) transportNowMs - runtimeNowMs else null
+
 internal fun ManualListenerTransportController.translateToPumpClock(
     runtime: FfiListenerPlaybackHandle,
     elapsedTransportMs: ULong,

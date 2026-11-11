@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 const PACKET_DURATION_MS: u32 = 20;
 const SAMPLES_PER_PACKET: u32 = 960;
 
-fn scheduler_config() -> SchedulerConfig {
+pub(super) fn scheduler_config() -> SchedulerConfig {
     let mut config = SchedulerConfig::new(
         SessionId::new("session-runtime").expect("session id"),
         StreamId::new("stream-runtime").expect("stream id"),
@@ -39,14 +39,14 @@ fn scheduler_config() -> SchedulerConfig {
     config
 }
 
-fn ring_config() -> RenderRingConfig {
+pub(super) fn ring_config() -> RenderRingConfig {
     RenderRingConfig {
         capacity_frames: 48_000,
         target_fill_frames: 19_200,
     }
 }
 
-fn datagram(sequence: u64) -> AudioDatagram {
+pub(super) fn datagram(sequence: u64) -> AudioDatagram {
     AudioDatagram {
         session_id: SessionId::new("session-runtime").expect("session id"),
         stream_id: StreamId::new("stream-runtime").expect("stream id"),
@@ -134,7 +134,7 @@ fn one_pump_wake_up_drains_every_frame_already_due() {
 
 /// Locks sync on a near-zero offset so the helper datagrams, whose
 /// presentation times start at zero, are immediately due.
-fn lock_sync_at_zero_offset(runtime: &ListenerPlaybackRuntime) {
+pub(super) fn lock_sync_at_zero_offset(runtime: &ListenerPlaybackRuntime) {
     let send = runtime.now_ms();
     runtime.begin_sync_probe(1, send).expect("probe registered");
     let receive = runtime.now_ms();
@@ -144,7 +144,7 @@ fn lock_sync_at_zero_offset(runtime: &ListenerPlaybackRuntime) {
     assert!(outcome.sync_locked, "playback cannot start without sync");
 }
 
-fn token_as_engine(token: u64) -> *mut core::ffi::c_void {
+pub(super) fn token_as_engine(token: u64) -> *mut core::ffi::c_void {
     usize::try_from(token).unwrap_or(usize::MAX) as *mut core::ffi::c_void
 }
 

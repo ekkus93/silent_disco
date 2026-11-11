@@ -33,6 +33,9 @@ pub struct PlaybackPump {
     pub(super) peak_queued_frames: usize,
     /// Packets discarded because they arrived before sync locked.
     pub(super) dropped_before_sync: u64,
+    /// Buffered packets discarded at a stop because they were presented after
+    /// the host's stop time (see [`PlaybackPump::finish_before`]).
+    pub(super) stop_trimmed_packets: u64,
     /// Render-ring underrun count observed on the previous pump tick.
     ///
     /// Before the first frame has been placed on the timeline this is only a
@@ -116,6 +119,7 @@ impl PlaybackPump {
             offset_ms: 0.0,
             peak_queued_frames: 0,
             dropped_before_sync: 0,
+            stop_trimmed_packets: 0,
             last_observed_underrun_callbacks,
             timeline_started: false,
             offset_driven_rebuffers: 0,

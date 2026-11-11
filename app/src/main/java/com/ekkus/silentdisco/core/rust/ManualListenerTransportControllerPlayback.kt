@@ -114,12 +114,19 @@ internal fun ManualListenerTransportController.handleStreamStarted(
     // was granted rather than reopening one. Usually a no-op here, since
     // the host's `Stop` for the previous track has already ended it the
     // same way -- this covers a new stream arriving without one.
-    if (endStream(keepOutputOpen = true) != null) return
+    // The old stream ends where this one begins on the host timeline: audio it
+    // sent ahead past that point was never meant to be heard.
+    if (endStream(keepOutputOpen = true, cutAtHostMs = event.hostStartTimeMs) != null) return
     receivedCount = 0
     lastReceivedSequence = null
 
+    // A stream after the session's first continues on the previous stream's
+    // clock and sync estimate, so it plays from its first packet instead of
+    // dropping ~0.8 s while sync is re-acquired.
+    val handover = syncHandover
+    syncHandover = null
     val runtime = runCatching {
-        FfiListenerPlaybackHandle.open(
+        val config =
             FfiListenerPlaybackConfig(
                 sessionId = session.value,
                 streamId = event.streamId,
@@ -134,20 +141,26 @@ internal fun ManualListenerTransportController.handleStreamStarted(
                 writeLeadMs = RING_WRITE_LEAD_MS,
                 maxPrefillMs = MAX_RING_PREFILL_MS,
                 volume = 1.0f,
-            ),
-        )
-    }.getOrElse { error ->
+            )
+        if (handover != null) {
+            FfiListenerPlaybackHandle.openContinuing(config, handover)
+        } else {
+            FfiListenerPlaybackHandle.open(config)
+        }
+    }.also { handover?.close() }.getOrElse { error ->
         handlePlaybackEngineFailure(error)
         return
     }
     playbackRuntime = runtime
     currentStreamId = StreamId(event.streamId)
-    // Read back-to-back with the runtime's own clock (just constructed,
-    // so its `nowMs()` is ~0) so `transportClockOriginMs` is the
-    // transport clock's reading at the runtime's own t=0. See
-    // `translateToPumpClock` for how this turns a transport-clock
-    // receive timestamp into the runtime's timeline.
-    transportClockOriginMs = runCatching { withManualHandle(handle) { it.nowMs() } }.getOrNull()
+    // The transport clock's reading at the runtime's own t=0. A continuing
+    // runtime keeps the previous stream's clock, so its `nowMs()` is not ~0;
+    // subtracting it keeps `translateToPumpClock` correct either way.
+    transportClockOriginMs = runCatching {
+        val runtimeNowMs = runtime.nowMs()
+        withManualHandle(handle) { it.nowMs() }
+            ?.let { transportNowMs -> transportClockOrigin(transportNowMs, runtimeNowMs) }
+    }.getOrNull()
 
     // Reuse the stream this session was already granted whenever one is
     // open, so a track change swaps only the content. Reopening is the
@@ -221,13 +234,14 @@ internal fun ManualListenerTransportController.pauseOutput() {
         .onFailure { error -> handlePlaybackEngineFailure(error) }
 }
 
-internal fun ManualListenerTransportController.handleStreamStopped() {
-    // The runtime drains its own buffered tail as part of stopping, so a
-    // stream's final moments are played rather than discarded. The native
+internal fun ManualListenerTransportController.handleStreamStopped(hostStopTimeMs: ULong) {
+    // The runtime plays its buffered tail up to the host's stop time, so a
+    // stream's final moments are played, but audio the host sent ahead past
+    // the stop is dropped rather than delaying the next stream. The native
     // output deliberately stays open: the session is still live and the
     // host may start another track, which then rebinds this same stream
     // instead of reopening one (see [endStream]).
-    if (endStream(keepOutputOpen = true) == null) {
+    if (endStream(keepOutputOpen = true, cutAtHostMs = hostStopTimeMs) == null) {
         _connectState.value = ManualConnectUiState.Approved(trustedForFuture)
     }
 }
@@ -252,7 +266,10 @@ internal fun ManualListenerTransportController.stopPlayback(): Throwable? = endS
  * teardown -- disconnect, rejection, or closing the controller -- closes
  * it.
  */
-internal fun ManualListenerTransportController.endStream(keepOutputOpen: Boolean): Throwable? {
+internal fun ManualListenerTransportController.endStream(
+    keepOutputOpen: Boolean,
+    cutAtHostMs: ULong? = null,
+): Throwable? {
     syncProbeJob?.cancel()
     syncProbeJob = null
     diagnosticsSampleJob?.cancel()
@@ -266,6 +283,11 @@ internal fun ManualListenerTransportController.endStream(keepOutputOpen: Boolean
         }
     }
 
+    if (!keepOutputOpen) {
+        // A teardown ends the session: its clock lock must not carry over.
+        syncHandover?.let { stale -> capture { stale.close() } }
+        syncHandover = null
+    }
     val runtime = playbackRuntime ?: run {
         // No stream to end, but a teardown still has to release the
         // output; leaving a low-latency stream running against a
@@ -290,9 +312,17 @@ internal fun ManualListenerTransportController.endStream(keepOutputOpen: Boolean
     // *through the still-running Oboe callback* so the stream ends on its
     // own final sample rather than mid-note (see `await_ring_drain`, which
     // documents that a consumer closed first means the ring never drains).
-    capture { runtime.stop() }
+    capture { if (cutAtHostMs != null) runtime.stopAt(cutAtHostMs) else runtime.stop() }
     if (!keepOutputOpen) capture { OboeBridge.nativeOboeClose() }
     capture { logPlaybackSummary(runtime) }
+    if (keepOutputOpen) {
+        // The session continues: keep this stream's clock lock for the next.
+        capture {
+            val next = runtime.syncHandover()
+            syncHandover?.close()
+            syncHandover = next
+        }
+    }
     capture { runtime.close() }
 
     firstFailure?.let { error ->

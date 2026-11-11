@@ -446,6 +446,37 @@ impl PlaybackScheduler {
         frames
     }
 
+    /// Like [`Self::drain_remaining`], but for a stream stopped at
+    /// `stop_host_ms` on the host timeline: only frames presented before the
+    /// stop are kept, and the last kept frame is faded out. Returns the kept
+    /// frames and the number discarded.
+    ///
+    /// The host sends audio up to a second ahead of its presentation time, so
+    /// after a mid-song stop the buffer holds audio the host's timeline never
+    /// reached. Playing it would delay the next stream and make this listener
+    /// keep going after every other listener has stopped. A natural end is
+    /// unaffected: the host sends that `Stop` only once its last packet has
+    /// played, so every buffered frame precedes the stop time.
+    pub fn drain_remaining_before(&mut self, stop_host_ms: u64) -> (Vec<ScheduledFrame>, u64) {
+        let mut frames = self.drain_remaining();
+        let kept = frames
+            .iter()
+            .take_while(|frame| frame.host_presentation_time_ms < stop_host_ms)
+            .count();
+        let trimmed = u64::try_from(frames.len() - kept).unwrap_or(u64::MAX);
+        if trimmed > 0 {
+            frames.truncate(kept);
+            if let Some(last) = frames.last_mut() {
+                apply_fade_out_tail(
+                    &mut last.samples,
+                    usize::from(self.config.channels),
+                    self.ramp_frames,
+                );
+            }
+        }
+        (frames, trimmed)
+    }
+
     /// Records the per-channel values an emitted frame ended on, so the next
     /// frame spliced after it can continue from them rather than stepping.
     fn remember_emitted_tail(&mut self, samples: &[i16], channels: usize) {

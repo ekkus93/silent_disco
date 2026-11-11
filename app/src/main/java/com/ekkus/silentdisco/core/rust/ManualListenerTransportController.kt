@@ -6,6 +6,7 @@ import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
+import com.ekkus.silentdisco.core.uniffi.FfiListenerSyncHandover
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
@@ -106,14 +107,23 @@ class ManualListenerTransportController(
         set(value) = currentStreamIdRef.set(value)
 
     /**
-     * The transport's own clock, read at [playbackRuntime]'s construction
-     * (when its `nowMs()` was ~0), so it doubles as that transport-clock
-     * reading's translation into the runtime's timeline. The transport
-     * connects before any stream's runtime exists, so the two clocks have
-     * different origins -- see [FfiListenerTransportEvent.SyncResponseReceived]'s
-     * `receivedAtElapsedMs` doc comment and [translateToPumpClock].
+     * The transport clock's reading at [playbackRuntime]'s own t=0, so it
+     * translates a transport-clock timestamp onto the runtime's timeline.
+     * Captured as `transport.nowMs() - runtime.nowMs()` when the runtime
+     * opens: a continuing stream shares the previous runtime's clock, so its
+     * `nowMs()` does not start at zero. See
+     * [FfiListenerTransportEvent.SyncResponseReceived]'s `receivedAtElapsedMs`
+     * doc comment and [translateToPumpClock].
      */
     internal var transportClockOriginMs: ULong? = null
+
+    /**
+     * The ended stream's clock and sync estimate, kept for the session's next
+     * stream so it does not re-acquire sync and drop its first ~0.8 s of
+     * audio. Set when a stream ends with the session still live; cleared on
+     * teardown, so it never carries into another session.
+     */
+    internal var syncHandover: FfiListenerSyncHandover? = null
 
     internal val _connectState = MutableStateFlow<ManualConnectUiState>(ManualConnectUiState.Idle)
     val connectState: StateFlow<ManualConnectUiState> = _connectState.asStateFlow()
@@ -320,11 +330,11 @@ class ManualListenerTransportController(
             is FfiListenerTransportEvent.StreamStarted -> handleStreamStarted(scope, handle, event)
             is FfiListenerTransportEvent.TrackBoundary -> Unit
             is FfiListenerTransportEvent.Paused -> {
-                // Silence at once: drop the queued audio rather than playing it out.
+                // Silence at once, holding the queued audio for the resume.
                 pauseOutput()
                 _connectState.value = ManualConnectUiState.Streaming(trustedForFuture, PlaybackState.PAUSED)
             }
-            is FfiListenerTransportEvent.Stopped -> handleStreamStopped()
+            is FfiListenerTransportEvent.Stopped -> handleStreamStopped(event.hostStopTimeMs)
             is FfiListenerTransportEvent.SyncResponseReceived -> handleSyncResponse(handle, event)
             is FfiListenerTransportEvent.AudioReceived -> handleAudioReceived(event)
         }

@@ -23,6 +23,8 @@ mod pump;
 mod runtime;
 
 #[cfg(test)]
+mod stop_tests;
+#[cfg(test)]
 mod sync_tests;
 #[cfg(test)]
 mod tests;

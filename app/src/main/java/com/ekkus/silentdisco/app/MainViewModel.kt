@@ -162,6 +162,15 @@ class MainViewModel @JvmOverloads constructor(
     internal var listenerPlayback: FfiListenerPlaybackHandle?
         get() = listenerPlaybackRef.get()
         set(value) = listenerPlaybackRef.set(value)
+    /** Session of [listenerPlayback], so its clock lock is only reused within that session. */
+    internal var listenerPlaybackSessionId: SessionId? = null
+
+    /**
+     * The last ended stream's clock and sync estimate, keyed by its session.
+     * The next stream of the same session opens from it, so it plays from its
+     * first packet instead of re-acquiring sync and dropping ~0.8 s of audio.
+     */
+    internal var listenerSyncHandover: SessionSyncHandover? = null
     private val hostMonitorPlaybackRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
     internal var hostMonitorPlayback: FfiListenerPlaybackHandle?
         get() = hostMonitorPlaybackRef.get()
@@ -679,6 +688,12 @@ class MainViewModel @JvmOverloads constructor(
         // The runtime holds a pump thread, a ring registration and the native
         // output; none of them are reclaimed by the ViewModel going away.
         stopListenerPlayback()
+        // Queued after the stop above on the same single-thread executor, so it
+        // also releases the handover that stop just captured.
+        listenerPlaybackControlExecutor.execute {
+            listenerSyncHandover?.handover?.close()
+            listenerSyncHandover = null
+        }
         listenerCallbackCapture?.let { capture ->
             listenerCallbackCapture = null
             runBlocking(Dispatchers.IO) { runCatching { capture.stopAndReport() } }

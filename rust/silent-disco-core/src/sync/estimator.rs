@@ -198,7 +198,10 @@ impl From<SyncTimestampError> for SyncEstimatorError {
     }
 }
 
-#[derive(Debug)]
+/// Cloning carries the whole estimate -- samples, drift history, and any
+/// probes still in flight -- so a listener can keep one session's clock lock
+/// across stream changes instead of re-acquiring it for every song.
+#[derive(Debug, Clone)]
 pub struct ClockSyncEstimator {
     config: SyncEstimatorConfig,
     pending: BTreeMap<SyncCorrelationId, LocalMonotonicMillis>,
@@ -236,6 +239,13 @@ impl ClockSyncEstimator {
     #[must_use]
     pub const fn config(&self) -> SyncEstimatorConfig {
         self.config
+    }
+
+    /// Local receive time of the most recently accepted sample, or `None`
+    /// before the first one.
+    #[must_use]
+    pub const fn last_accepted_sync_at(&self) -> Option<LocalMonotonicMillis> {
+        self.last_accepted_sync_at
     }
 
     #[must_use]

@@ -10,6 +10,7 @@ import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.uniffi.FfiAudioPacket
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackConfig
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
+import com.ekkus.silentdisco.core.uniffi.FfiListenerSyncHandover
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackPhase
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +75,17 @@ internal fun MainViewModel.startListenerPlaybackFromTransport(
     }
 }
 
+/** A stream's clock lock, tagged with the session it belongs to. */
+internal class SessionSyncHandover(val sessionId: SessionId, val handover: FfiListenerSyncHandover)
+
+/**
+ * The carried value to open [session]'s next stream from: only a handover
+ * from that same session. Another session's host has an unrelated clock, so
+ * its offset would place packets on the wrong timeline.
+ */
+internal fun <T> handoverForSession(storedSession: SessionId?, stored: T?, session: SessionId): T? =
+    stored?.takeIf { storedSession == session }
+
 private fun MainViewModel.startListenerPlaybackFromTransportNow(
     sessionId: SessionId,
     streamId: StreamId,
@@ -89,9 +101,15 @@ private fun MainViewModel.startListenerPlaybackFromTransportNow(
             .onFailure(::handleListenerPlaybackEngineFailure)
         return
     }
-    stopListenerPlaybackNow()
+    // The old stream ends where this one begins on the host timeline.
+    stopListenerPlaybackNow(cutAtHostMs = event.hostStartTimeMs)
+    // A later stream of the same session continues on the previous stream's
+    // clock and sync estimate, so it plays from its first packet.
+    val stored = listenerSyncHandover
+    listenerSyncHandover = null
+    val handover = handoverForSession(stored?.sessionId, stored?.handover, sessionId)
     val runtime = runCatching {
-        FfiListenerPlaybackHandle.open(
+        val config =
             FfiListenerPlaybackConfig(
                 sessionId = sessionId.value,
                 streamId = streamId.value,
@@ -108,13 +126,18 @@ private fun MainViewModel.startListenerPlaybackFromTransportNow(
                 writeLeadMs = LISTENER_RING_WRITE_LEAD_MS,
                 maxPrefillMs = LISTENER_MAX_RING_PREFILL_MS,
                 volume = 1.0f,
-            ),
-        )
-    }.getOrElse { error ->
+            )
+        if (handover != null) {
+            FfiListenerPlaybackHandle.openContinuing(config, handover)
+        } else {
+            FfiListenerPlaybackHandle.open(config)
+        }
+    }.also { stored?.handover?.close() }.getOrElse { error ->
         handleListenerPlaybackEngineFailure(error)
         return
     }
     listenerPlayback = runtime
+    listenerPlaybackSessionId = sessionId
 
     val oboeStatus = OboeBridge.nativeOboeOpen(runtime.engineToken())
     if (oboeStatus != LISTENER_OBOE_STATUS_OK) {
@@ -235,14 +258,18 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
     }
 }
 
-/** Stops Rust playback and the native output for the discovered-session path. */
-internal fun MainViewModel.stopListenerPlayback() {
+/**
+ * Stops Rust playback and the native output for the discovered-session path.
+ * With [cutAtHostMs], buffered audio presented after that host time is
+ * dropped instead of played out (see `FfiListenerPlaybackHandle.stopAt`).
+ */
+internal fun MainViewModel.stopListenerPlayback(cutAtHostMs: ULong? = null) {
     playbackJob?.cancel()
     playbackJob = null
-    listenerPlaybackControlExecutor.execute { stopListenerPlaybackNow() }
+    listenerPlaybackControlExecutor.execute { stopListenerPlaybackNow(cutAtHostMs) }
 }
 
-private fun MainViewModel.stopListenerPlaybackNow() {
+private fun MainViewModel.stopListenerPlaybackNow(cutAtHostMs: ULong? = null) {
     val runtime = listenerPlayback ?: return
     listenerPlayback = null
     var firstFailure: Throwable? = null
@@ -255,8 +282,20 @@ private fun MainViewModel.stopListenerPlaybackNow() {
         }
     }
     capture { listenerTransportController.detachPlayback() }
-    capture { runtime.stop() }
+    capture { if (cutAtHostMs != null) runtime.stopAt(cutAtHostMs) else runtime.stop() }
     capture { OboeBridge.nativeOboeClose() }
+    // Keep this stream's clock lock for the session's next stream. It is
+    // only ever reused by a stream of the same session (see
+    // [handoverForSession]), so a disconnect cannot leak it elsewhere.
+    val session = listenerPlaybackSessionId
+    listenerPlaybackSessionId = null
+    if (session != null) {
+        capture {
+            val next = SessionSyncHandover(session, runtime.syncHandover())
+            listenerSyncHandover?.handover?.close()
+            listenerSyncHandover = next
+        }
+    }
     capture { runtime.close() }
     firstFailure?.let { error ->
         logger.w("playback.stop_failed", error.message ?: "playback failed to stop cleanly")

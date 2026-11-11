@@ -202,7 +202,7 @@ class MainViewModelListenerResyncTest {
         runCurrent()
         assertThat(harness.viewModel.resyncJob?.isActive).isTrue()
 
-        harness.viewModel.handleTransportStreamStopped()
+        harness.viewModel.handleTransportStreamStopped(hostStopTimeMs = 10_000uL)
         runCurrent()
 
         assertThat(harness.viewModel._uiState.value.listenerState)

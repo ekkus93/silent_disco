@@ -117,6 +117,9 @@ pub struct FfiPlaybackDiagnostics {
     pub resynchronisations: u64,
     /// Packets discarded because they arrived before a clock offset existed.
     pub dropped_before_sync: u64,
+    /// Buffered packets dropped at a host-timed stop because they were
+    /// presented after the host's stop time.
+    pub stop_trimmed_packets: u64,
     /// Frames synthesized to cover missing packets.
     pub concealed_packets: u64,
     /// Times the concealment bound forced a rebuffer.

@@ -1,6 +1,6 @@
 use super::{
-    MAX_RING_CAPACITY_FRAMES, MIN_RING_CAPACITY_FRAMES, RENDER_CHANNELS, RenderRing,
-    RenderRingConfig, RenderRingConfigErrorKind,
+    CUT_FADE_FRAMES, MAX_RING_CAPACITY_FRAMES, MIN_RING_CAPACITY_FRAMES, RENDER_CHANNELS,
+    RenderRing, RenderRingConfig, RenderRingConfigErrorKind,
 };
 
 /// Produces `frame_count` frames of strictly increasing, globally unique
@@ -288,4 +288,57 @@ fn a_muted_ring_outputs_silence_and_keeps_its_queued_frames() {
     // Frame 0 is samples 0 and 1; frame 1's left sample is 2.0.
     assert_eq!(after[0].to_bits(), 0.0_f32.to_bits());
     assert_eq!(after[2].to_bits(), 2.0_f32.to_bits());
+}
+
+#[test]
+fn a_fade_out_cut_ramps_queued_audio_to_zero_and_discards_the_rest() {
+    let ring = RenderRing::new(RenderRingConfig::new()).expect("valid config");
+    let (producer, consumer) = ring.split();
+    let queued = CUT_FADE_FRAMES * 4;
+    let full_scale = vec![0.5_f32; queued * RENDER_CHANNELS];
+    assert_eq!(producer.push_frames(&full_scale), queued);
+
+    producer.request_fade_out_cut();
+    assert!(
+        !producer.fade_out_cut_completed(),
+        "nothing is cut until the consumer reads"
+    );
+
+    let mut output = vec![1.0_f32; RENDER_CHANNELS * CUT_FADE_FRAMES * 2];
+    let outcome = consumer.read_frames(&mut output);
+    assert_eq!(outcome.frames_supplied, CUT_FADE_FRAMES);
+    assert_eq!(outcome.frames_silence_filled, CUT_FADE_FRAMES);
+
+    // The fade starts from the queued level and falls monotonically to zero,
+    // so the stream ends without a step.
+    let left: Vec<f32> = output.iter().step_by(RENDER_CHANNELS).copied().collect();
+    assert!(left[0] > 0.49 && left[0] <= 0.5);
+    assert!(left.windows(2).all(|pair| pair[1] <= pair[0]));
+    assert_eq!(left[CUT_FADE_FRAMES - 1].to_bits(), 0.0_f32.to_bits());
+    assert!(left[CUT_FADE_FRAMES..].iter().all(|sample| *sample == 0.0));
+
+    // Everything written past the fade is gone, and the ring stays silent.
+    assert!(producer.fade_out_cut_completed());
+    assert_eq!(producer.queued_frames(), 0);
+    let mut after = vec![1.0_f32; RENDER_CHANNELS * 8];
+    let outcome = consumer.read_frames(&mut after);
+    assert_eq!(outcome.frames_supplied, 0);
+    assert!(after.iter().all(|sample| *sample == 0.0));
+}
+
+#[test]
+fn a_fade_out_cut_on_a_nearly_empty_ring_fades_what_is_there() {
+    let ring = RenderRing::new(RenderRingConfig::new()).expect("valid config");
+    let (producer, consumer) = ring.split();
+    assert_eq!(producer.push_frames(&[0.5_f32; 10 * RENDER_CHANNELS]), 10);
+
+    producer.request_fade_out_cut();
+    let mut output = vec![1.0_f32; RENDER_CHANNELS * 32];
+    let outcome = consumer.read_frames(&mut output);
+    assert_eq!(outcome.frames_supplied, 10);
+    assert_eq!(output[9 * RENDER_CHANNELS].to_bits(), 0.0_f32.to_bits());
+    assert!(producer.fade_out_cut_completed());
+    // A cut is deliberate silence, not starvation: it must not look like an
+    // underrun that would make the pump realign.
+    assert_eq!(consumer.telemetry().underrun_callbacks, 0);
 }

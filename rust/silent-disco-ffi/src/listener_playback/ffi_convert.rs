@@ -66,6 +66,7 @@ impl From<PlaybackDiagnostics> for FfiPlaybackDiagnostics {
             buffered_duration_rejections: diagnostics.buffered_duration_rejections,
             resynchronisations: diagnostics.resynchronisations,
             dropped_before_sync: diagnostics.dropped_before_sync,
+            stop_trimmed_packets: diagnostics.stop_trimmed_packets,
             concealed_packets: diagnostics.concealed_packets,
             concealment_driven_rebuffers: diagnostics.concealment_driven_rebuffers,
             offset_driven_rebuffers: diagnostics.offset_driven_rebuffers,

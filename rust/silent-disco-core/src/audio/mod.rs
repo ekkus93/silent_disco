@@ -43,10 +43,10 @@ pub use playback_pump::{
     SyncApplyOutcome,
 };
 pub use render_ring::{
-    DEFAULT_RING_CAPACITY_FRAMES, DEFAULT_TARGET_FILL_FRAMES, MAX_RING_CAPACITY_FRAMES,
-    MIN_RING_CAPACITY_FRAMES, RENDER_CHANNELS, RenderReadOutcome, RenderRing, RenderRingConfig,
-    RenderRingConfigError, RenderRingConfigErrorKind, RenderRingConsumer, RenderRingProducer,
-    RenderRingSnapshot,
+    CUT_FADE_FRAMES, DEFAULT_RING_CAPACITY_FRAMES, DEFAULT_TARGET_FILL_FRAMES,
+    MAX_RING_CAPACITY_FRAMES, MIN_RING_CAPACITY_FRAMES, RENDER_CHANNELS, RenderReadOutcome,
+    RenderRing, RenderRingConfig, RenderRingConfigError, RenderRingConfigErrorKind,
+    RenderRingConsumer, RenderRingProducer, RenderRingSnapshot,
 };
 pub use scheduler::{
     BufferHealth, DEFAULT_CONCEALMENT_SKIP_THRESHOLD_PACKETS, DEFAULT_HARD_RESYNC_THRESHOLD_MS,

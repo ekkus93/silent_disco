@@ -143,6 +143,38 @@ impl PlaybackPump {
         written
     }
 
+    /// Ends a stream the host stopped at `stop_host_ms`: queues only the
+    /// buffered audio presented before the stop and stops the scheduler.
+    ///
+    /// Returns the local time at which the output must be cut, or `None`
+    /// without a clock lock (nothing was mapped onto the timeline, so there is
+    /// nothing to cut). The ring still holds audio written ahead past the stop
+    /// point; the caller cuts it at that time with
+    /// [`Self::request_output_cut`].
+    pub fn finish_before(&mut self, stop_host_ms: u64) -> Option<u64> {
+        let (kept, trimmed) = self.scheduler.drain_remaining_before(stop_host_ms);
+        self.stop_trimmed_packets = self.stop_trimmed_packets.saturating_add(trimmed);
+        for frame in &kept {
+            self.enqueue_frame(frame);
+        }
+        self.scheduler.stop();
+        self.finish_recording();
+        self.sync_locked
+            .then(|| self.scheduler.local_time_for_host_ms(stop_host_ms))
+    }
+
+    /// Asks the real-time consumer to fade out and drop everything still
+    /// queued in the ring, ending playback at its current position.
+    pub fn request_output_cut(&self) {
+        self.producer.request_fade_out_cut();
+    }
+
+    /// True once the consumer has carried out [`Self::request_output_cut`].
+    #[must_use]
+    pub fn output_cut_completed(&self) -> bool {
+        self.producer.fade_out_cut_completed()
+    }
+
     /// Detects a newly observed real-time output underrun and, after the
     /// stream has genuinely started, re-anchors queued playback to true now.
     ///

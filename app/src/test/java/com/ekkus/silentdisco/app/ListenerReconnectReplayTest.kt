@@ -139,6 +139,17 @@ class ListenerReconnectReplayTest {
         assertThat(shouldReportListenerPlaying(FfiPlaybackPhase.BUFFERING, PlaybackState.BUFFERING)).isFalse()
     }
 
+    @Test
+    fun aStreamReusesOnlyItsOwnSessionsClockLock() {
+        val session = com.ekkus.silentdisco.core.protocol.SessionId("session-a")
+        val other = com.ekkus.silentdisco.core.protocol.SessionId("session-b")
+
+        assertThat(handoverForSession(session, "lock-a", session)).isEqualTo("lock-a")
+        // Another host's clock is unrelated; its offset must never be reused.
+        assertThat(handoverForSession(other, "lock-b", session)).isNull()
+        assertThat(handoverForSession<String>(null, null, session)).isNull()
+    }
+
     private fun TestScope.reconnectingListener(
         pendingBeforeDisconnect: FfiListenerTransportEvent.TrackBoundary?,
     ): ReplayFixture {

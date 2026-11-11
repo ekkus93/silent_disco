@@ -17,7 +17,50 @@ use super::ffi_types::{
     FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError,
     FfiPlaybackDiagnostics, FfiSyncSampleOutcome,
 };
-use super::runtime::ListenerPlaybackRuntime;
+use super::runtime::{ListenerPlaybackRuntime, ListenerSyncHandover};
+
+/// One session's clock lock, carried from a finished stream into the next
+/// stream's [`FfiListenerPlaybackHandle::open_continuing`]. Opaque to the
+/// platform; reusable, since opening from it copies the estimate.
+#[derive(Debug, uniffi::Object)]
+pub struct FfiListenerSyncHandover {
+    inner: ListenerSyncHandover,
+}
+
+type RuntimeConfigs = (SchedulerConfig, RenderRingConfig, PlaybackPumpConfig);
+
+fn runtime_configs(
+    config: &FfiListenerPlaybackConfig,
+) -> Result<RuntimeConfigs, FfiListenerPlaybackError> {
+    let session_id = SessionId::new(&config.session_id)
+        .map_err(|error| FfiListenerPlaybackError::InvalidConfiguration(format!("{error:?}")))?;
+    let stream_id = StreamId::new(&config.stream_id)
+        .map_err(|error| FfiListenerPlaybackError::InvalidConfiguration(format!("{error:?}")))?;
+    let mut scheduler_config = SchedulerConfig::new(
+        session_id,
+        stream_id,
+        config.sample_rate,
+        config.host_start_time_ms,
+        config.samples_per_packet,
+        config.channels,
+    );
+    scheduler_config.startup_buffer_target_ms = config.startup_buffer_target_ms;
+    scheduler_config.rebuffer_target_ms = config.rebuffer_target_ms;
+    let target_fill_frames = usize::try_from(config.ring_target_fill_frames).unwrap_or(usize::MAX);
+    Ok((
+        scheduler_config,
+        RenderRingConfig {
+            capacity_frames: usize::try_from(config.ring_capacity_frames).unwrap_or(usize::MAX),
+            target_fill_frames,
+        },
+        PlaybackPumpConfig {
+            volume: config.volume,
+            write_lead_ms: config.write_lead_ms,
+            max_prefill_ms: config.max_prefill_ms,
+            target_depth_frames: target_fill_frames,
+        },
+    ))
+}
 
 /// Foreign-facing handle to one listener playback stream.
 ///
@@ -46,43 +89,50 @@ impl FfiListenerPlaybackHandle {
     /// pump thread cannot be spawned.
     #[uniffi::constructor]
     pub fn open(config: FfiListenerPlaybackConfig) -> Result<Arc<Self>, FfiListenerPlaybackError> {
-        let session_id = SessionId::new(&config.session_id).map_err(|error| {
-            FfiListenerPlaybackError::InvalidConfiguration(format!("{error:?}"))
-        })?;
-        let stream_id = StreamId::new(&config.stream_id).map_err(|error| {
-            FfiListenerPlaybackError::InvalidConfiguration(format!("{error:?}"))
-        })?;
-        let mut scheduler_config = SchedulerConfig::new(
-            session_id,
-            stream_id,
-            config.sample_rate,
-            config.host_start_time_ms,
-            config.samples_per_packet,
-            config.channels,
-        );
-        scheduler_config.startup_buffer_target_ms = config.startup_buffer_target_ms;
-        scheduler_config.rebuffer_target_ms = config.rebuffer_target_ms;
+        let (scheduler_config, ring_config, pump_config) = runtime_configs(&config)?;
+        let runtime =
+            ListenerPlaybackRuntime::start(scheduler_config, ring_config, pump_config, 0.0)?;
+        Ok(Arc::new(Self {
+            runtime,
+            capture: Mutex::new(None),
+        }))
+    }
 
-        let runtime = ListenerPlaybackRuntime::start(
+    /// Starts the session's next stream on the previous stream's clock and
+    /// sync estimate, taken with [`Self::sync_handover`].
+    ///
+    /// A fresh estimate locks the new stream immediately, so none of its
+    /// packets are dropped for arriving before sync. The new runtime keeps the
+    /// previous runtime's clock, so [`Self::now_ms`] does not restart at zero.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Self::open`].
+    #[uniffi::constructor]
+    pub fn open_continuing(
+        config: FfiListenerPlaybackConfig,
+        handover: Arc<FfiListenerSyncHandover>,
+    ) -> Result<Arc<Self>, FfiListenerPlaybackError> {
+        let (scheduler_config, ring_config, pump_config) = runtime_configs(&config)?;
+        let runtime = ListenerPlaybackRuntime::start_continuing(
             scheduler_config,
-            RenderRingConfig {
-                capacity_frames: usize::try_from(config.ring_capacity_frames).unwrap_or(usize::MAX),
-                target_fill_frames: usize::try_from(config.ring_target_fill_frames)
-                    .unwrap_or(usize::MAX),
-            },
-            PlaybackPumpConfig {
-                volume: config.volume,
-                write_lead_ms: config.write_lead_ms,
-                max_prefill_ms: config.max_prefill_ms,
-                target_depth_frames: usize::try_from(config.ring_target_fill_frames)
-                    .unwrap_or(usize::MAX),
-            },
-            0.0,
+            ring_config,
+            pump_config,
+            handover.inner.clone(),
         )?;
         Ok(Arc::new(Self {
             runtime,
             capture: Mutex::new(None),
         }))
+    }
+
+    /// Captures this stream's clock and sync estimate for the session's next
+    /// stream. Valid after [`Self::stop`].
+    #[must_use]
+    pub fn sync_handover(&self) -> Arc<FfiListenerSyncHandover> {
+        Arc::new(FfiListenerSyncHandover {
+            inner: self.runtime.sync_handover(),
+        })
     }
 
     /// The opaque token to hand to native audio setup exactly once.
@@ -349,6 +399,19 @@ impl FfiListenerPlaybackHandle {
     /// ended by panicking.
     pub fn stop(&self) -> Result<(), FfiListenerPlaybackError> {
         self.runtime.stop()?;
+        Ok(())
+    }
+
+    /// Stops a stream the host stopped at `host_stop_time_ms`: buffered audio
+    /// before the stop plays, the rest is dropped, and the output fades out at
+    /// the stop time instead of playing out audio the host never reached.
+    /// Idempotent with [`Self::stop`].
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Self::stop`].
+    pub fn stop_at(&self, host_stop_time_ms: u64) -> Result<(), FfiListenerPlaybackError> {
+        self.runtime.stop_at(host_stop_time_ms)?;
         Ok(())
     }
 }

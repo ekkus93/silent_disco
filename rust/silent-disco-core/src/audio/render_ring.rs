@@ -167,8 +167,16 @@ struct RingInner {
     read_index: AtomicUsize,
     /// While set, the consumer outputs silence and leaves queued frames in place.
     muted: AtomicBool,
+    /// Set by the producer to end playback at the consumer's current position:
+    /// the consumer fades out over [`CUT_FADE_FRAMES`], drops whatever is still
+    /// queued, mutes, and clears this flag.
+    cut_requested: AtomicBool,
     telemetry: RenderRingTelemetry,
 }
+
+/// Frames the consumer ramps to zero when cutting playback short, so a stream
+/// stopped mid-waveform ends without a click. 5 ms at 48 kHz.
+pub const CUT_FADE_FRAMES: usize = 240;
 
 /// A preallocated, bounded single-producer/single-consumer render ring.
 ///
@@ -231,6 +239,7 @@ impl RenderRing {
                 write_index: AtomicUsize::new(0),
                 read_index: AtomicUsize::new(0),
                 muted: AtomicBool::new(false),
+                cut_requested: AtomicBool::new(false),
                 telemetry: RenderRingTelemetry::default(),
             }),
         })
@@ -257,16 +266,39 @@ pub struct RenderRingProducer {
 }
 
 impl RenderRingProducer {
-    /// Writes as many complete interleaved frames from `frames` as fit
-    /// without overwriting an unread frame, returning the count actually
-    /// written. Any trailing samples that do not form a complete frame are
-    /// ignored. Never blocks and performs no allocation.
     /// Silences the consumer while `muted` is true. Queued frames are held,
     /// not discarded, and play in order once the ring is unmuted.
     pub fn set_muted(&self, muted: bool) {
         self.inner.muted.store(muted, Ordering::Release);
     }
 
+    /// Asks the consumer to end playback where it is now: on its next read it
+    /// fades the next [`CUT_FADE_FRAMES`] queued frames to zero, discards the
+    /// rest of the queue, and mutes. For a stream stopped mid-song, whose ring
+    /// still holds audio written ahead past the host's stop point.
+    pub fn request_fade_out_cut(&self) {
+        self.inner.cut_requested.store(true, Ordering::Release);
+    }
+
+    /// True once a requested cut has been carried out by the consumer.
+    #[must_use]
+    pub fn fade_out_cut_completed(&self) -> bool {
+        !self.inner.cut_requested.load(Ordering::Acquire)
+            && self.inner.muted.load(Ordering::Acquire)
+    }
+
+    /// Frames written but not yet read by the consumer.
+    #[must_use]
+    pub fn queued_frames(&self) -> usize {
+        let write_index = self.inner.write_index.load(Ordering::Relaxed);
+        let read_index = self.inner.read_index.load(Ordering::Acquire);
+        write_index - read_index
+    }
+
+    /// Writes as many complete interleaved frames from `frames` as fit
+    /// without overwriting an unread frame, returning the count actually
+    /// written. Any trailing samples that do not form a complete frame are
+    /// ignored. Never blocks and performs no allocation.
     #[must_use]
     pub fn push_frames(&self, frames: &[f32]) -> usize {
         let available_frames = frames.len() / RENDER_CHANNELS;
@@ -347,6 +379,9 @@ impl RenderRingConsumer {
     #[must_use]
     pub fn read_frames(&self, output: &mut [f32]) -> RenderReadOutcome {
         let requested_frames = output.len() / RENDER_CHANNELS;
+        if self.inner.cut_requested.load(Ordering::Acquire) {
+            return self.read_fade_out_cut(output, requested_frames);
+        }
         if self.inner.muted.load(Ordering::Acquire) {
             for sample in output.iter_mut().take(requested_frames * RENDER_CHANNELS) {
                 *sample = 0.0;
@@ -390,6 +425,59 @@ impl RenderRingConsumer {
         RenderReadOutcome {
             frames_supplied: frames_to_supply,
             frames_silence_filled,
+        }
+    }
+
+    /// Carries out a producer's cut: plays up to [`CUT_FADE_FRAMES`] queued
+    /// frames ramped linearly to zero, discards everything else queued, then
+    /// mutes. Real-time safe: atomics and arithmetic only.
+    fn read_fade_out_cut(&self, output: &mut [f32], requested_frames: usize) -> RenderReadOutcome {
+        let write_index = self.inner.write_index.load(Ordering::Acquire);
+        let read_index = self.inner.read_index.load(Ordering::Relaxed);
+        let available_frames = write_index - read_index;
+        let fade_frames = requested_frames.min(available_frames).min(CUT_FADE_FRAMES);
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "fade positions are at most CUT_FADE_FRAMES, far below f32 integer precision"
+        )]
+        let ramp_length = fade_frames as f32;
+        for offset in 0..fade_frames {
+            let slot_frame = (read_index + offset) % self.inner.capacity_frames;
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "fade positions are at most CUT_FADE_FRAMES, far below f32 integer precision"
+            )]
+            let gain = 1.0 - (offset as f32 + 1.0) / ramp_length;
+            for channel in 0..RENDER_CHANNELS {
+                let bits = self.inner.slots[slot_frame * RENDER_CHANNELS + channel]
+                    .load(Ordering::Relaxed);
+                output[offset * RENDER_CHANNELS + channel] = f32::from_bits(bits) * gain;
+            }
+        }
+        for sample in output
+            .iter_mut()
+            .take(requested_frames * RENDER_CHANNELS)
+            .skip(fade_frames * RENDER_CHANNELS)
+        {
+            *sample = 0.0;
+        }
+        // Everything after the fade was written ahead past the stop point and
+        // must never be heard.
+        self.inner.read_index.store(write_index, Ordering::Release);
+        self.inner.muted.store(true, Ordering::Release);
+        self.inner.cut_requested.store(false, Ordering::Release);
+        let silence_filled = requested_frames - fade_frames;
+        self.record_muted_telemetry(requested_frames);
+        let telemetry = &self.inner.telemetry;
+        telemetry
+            .frames_supplied_from_ring
+            .fetch_add(u64_from_usize(fade_frames), Ordering::Relaxed);
+        telemetry
+            .silence_filled_frames
+            .fetch_sub(u64_from_usize(fade_frames), Ordering::Relaxed);
+        RenderReadOutcome {
+            frames_supplied: fade_frames,
+            frames_silence_filled: silence_filled,
         }
     }
 

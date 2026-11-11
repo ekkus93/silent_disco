@@ -182,3 +182,185 @@ fn same_process_host_clock_lock_unlocks_playback_without_a_network_probe() {
         Err(ListenerPlaybackError::Stopped(_))
     ));
 }
+
+// --- Session clock handover across streams -------------------------------
+
+use super::runtime::{SYNC_HANDOVER_MAX_AGE_MS, fresh_locked_offset};
+use silent_disco_core::domain::{MonotonicMillis, PacketSequence, SampleIndex};
+use silent_disco_core::protocol::{AudioCodec, AudioDatagram};
+use silent_disco_core::sync::{
+    ClockSyncEstimator, HostMonotonicMillis, LocalMonotonicMillis, SyncCorrelationId,
+    SyncEstimatorConfig,
+};
+
+/// Host start time for handover streams: just ahead of "host now" under the
+/// fixture's offset (host `500_001` at local `10_010`, so host now is about
+/// `490_000` plus the runtime clock), so their first packet is still due.
+const HANDOVER_HOST_START_MS: u64 = 491_000;
+
+fn scheduler_config_for(stream: &str) -> SchedulerConfig {
+    let mut config = SchedulerConfig::new(
+        SessionId::new("session-runtime").expect("session id"),
+        StreamId::new(stream).expect("stream id"),
+        48_000,
+        HANDOVER_HOST_START_MS,
+        SAMPLES_PER_PACKET,
+        2,
+    );
+    config.startup_buffer_target_ms = 0;
+    config
+}
+
+fn datagram_for(stream: &str, sequence: u64) -> AudioDatagram {
+    AudioDatagram {
+        session_id: SessionId::new("session-runtime").expect("session id"),
+        stream_id: StreamId::new(stream).expect("stream id"),
+        sequence: PacketSequence::new(sequence),
+        codec: AudioCodec::PcmS16Le,
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: SAMPLES_PER_PACKET,
+        first_sample_index: SampleIndex::new(sequence * u64::from(SAMPLES_PER_PACKET)),
+        host_presentation_time_ms: MonotonicMillis::new(HANDOVER_HOST_START_MS + sequence * 20),
+        payload: (0..SAMPLES_PER_PACKET * 2)
+            .flat_map(|_| 1_000_i16.to_le_bytes())
+            .collect(),
+    }
+}
+
+/// A first stream whose estimator has one accepted, low-latency sample.
+fn locked_first_stream() -> ListenerPlaybackRuntime {
+    let runtime = ListenerPlaybackRuntime::start(
+        scheduler_config_for("stream-a"),
+        ring_config(),
+        PlaybackPumpConfig::default(),
+        0.0,
+    )
+    .expect("first stream starts");
+    runtime
+        .begin_sync_probe(1, 10_000)
+        .expect("probe registered");
+    let outcome = runtime
+        .observe_sync_response(1, 10_000, 500_000, 500_002, 10_020)
+        .expect("correlated response");
+    assert!(outcome.sync_locked, "fixture must be locked");
+    runtime
+}
+
+#[test]
+fn a_stream_opened_from_a_fresh_handover_is_locked_and_drops_nothing() {
+    let _guard = registry_test_guard();
+    let first = locked_first_stream();
+    let handover = first.sync_handover();
+    first.stop().expect("first stream stops");
+
+    let next = ListenerPlaybackRuntime::start_continuing(
+        scheduler_config_for("stream-b"),
+        ring_config(),
+        PlaybackPumpConfig::default(),
+        handover,
+    )
+    .expect("next stream starts");
+    assert!(
+        next.diagnostics().sync_locked,
+        "the session's lock must carry into the next stream before any new sample"
+    );
+
+    next.submit_packet(datagram_for("stream-b", 0))
+        .expect("packet submitted");
+    let diagnostics = next.diagnostics();
+    assert_eq!(diagnostics.dropped_before_sync, 0);
+    assert_eq!(diagnostics.packets_accepted, 1);
+    next.stop().expect("next stream stops");
+}
+
+#[test]
+fn the_next_stream_keeps_the_session_clock_and_its_estimate() {
+    let _guard = registry_test_guard();
+    let first = locked_first_stream();
+    let first_now = first.now_ms();
+    let handover = first.sync_handover();
+    first.stop().expect("first stream stops");
+
+    let next = ListenerPlaybackRuntime::start_continuing(
+        scheduler_config_for("stream-b"),
+        ring_config(),
+        PlaybackPumpConfig::default(),
+        handover,
+    )
+    .expect("next stream starts");
+    // Same timeline: the clock does not restart, so a carried offset (host
+    // minus local time) still maps host time correctly.
+    assert!(next.now_ms() >= first_now);
+
+    // The estimate continues rather than restarting: a new accepted sample
+    // is counted on top of the carried one.
+    next.begin_sync_probe(2, 10_100).expect("probe registered");
+    let outcome = next
+        .observe_sync_response(2, 10_100, 500_080, 500_082, 10_120)
+        .expect("correlated response");
+    assert!(outcome.accepted);
+    assert_eq!(outcome.accepted_sample_count, 2);
+    next.stop().expect("next stream stops");
+}
+
+#[test]
+fn a_handover_without_an_accepted_sample_leaves_the_next_stream_waiting_for_sync() {
+    let _guard = registry_test_guard();
+    let first = ListenerPlaybackRuntime::start(
+        scheduler_config_for("stream-a"),
+        ring_config(),
+        PlaybackPumpConfig::default(),
+        0.0,
+    )
+    .expect("first stream starts");
+    let handover = first.sync_handover();
+    first.stop().expect("first stream stops");
+
+    let next = ListenerPlaybackRuntime::start_continuing(
+        scheduler_config_for("stream-b"),
+        ring_config(),
+        PlaybackPumpConfig::default(),
+        handover,
+    )
+    .expect("next stream starts");
+    assert!(!next.diagnostics().sync_locked);
+    next.submit_packet(datagram_for("stream-b", 0))
+        .expect("packet submitted");
+    assert_eq!(next.diagnostics().dropped_before_sync, 1);
+    next.stop().expect("next stream stops");
+}
+
+#[test]
+fn a_stale_carried_estimate_does_not_unlock_a_new_stream() {
+    let mut estimator = ClockSyncEstimator::new(SyncEstimatorConfig::default()).expect("estimator");
+    assert_eq!(
+        fresh_locked_offset(&estimator, 0),
+        None,
+        "no sample, no lock"
+    );
+
+    estimator
+        .begin_probe(SyncCorrelationId::new(1), LocalMonotonicMillis::new(10_000))
+        .expect("probe registered");
+    let observation = estimator
+        .observe_response(
+            SyncCorrelationId::new(1),
+            LocalMonotonicMillis::new(10_000),
+            HostMonotonicMillis::new(500_000),
+            HostMonotonicMillis::new(500_002),
+            LocalMonotonicMillis::new(10_020),
+        )
+        .expect("correlated response");
+    assert!(observation.accepted);
+    let offset = observation.snapshot.offset_ms;
+
+    assert_eq!(
+        fresh_locked_offset(&estimator, 10_020 + SYNC_HANDOVER_MAX_AGE_MS),
+        Some(offset)
+    );
+    assert_eq!(
+        fresh_locked_offset(&estimator, 10_020 + SYNC_HANDOVER_MAX_AGE_MS + 1),
+        None
+    );
+}

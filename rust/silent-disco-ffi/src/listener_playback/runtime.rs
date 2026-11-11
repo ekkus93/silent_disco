@@ -55,6 +55,25 @@ pub struct SyncSampleOutcome {
     pub degraded_lock: bool,
 }
 
+/// Longest gap since the last accepted sync sample for which a carried-over
+/// estimate may unlock a new stream at once. Probes run every couple of
+/// seconds during a session, so a fresher estimate is the normal case; an
+/// older one waits for a new accepted sample like a first stream does.
+pub(crate) const SYNC_HANDOVER_MAX_AGE_MS: u64 = 30_000;
+
+/// One session's clock lock, carried from one stream's runtime to the next.
+///
+/// A stream change opens a new runtime. Without this, that runtime starts on
+/// a fresh clock and estimator, so it drops every packet until a new sync
+/// sample lands -- the first ~0.8 s of each song -- and throws away the drift
+/// history behind the skew estimate. The next runtime shares this clock, so
+/// the carried offset (host minus local time) stays valid on its timeline.
+#[derive(Debug, Clone)]
+pub struct ListenerSyncHandover {
+    clock: Arc<PumpClock>,
+    estimator: ClockSyncEstimator,
+}
+
 /// Pump-thread liveness exported alongside playback accounting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PumpLiveness {
@@ -99,11 +118,54 @@ impl ListenerPlaybackRuntime {
         pump_config: PlaybackPumpConfig,
         initial_offset_ms: f64,
     ) -> Result<Self, ListenerPlaybackError> {
+        Self::start_with(
+            scheduler_config,
+            ring_config,
+            pump_config,
+            initial_offset_ms,
+            None,
+        )
+    }
+
+    /// Starts the next stream of a session on the previous stream's clock and
+    /// sync estimate.
+    ///
+    /// When that estimate has an accepted sample no older than
+    /// [`SYNC_HANDOVER_MAX_AGE_MS`], the new pump is locked to it before the
+    /// pump thread starts, so no packet of the new stream is dropped for
+    /// arriving before sync. Otherwise the stream waits for the next accepted
+    /// sample, exactly as a session's first stream does.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Self::start`].
+    pub fn start_continuing(
+        scheduler_config: SchedulerConfig,
+        ring_config: RenderRingConfig,
+        pump_config: PlaybackPumpConfig,
+        handover: ListenerSyncHandover,
+    ) -> Result<Self, ListenerPlaybackError> {
+        Self::start_with(
+            scheduler_config,
+            ring_config,
+            pump_config,
+            0.0,
+            Some(handover),
+        )
+    }
+
+    fn start_with(
+        scheduler_config: SchedulerConfig,
+        ring_config: RenderRingConfig,
+        pump_config: PlaybackPumpConfig,
+        initial_offset_ms: f64,
+        handover: Option<ListenerSyncHandover>,
+    ) -> Result<Self, ListenerPlaybackError> {
         let scheduler = PlaybackScheduler::new(scheduler_config, initial_offset_ms)
             .map_err(|error| ListenerPlaybackError::InvalidConfiguration(error.message))?;
         let (producer, token) = register_render_ring(ring_config)?;
 
-        let pump = match PlaybackPump::new(scheduler, producer, pump_config) {
+        let mut pump = match PlaybackPump::new(scheduler, producer, pump_config) {
             Ok(pump) => pump,
             Err(error) => {
                 // Nothing may stay registered behind a failed start.
@@ -112,15 +174,23 @@ impl ListenerPlaybackRuntime {
             }
         };
 
-        let estimator = match ClockSyncEstimator::new(SyncEstimatorConfig::default()) {
-            Ok(estimator) => estimator,
-            Err(error) => {
-                let _ = release_render_ring(token);
-                return Err(ListenerPlaybackError::InvalidConfiguration(format!(
-                    "{error:?}"
-                )));
-            }
+        let (clock, estimator) = match handover {
+            Some(handover) => (handover.clock, handover.estimator),
+            None => match ClockSyncEstimator::new(SyncEstimatorConfig::default()) {
+                Ok(estimator) => (Arc::new(PumpClock::new()), estimator),
+                Err(error) => {
+                    let _ = release_render_ring(token);
+                    return Err(ListenerPlaybackError::InvalidConfiguration(format!(
+                        "{error:?}"
+                    )));
+                }
+            },
         };
+        if let Some(offset_ms) = fresh_locked_offset(&estimator, clock.now_ms()) {
+            // Before the pump thread exists, so the stream's first packet is
+            // already scheduled against the session's real timeline.
+            pump.apply_sync_offset(offset_ms);
+        }
         let shared = Arc::new(Shared {
             pump: Mutex::new(pump),
             estimator: Mutex::new(estimator),
@@ -132,7 +202,6 @@ impl ListenerPlaybackRuntime {
             #[cfg(test)]
             panic_next_tick: AtomicBool::new(false),
         });
-        let clock = Arc::new(PumpClock::new());
         let thread_shared = Arc::clone(&shared);
         let thread_clock = Arc::clone(&clock);
         let pump_thread = thread::Builder::new()
@@ -292,6 +361,17 @@ impl ListenerPlaybackRuntime {
         self.clock.now_ms()
     }
 
+    /// Captures this runtime's clock and sync estimate for the session's next
+    /// stream ([`Self::start_continuing`]). Valid after [`Self::stop`] too:
+    /// a stream change ends this stream before opening the next one.
+    #[must_use]
+    pub fn sync_handover(&self) -> ListenerSyncHandover {
+        ListenerSyncHandover {
+            clock: Arc::clone(&self.clock),
+            estimator: self.shared.lock_estimator().clone(),
+        }
+    }
+
     /// Locks playback to a monotonic host clock sampled in this same process.
     ///
     /// Android host self-monitoring timestamps packets with
@@ -435,22 +515,51 @@ impl ListenerPlaybackRuntime {
     /// ended by panicking. The ring is released either way; the failure is
     /// reported rather than swallowed.
     pub fn stop(&self) -> Result<(), ListenerPlaybackError> {
+        self.stop_with(None)
+    }
+
+    /// Stops a stream the host stopped at `host_stop_time_ms` on its timeline.
+    ///
+    /// Unlike [`Self::stop`], audio presented after the stop time is not
+    /// played: the host sends up to a second ahead, so after a mid-song stop
+    /// that tail is audio the host never reached, and draining it delayed the
+    /// next stream's start by as long as it took to play. Buffered audio
+    /// before the stop still plays, and at the stop time the output fades out
+    /// over a few milliseconds and drops whatever was written ahead.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Self::stop`].
+    pub fn stop_at(&self, host_stop_time_ms: u64) -> Result<(), ListenerPlaybackError> {
+        self.stop_with(Some(host_stop_time_ms))
+    }
+
+    fn stop_with(&self, host_stop_time_ms: Option<u64>) -> Result<(), ListenerPlaybackError> {
         if self.stopped.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
         self.shared.running.store(false, Ordering::SeqCst);
         // Drain before joining so the tail is queued while the ring is still
         // live and the consumer is still reading.
-        {
+        let cut_at_local_ms = {
             let mut pump = self.shared.lock_pump();
-            pump.finish();
-        }
+            if let Some(stop_ms) = host_stop_time_ms {
+                pump.finish_before(stop_ms)
+            } else {
+                pump.finish();
+                None
+            }
+        };
         // Then wait for the consumer to actually play what is queued. Stopping
         // here without waiting discards a full ring cushion -- roughly 400ms
         // at the configured depth, measured at 397ms on a device -- which is
         // audible as the stream ending abruptly, and which the debug capture
         // cannot show because it records frames on their way *into* the ring.
-        self.await_ring_drain();
+        // A host-timed stop plays only up to its stop point, then cuts.
+        match cut_at_local_ms {
+            Some(deadline_ms) => self.await_ring_drain_until(deadline_ms),
+            None => self.await_ring_drain(),
+        }
         let summary = {
             let pump = self.shared.lock_pump();
             pump.diagnostics()
@@ -512,6 +621,49 @@ impl ListenerPlaybackRuntime {
     /// out the full deadline in the common case. Either way the ring's
     /// remaining depth stays visible in the final diagnostics rather than
     /// being silently discarded.
+    /// Like [`Self::await_ring_drain`], but ends playback at the local time
+    /// `cut_at_ms`: if the ring has not drained by then, the consumer fades
+    /// out and drops the rest. Returns early if the ring empties first, which
+    /// is the natural-end case.
+    fn await_ring_drain_until(&self, cut_at_ms: u64) {
+        let deadline = Instant::now() + RING_DRAIN_TIMEOUT;
+        let mut last_queued = usize::MAX;
+        let mut stalled_for = Duration::ZERO;
+        loop {
+            let queued = {
+                let mut pump = self.shared.lock_pump();
+                drain_due_frames(&mut pump, self.clock.now_ms());
+                pump.diagnostics().ring_queued_frames
+            };
+            if queued == 0 {
+                return;
+            }
+            if self.clock.now_ms() >= cut_at_ms || Instant::now() >= deadline {
+                break;
+            }
+            if queued < last_queued {
+                stalled_for = Duration::ZERO;
+            } else {
+                stalled_for += RING_DRAIN_POLL_INTERVAL;
+                if stalled_for >= RING_DRAIN_STALL_LIMIT {
+                    // The consumer is not reading, so nothing is audible and
+                    // there is nothing to cut.
+                    return;
+                }
+            }
+            last_queued = queued;
+            thread::sleep(RING_DRAIN_POLL_INTERVAL);
+        }
+
+        self.shared.lock_pump().request_output_cut();
+        // The cut is carried out by the real-time consumer on its next read,
+        // a few milliseconds away while the output is running.
+        let cut_deadline = Instant::now() + RING_DRAIN_STALL_LIMIT;
+        while !self.shared.lock_pump().output_cut_completed() && Instant::now() < cut_deadline {
+            thread::sleep(RING_DRAIN_POLL_INTERVAL);
+        }
+    }
+
     fn await_ring_drain(&self) {
         let deadline = Instant::now() + RING_DRAIN_TIMEOUT;
         let mut last_queued = usize::MAX;
@@ -557,4 +709,15 @@ impl Drop for ListenerPlaybackRuntime {
             panic!("implicit listener playback shutdown failed: {error}");
         }
     }
+}
+
+/// The carried offset to lock a new stream to, when the estimate has an
+/// accepted sample no older than [`SYNC_HANDOVER_MAX_AGE_MS`] on `now_ms`.
+pub(super) fn fresh_locked_offset(estimator: &ClockSyncEstimator, now_ms: u64) -> Option<f64> {
+    let last_accepted = estimator.last_accepted_sync_at()?;
+    if now_ms.saturating_sub(last_accepted.get()) > SYNC_HANDOVER_MAX_AGE_MS {
+        return None;
+    }
+    let offset_ms = estimator.snapshot().offset_ms;
+    offset_ms.is_finite().then_some(offset_ms)
 }
