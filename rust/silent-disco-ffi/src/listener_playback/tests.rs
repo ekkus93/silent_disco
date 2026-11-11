@@ -409,21 +409,23 @@ fn final_diagnostics_survive_the_teardown_that_produced_them() {
     assert!(runtime.final_diagnostics().is_none());
     assert!(!runtime.diagnostics().sync_locked);
 
-    // Packets are only accepted once a clock offset exists; before that
-    // they are dropped rather than stranding the buffer.
+    // Packets only enter playback once a clock offset exists; before that
+    // they are held, then replayed when sync locks.
     for sequence in 0..5 {
         runtime.submit_packet(datagram(sequence)).expect("no error");
     }
-    assert_eq!(runtime.diagnostics().dropped_before_sync, 5);
+    assert_eq!(runtime.diagnostics().packets_accepted, 0);
+    assert_eq!(runtime.diagnostics().dropped_before_sync, 0);
 
     runtime.begin_sync_probe(1, 0).expect("probe registered");
     runtime
         .observe_sync_response(1, 0, 500_000, 500_001, 20)
         .expect("correlated response");
-    for sequence in 0..5 {
+    assert_eq!(runtime.diagnostics().replayed_after_sync, 5);
+    for sequence in 5..10 {
         runtime.submit_packet(datagram(sequence)).expect("accepted");
     }
-    assert_eq!(runtime.diagnostics().packets_accepted, 5);
+    assert_eq!(runtime.diagnostics().packets_accepted, 10);
 
     runtime.stop().expect("stop succeeds");
 
@@ -432,7 +434,8 @@ fn final_diagnostics_survive_the_teardown_that_produced_them() {
     let summary = runtime
         .final_diagnostics()
         .expect("stopping captures a final summary");
-    assert_eq!(summary.packets_accepted, 5);
+    assert_eq!(summary.packets_accepted, 10);
+    assert_eq!(summary.replayed_after_sync, 5);
     assert_eq!(summary.phase, PlaybackPhase::Stopped);
 }
 

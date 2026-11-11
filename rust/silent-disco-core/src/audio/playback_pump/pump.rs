@@ -33,8 +33,14 @@ pub struct PlaybackPump {
     pub(super) offset_ms: f64,
     /// Largest ring depth observed, in frames.
     pub(super) peak_queued_frames: usize,
-    /// Packets discarded because they arrived before sync locked.
+    /// Packets discarded because they arrived before sync locked and fell out
+    /// of the bounded pre-sync hold (see [`PlaybackPump::submit_packet`]).
     pub(super) dropped_before_sync: u64,
+    /// Packets that arrived before sync locked, held in arrival order until
+    /// the lock and then replayed into the scheduler.
+    pub(super) pre_sync_hold: std::collections::VecDeque<crate::protocol::AudioDatagram>,
+    /// Held pre-sync packets replayed into the scheduler once sync locked.
+    pub(super) replayed_after_sync: u64,
     /// Buffered packets discarded at a stop because they were presented after
     /// the host's stop time (see [`PlaybackPump::finish_before`]).
     pub(super) stop_trimmed_packets: u64,
@@ -121,6 +127,8 @@ impl PlaybackPump {
             offset_ms: 0.0,
             peak_queued_frames: 0,
             dropped_before_sync: 0,
+            pre_sync_hold: std::collections::VecDeque::new(),
+            replayed_after_sync: 0,
             stop_trimmed_packets: 0,
             last_observed_underrun_callbacks,
             timeline_started: false,

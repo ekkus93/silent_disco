@@ -113,6 +113,7 @@ internal fun ManualListenerTransportController.logPlaybackSummary(runtime: FfiLi
             "concealed=${diagnostics.concealedPackets} late=${diagnostics.lateRejections} " +
             "skipped=${diagnostics.sequencesSkipped} " +
             "droppedBeforeSync=${diagnostics.droppedBeforeSync} " +
+            "replayedAfterSync=${diagnostics.replayedAfterSync} " +
             "stopTrimmed=${diagnostics.stopTrimmedPackets} " +
             // A4.4: `hardResyncs` is the sum of both rebuffer causes --
             // the concealment/offset breakdown is what tells them apart.
@@ -138,6 +139,7 @@ internal fun ManualListenerTransportController.logPlaybackSummary(runtime: FfiLi
             "offset=${diagnostics.offsetDrivenRebuffers}) " +
             "resyncs=${diagnostics.resynchronisations} " +
             "droppedBeforeSync=${diagnostics.droppedBeforeSync} " +
+            "replayedAfterSync=${diagnostics.replayedAfterSync} " +
             "stopTrimmed=${diagnostics.stopTrimmedPackets} " +
             "ringPeakFrames=${diagnostics.ringPeakQueuedFrames} " +
             "prefillFrames=${diagnostics.prefillFrames} " +

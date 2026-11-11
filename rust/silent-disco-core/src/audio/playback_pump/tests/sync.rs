@@ -96,32 +96,53 @@ fn later_offsets_correct_softly_or_force_a_rebuffer_when_they_jump() {
 }
 
 #[test]
-fn packets_arriving_before_sync_locks_are_dropped_rather_than_stranding_the_buffer() {
+fn a_burst_arriving_before_sync_locks_is_held_and_replayed_in_full() {
     let (mut pump, _consumer) = pump_with_unlocked_sync();
 
-    // A whole second of audio arrives while the clock is still unlocked.
-    // Buffering it would pile it against sequence zero until the reorder
-    // window overflows, losing far more than the wait itself costs.
-    for sequence in 0..50 {
+    // A host bursts its send-ahead window at stream start; on a device all of
+    // it landed before the first sync sample was accepted. Dropping it lost
+    // every stream's opening second.
+    for sequence in 0..40 {
         pump.submit_packet(datagram(sequence, 16_384))
-            .expect("a pre-sync packet is dropped, not an error");
+            .expect("a pre-sync packet is held, not an error");
+    }
+    assert_eq!(pump.diagnostics().packets_accepted, 0);
+    assert_eq!(pump.dropped_before_sync(), 0);
+
+    pump.apply_sync_offset(0.0);
+
+    let diagnostics = pump.diagnostics();
+    assert_eq!(diagnostics.replayed_after_sync, 40);
+    assert_eq!(diagnostics.packets_accepted, 40);
+    assert_eq!(diagnostics.reorder_window_rejections, 0);
+    assert_eq!(diagnostics.dropped_before_sync, 0);
+}
+
+#[test]
+fn a_long_acquisition_keeps_only_the_newest_window_and_still_adopts_the_live_stream() {
+    let (mut pump, _consumer) = pump_with_unlocked_sync();
+    let window = u64::from(pump.scheduler_mut().max_reorder_window());
+
+    // Far more than the hold can keep arrives before the lock. Holding all
+    // of it would overflow the jitter buffer's reorder window on replay, so
+    // the oldest are dropped and only the newest window is kept.
+    let arrived = window + 50;
+    for sequence in 0..arrived {
+        pump.submit_packet(datagram(sequence, 16_384))
+            .expect("a pre-sync packet is held or dropped, not an error");
     }
     assert_eq!(pump.dropped_before_sync(), 50);
-    assert_eq!(pump.diagnostics().packets_accepted, 0);
-    assert_eq!(pump.diagnostics().reorder_window_rejections, 0);
 
-    // Once the clock locks, the buffer adopts the live position: the
-    // first arrivals corroborate the jump, then audio flows again.
+    // The held window starts beyond the reorder window from sequence zero,
+    // so the replay itself corroborates the jump and the buffer adopts it.
     pump.apply_sync_offset(0.0);
-    for sequence in 200..215 {
-        let _ = pump.submit_packet(datagram(sequence, 16_384));
-    }
     let diagnostics = pump.diagnostics();
-    assert!(
-        diagnostics.packets_accepted > 0,
-        "the live stream was never picked up after sync locked"
-    );
+    assert_eq!(diagnostics.replayed_after_sync, window);
     assert_eq!(diagnostics.resynchronisations, 1);
+    assert!(
+        diagnostics.packets_accepted >= window - 2,
+        "the held window was not taken up after sync locked: {diagnostics:?}"
+    );
 }
 
 #[test]

@@ -167,6 +167,13 @@ impl PlaybackScheduler {
         self.jitter_buffer.accept(datagram)
     }
 
+    /// How many packets ahead of the next expected one the jitter buffer
+    /// accepts before treating the stream as having moved on.
+    #[must_use]
+    pub const fn max_reorder_window(&self) -> u32 {
+        self.config.max_reorder_window
+    }
+
     fn buffer_health(&self) -> BufferHealth {
         let span = self.jitter_buffer.buffered_span_ms();
         if span < self.config.low_water_ms {

@@ -327,7 +327,9 @@ fn a_handover_without_an_accepted_sample_leaves_the_next_stream_waiting_for_sync
     assert!(!next.diagnostics().sync_locked);
     next.submit_packet(datagram_for("stream-b", 0))
         .expect("packet submitted");
-    assert_eq!(next.diagnostics().dropped_before_sync, 1);
+    // Held for the lock, not played against an unknown timeline.
+    assert_eq!(next.diagnostics().packets_accepted, 0);
+    assert_eq!(next.diagnostics().dropped_before_sync, 0);
     next.stop().expect("next stream stops");
 }
 

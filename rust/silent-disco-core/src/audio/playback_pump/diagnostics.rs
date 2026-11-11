@@ -39,8 +39,12 @@ pub struct PlaybackDiagnostics {
     /// moved beyond its reorder window (a recovered outage, or a mid-stream
     /// join).
     pub resynchronisations: u64,
-    /// Packets discarded because they arrived before a clock offset existed.
+    /// Packets that arrived before a clock offset existed and were discarded
+    /// because the bounded pre-sync hold was full (the oldest go first).
     pub dropped_before_sync: u64,
+    /// Packets that arrived before a clock offset existed, were held, and
+    /// were replayed into the scheduler once sync locked.
+    pub replayed_after_sync: u64,
     /// Buffered packets discarded at a stop because they were presented after
     /// the host's stop time: audio sent ahead that the host never played.
     pub stop_trimmed_packets: u64,
@@ -96,6 +100,7 @@ impl PlaybackPump {
             buffered_duration_rejections: jitter.buffered_duration_rejections,
             resynchronisations: jitter.resynchronisations,
             dropped_before_sync: self.dropped_before_sync,
+            replayed_after_sync: self.replayed_after_sync,
             stop_trimmed_packets: self.stop_trimmed_packets,
             concealed_packets: concealment.total_concealed_packets,
             concealment_driven_rebuffers: concealment.hard_resync_signals,

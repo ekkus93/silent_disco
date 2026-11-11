@@ -46,6 +46,7 @@ impl PlaybackPump {
             self.sync_locked = true;
             self.scheduler.rebuffer(offset_ms);
             self.awaiting_prefill = true;
+            self.replay_pre_sync_hold();
             return SyncApplyOutcome::Locked;
         }
 
@@ -84,28 +85,48 @@ impl PlaybackPump {
         self.sync_locked
     }
 
-    /// Submits one arriving packet, or drops it if playback cannot yet use it.
+    /// Submits one arriving packet, or holds it until playback can use it.
     ///
     /// Before a clock offset has been accepted there is no timeline to place
-    /// a packet on. Buffering them anyway is worse than dropping them: they
-    /// accumulate against sequence zero, overflow the jitter buffer's reorder
-    /// window within about a second, and are then rejected for the rest of
-    /// the acquisition — losing far more audio than the wait itself, and
-    /// leaving the buffer holding content that is stale by the time it could
-    /// be played. Dropping them lets the buffer adopt the live position once
-    /// sync lands.
+    /// a packet on, so it cannot enter the jitter buffer: there it would pile
+    /// up against sequence zero and overflow the reorder window during a long
+    /// acquisition. But dropping it lost real audio: a host bursts up to a
+    /// second of audio at stream start, which on a device all arrived in the
+    /// few milliseconds before the first sync sample was accepted, so every
+    /// stream's opening second was thrown away.
+    ///
+    /// Instead, pre-sync packets wait in a hold bounded by the reorder window,
+    /// keeping the newest when it is full, and are replayed into the
+    /// scheduler the moment sync locks. A long acquisition still ends with
+    /// the buffer adopting the live position; a short one loses nothing.
     ///
     /// # Errors
     ///
     /// Returns a [`JitterBufferRejection`] under the same conditions as
     /// [`JitterBuffer::accept`](crate::audio::JitterBuffer::accept). A packet
-    /// dropped for arriving before sync is not an error.
+    /// held or dropped for arriving before sync is not an error.
     pub fn submit_packet(&mut self, datagram: AudioDatagram) -> Result<(), JitterBufferRejection> {
         if !self.sync_locked {
-            self.dropped_before_sync = self.dropped_before_sync.saturating_add(1);
+            let limit = usize::try_from(self.scheduler.max_reorder_window())
+                .unwrap_or(usize::MAX)
+                .max(1);
+            self.pre_sync_hold.push_back(datagram);
+            while self.pre_sync_hold.len() > limit {
+                self.pre_sync_hold.pop_front();
+                self.dropped_before_sync = self.dropped_before_sync.saturating_add(1);
+            }
             return Ok(());
         }
         self.scheduler.submit_packet(datagram)
+    }
+
+    /// Feeds the packets held before sync locked into the scheduler, in
+    /// arrival order. Rejections are counted by the jitter buffer as usual.
+    fn replay_pre_sync_hold(&mut self) {
+        while let Some(datagram) = self.pre_sync_hold.pop_front() {
+            self.replayed_after_sync = self.replayed_after_sync.saturating_add(1);
+            let _ = self.scheduler.submit_packet(datagram);
+        }
     }
 
     /// Packets discarded because they arrived before playback had a timeline.
