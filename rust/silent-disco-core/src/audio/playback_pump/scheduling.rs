@@ -197,7 +197,6 @@ impl PlaybackPump {
         self.last_observed_underrun_callbacks = underruns;
         self.pending.clear();
         self.awaiting_prefill = true;
-        self.prefill_frames = 0;
         self.scheduler.realign_to_now(local_now_ms);
     }
 
@@ -216,7 +215,14 @@ impl PlaybackPump {
             return;
         }
         self.awaiting_prefill = false;
-        self.prefill_frames = 0;
+        // The diagnostic reports the stream-start alignment only. A realign
+        // after an underrun also re-prefills, but at a natural end the ring
+        // runs dry before the host's Stop lands, and letting that last realign
+        // overwrite the value made a correctly aligned stream report 0.
+        let stream_start = !self.timeline_started;
+        if stream_start {
+            self.prefill_frames = 0;
+        }
         let deadline_ms = self
             .scheduler
             .local_time_for_host_ms(frame.host_presentation_time_ms);
@@ -229,7 +235,9 @@ impl PlaybackPump {
         }
         let frames = usize::try_from(lead_ms * u64::from(self.scheduler.sample_rate()) / 1_000)
             .unwrap_or(usize::MAX);
-        self.prefill_frames = frames;
+        if stream_start {
+            self.prefill_frames = frames;
+        }
         self.pending
             .extend(core::iter::repeat_n(0.0_f32, frames * RENDER_CHANNELS));
     }

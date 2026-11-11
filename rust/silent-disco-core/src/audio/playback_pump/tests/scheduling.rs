@@ -501,3 +501,36 @@ fn startup_silence_does_not_trigger_underrun_realign_or_skip_future_audio() {
     assert_eq!(pump.prefill_frames(), 19_200);
     assert_eq!(pump.diagnostics().sequences_skipped, 0);
 }
+
+/// A natural end runs the ring dry a moment before the host's Stop arrives,
+/// and the underrun that follows realigns the pump. That realign must not
+/// overwrite the stream-start alignment the diagnostic reports: a device run
+/// showed a correctly aligned song as `prefillFrames=0` for exactly this.
+#[test]
+fn a_later_underrun_realign_does_not_overwrite_the_stream_start_prefill() {
+    let (mut pump, consumer) = paced_pump();
+    for sequence in 0..4 {
+        pump.scheduler_mut()
+            .submit_packet(datagram(sequence, 16_384))
+            .expect("accepted");
+    }
+    assert!(matches!(
+        pump.tick(HOST_START_MS - 400),
+        PumpTick::Queued { sequence: 0, .. }
+    ));
+    assert_eq!(pump.prefill_frames(), 19_200);
+
+    // Play everything queued and then some: the ring runs dry.
+    let mut output = vec![0.0_f32; 48_000 * 2];
+    let outcome = consumer.read_frames(&mut output);
+    assert!(outcome.frames_silence_filled > 0);
+
+    // The next tick sees the underrun and realigns.
+    let _ = pump.tick(HOST_START_MS + 1_000);
+
+    assert_eq!(
+        pump.prefill_frames(),
+        19_200,
+        "a realign overwrote the stream-start prefill"
+    );
+}

@@ -1620,3 +1620,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Tests: two ring cut tests, two scheduler trim tests, two runtime stop_at tests with a real-time consumer (mutation-checked). Rust gate 849 passed; desktop cargo check OK; `./gradlew test lintDebug assembleDebug` passed.
 - Device (A54 over hotspot `Slingblade`): song B `accepted=8000 emitted=8000 skipped=0 droppedBeforeSync=0 resyncs=0 ringUnderruns=23` (was skipped=252, underruns=296). Song A `stopTrimmed=190`. Switch gap ~155 ms (was ~0.7 s). Host undelivered=0/15127.
 - Open: song B `prefillFrames=0` is unexplained; it played fully, but the start offset is unmeasured. The sync handover and trim changes are uncommitted.
+
+## 2026-11-11T22:50:29Z - claude-opus-5-5 - prefillFrames=0 on song B was a diagnostics bug
+- Cause: `PlaybackPump` overwrote `prefill_frames` on every post-start realign (`realign_after_output_underrun`) and on a hard-resync rebuffer. At a natural end the ring runs dry before the host's Stop arrives, so the last ~2 underruns realigned and reset the value to 0. Song A, cut by a Stop, mutes instead and kept its real value.
+- Fix (`playback_pump/scheduling.rs`, `sync.rs`): `prefill_frames` records only the stream-start alignment (while `!timeline_started`), as its FFI doc already says. Later re-prefills still happen and just don't overwrite it. Test `a_later_underrun_realign_does_not_overwrite_the_stream_start_prefill` fails on the old code. Rust gate 850 passed.
+- Device (A54 over hotspot): song B `prefillFrames=15648` (~326 ms), `accepted=7998 emitted=7998 skipped=2 concealed=2` (host undelivered=4), `ringUnderruns=23`. Song A `prefillFrames=19056 stopTrimmed=188`. Not committed yet.

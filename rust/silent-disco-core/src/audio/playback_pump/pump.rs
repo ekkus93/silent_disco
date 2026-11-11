@@ -23,7 +23,9 @@ pub struct PlaybackPump {
     pub(super) pending: Vec<f32>,
     /// Cleared once the stream-start alignment prefill has been queued.
     pub(super) awaiting_prefill: bool,
-    /// Silence frames queued to align the first frame with its deadline.
+    /// Silence frames queued to align the stream's first frame with its
+    /// deadline. Later re-prefills (after an underrun or a hard resync) do
+    /// not change it.
     pub(super) prefill_frames: usize,
     /// Set once a real clock-offset estimate has been applied.
     pub(super) sync_locked: bool,

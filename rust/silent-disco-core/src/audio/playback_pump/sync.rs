@@ -60,7 +60,6 @@ impl PlaybackPump {
                     // be re-aligned to the timeline rather than inheriting
                     // whatever depth happened to remain.
                     self.awaiting_prefill = true;
-                    self.prefill_frames = 0;
                     self.offset_driven_rebuffers = self.offset_driven_rebuffers.saturating_add(1);
                     SyncApplyOutcome::Rebuffered
                 }
