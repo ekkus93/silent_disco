@@ -1666,3 +1666,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Decision: post-decryption freshness checks are NOT duplicated in the transport. The jitter buffer and scheduler already reject wrong session/stream generation, duplicates, already-played sequences, reorder-window overflow and late packets, for every transport. Recorded in handoff §41.
 - Listener worker: local_addr, close(&self), graceful close on shutdown, receiver behind its own mutex (Sync without blocking sends).
 - 7 tests; 3 of 4 mutations killed; the graceful-close mutation survives on loopback (same as the host side). Rust gate 883 passed. Next: QUIC TransportFactory and v4 selection in FFI/desktop/Android, then an A54 run.
+
+## 2026-11-12T08:22:53Z - claude-opus-5-5 - Owner decision: how a host selects v4 QUIC
+- Owner chose (2026-11-12) an explicit opt-in host switch, "Secure transport (v4, experimental)", default OFF. Off: exactly today's v3 behaviour. On: the host binds QUIC only and v3 listeners cannot join, shown clearly in the UI. Listeners use QUIC when the invite carries the host key / v4 marker. Rejected: a dual-stack composite host (throwaway before phase 4) and v4-by-default (breaks the current desktop-to-Android v3 harness).
+- Reason this was needed: the desktop host always has a TLS identity (§29), so "identity present => v4" would silently switch every desktop host to QUIC. The TLS-over-TCP v4 path has no production users.
+- Plan: (1) core QuicTransportFactory + explicit TransportProtocol selection; (2) FFI quic feature + protocol in host/listener handles; (3) desktop host setting + invite v4 marker; (4) Android listener v4 join with the Keystore signer; (5) A54 run.

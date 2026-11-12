@@ -739,3 +739,15 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 **Gates.** `check-rust.sh` exit 0, 883 passed; core clippy without `quic` is clean; line gate passes; the 32 QUIC tests passed in 5 of 5 repeat runs. Not run: Android cross-compile, desktop and Android gates (nothing outside the core enables `quic` yet).
 
 **Next.** Selecting v4: a QUIC `TransportFactory`, then the FFI host and listener handles and the desktop host choosing it when a secure identity is configured (with the invite carrying the QUIC port), then the Android build enabling `quic` and a run on the A54.
+
+## 42. 2026-11-12 — Selecting v4: owner decision and core factory (remediation §1 item 2)
+
+**Decision (owner, 2026-11-12).** A host uses v4 QUIC only through an explicit opt-in switch, "Secure transport (v4, experimental)", default off. Off is exactly today's v3. On, the host binds QUIC only and v3 listeners cannot join; the UI must say so. A listener uses QUIC when its invite carries the host key and a v4 marker. Rejected alternatives: a dual-stack host serving v3 and v4 at once (a large composite that phase 4 deletes), and v4 whenever an identity exists (the desktop host always has one since §29, so every desktop host would switch silently and current v3 Android listeners could not join). The TLS-over-TCP v4 socket path has no production users; it stays in place, unused, until phase 4.
+
+**Code.** `transport/quic_transport_factory.rs`: `TransportProtocol` (`LegacyV3`, the default; `SecureV4`), `QuicTransportFactory` (builds `QuicHostTransport` / `QuicListenerTransport`), and `transport_factory_for(protocol)`. There is no fallback: v4 without an identity fails with `InvalidConfiguration` rather than binding v3. `production_transport_factory()` is unchanged (still v3).
+
+**Tests** (`quic_transport_factory_tests.rs`): v3 is the default; v3 binds without an identity and uses separate UDP ports; v4 without an identity is refused; a v4 host and listener built by the factory connect, using one port. The mutation that maps `SecureV4` to the socket factory fails two tests.
+
+**Gates.** `check-rust.sh` exit 0, 887 passed.
+
+**Next.** Step 2: enable `quic` in the FFI crate and let the host and listener handles take a `TransportProtocol`; check the Android cross-compile and the APK size.
