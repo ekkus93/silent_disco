@@ -98,6 +98,13 @@ const EVENT_BACKOFF: Duration = Duration::from_millis(2);
 /// control frames (such as a `Disconnect`). Closing a QUIC connection
 /// discards unacknowledged stream data, so the close waits first.
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
+/// Longest wait for the host to answer the QUIC handshake. QUIC runs over
+/// UDP and quinn ignores ICMP "port unreachable", so a closed or v3-only
+/// host is otherwise noticed only at the 8 s idle timeout. This matches the
+/// v3 TCP connect timeout (`DEFAULT_OPERATION_TIMEOUT`), so a failed v4 join
+/// is reported as quickly as a failed v3 one. Established connections keep
+/// the 8 s idle timeout.
+pub const QUIC_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Handle to a connected, admitted listener connection.
 pub struct QuicListenerWorker {
@@ -296,10 +303,18 @@ async fn connect_and_prove(
     };
     let mut endpoint = quinn::Endpoint::client(local).map_err(|error| error.to_string())?;
     endpoint.set_default_client_config(client_config);
-    let connection = endpoint
+    let connecting = endpoint
         .connect(config.host, HOST_SERVER_NAME)
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    let connection = tokio::time::timeout(QUIC_CONNECT_TIMEOUT, connecting)
         .await
+        .map_err(|_| {
+            format!(
+                "no QUIC answer from {} within {} s; is the host running and using secure transport (v4)?",
+                config.host,
+                QUIC_CONNECT_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|error| error.to_string())?;
     let stream = quic_listener_prove(
         &connection,

@@ -751,3 +751,17 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 **Gates.** `check-rust.sh` exit 0, 887 passed.
 
 **Next.** Step 2: enable `quic` in the FFI crate and let the host and listener handles take a `TransportProtocol`; check the Android cross-compile and the APK size.
+
+## 43. 2026-11-12 — Selecting v4, step 2: FFI constructors and a 3 s connect cap (remediation §1 item 2)
+
+**Code.**
+- `silent-disco-ffi` now depends on the core with `features = ["quic"]`, so quinn and tokio are in the Android native library.
+- `FfiHostTransportHandle::bind_quic_with_host_clock(local_address, port, session_id, host_now_elapsed_ms, tls_signer)`: a v4 host on one QUIC port, its TLS identity from the platform signer (Keystore on Android), failing closed without it. `FfiListenerTransportHandle::connect_quic(raw_endpoint, now, local_device_id, local_address, host_tls_public_key_der, proof_signer)`: a v4 listener using the endpoint's control port as the QUIC port. Both are new constructors; the v3 and TLS-over-TCP constructors are unchanged, so existing Kotlin callers are unaffected. Internally `bind_configured` and `open` take a `TransportProtocol` and use `transport_factory_for`; the key-to-device-ID check is shared by `connect_secure` and `connect_quic` (`secure_target`).
+- `send_join_approval` still refuses `trusted_for_future` on every protocol. Durable trust over v4 belongs to §2 (F1).
+- `quic_listener_worker.rs`: the QUIC handshake is capped at `QUIC_CONNECT_TIMEOUT` (3 s, the same as the v3 TCP connect timeout). Previously a v4 listener pointed at a closed, unreachable or v3-only host waited for the 8 s idle timeout, because QUIC runs over UDP and quinn ignores ICMP "port unreachable". So the user saw "connecting" for 8 s before the error, where v3 fails at once (refused) or after 3 s (unreachable). The error now says there was no QUIC answer and asks whether the host runs secure transport. Established connections keep the 8 s idle timeout.
+
+**Tests.** FFI `host_transport/quic_bind_tests.rs`: a v4 listener joins a v4 host through the handles and receives the stream start and audio; a v3 listener cannot join a v4 host; a v4 listener against a v3 host fails with no fallback; a v4 bind without the platform key is refused. Mutations killed: either constructor mapped to v3. Core: `a_v4_listener_gives_up_on_a_silent_endpoint_within_the_connect_timeout` (fails between 3 and 4 s, with the new message); the mutation lengthening the cap fails it at 8 s.
+
+**Gates.** `check-rust.sh` exit 0, 892 passed. Android `./gradlew assembleDebug assembleRelease test lintDebug` BUILD SUCCESSFUL (27 min). It ran on the code before the 3 s cap, which only changes Rust already cross-compiled in that run. The release arm64 `libsilent_disco_ffi.so` is 11.4 MB, against 5.5 MB in a build from 2026-10-15; that baseline is older, so not all of the growth is quinn and tokio. Release APK 52.3 MB unsigned. Not run: API 29 instrumentation, desktop gate (desktop does not enable `quic` yet).
+
+**Next.** Step 3: the desktop host's opt-in "Secure transport (v4, experimental)" setting, default off, and a v4 marker in its invites.

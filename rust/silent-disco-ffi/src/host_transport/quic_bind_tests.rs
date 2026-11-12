@@ -1,0 +1,205 @@
+//! v4 QUIC through the `UniFFI` host and listener handles: an explicit choice
+//! on both ends, no fallback to v3 in either direction.
+
+use std::time::{Duration, Instant};
+
+use p256::ecdsa::SigningKey;
+use p256::pkcs8::EncodePublicKey;
+
+use super::FfiHostTransportHandle;
+use super::secure_bind_tests::{endpoint_payload, listener_id, signer};
+use super::types::{FfiHostTransportError, FfiHostTransportEvent};
+use crate::listener_transport::{FfiListenerTransportEvent, FfiListenerTransportHandle};
+
+/// 5 ms of 48 kHz stereo 16-bit PCM.
+const FRAMES: u32 = 240;
+
+fn host_spki() -> Vec<u8> {
+    SigningKey::from_slice(&[61_u8; 32])
+        .expect("fixture key")
+        .verifying_key()
+        .to_public_key_der()
+        .expect("spki")
+        .as_bytes()
+        .to_vec()
+}
+
+fn free_udp_port() -> u16 {
+    std::net::UdpSocket::bind("127.0.0.1:0")
+        .expect("probe")
+        .local_addr()
+        .expect("address")
+        .port()
+}
+
+fn quic_host(session: &str) -> (std::sync::Arc<FfiHostTransportHandle>, u16) {
+    let port = free_udp_port();
+    let host = FfiHostTransportHandle::bind_quic_with_host_clock(
+        "127.0.0.1".to_owned(),
+        port,
+        session.to_owned(),
+        0,
+        signer(false),
+    )
+    .expect("v4 host binds");
+    (host, port)
+}
+
+fn wait_host<T>(
+    host: &FfiHostTransportHandle,
+    pick: impl Fn(FfiHostTransportEvent) -> Option<T>,
+) -> T {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if let Some(event) = host.poll_event(100).expect("host event")
+            && let Some(found) = pick(event)
+        {
+            return found;
+        }
+    }
+    panic!("expected host event did not arrive");
+}
+
+fn wait_listener<T>(
+    listener: &FfiListenerTransportHandle,
+    pick: impl Fn(FfiListenerTransportEvent) -> Option<T>,
+) -> T {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if let Some(event) = listener.poll_event(100).expect("listener event")
+            && let Some(found) = pick(event)
+        {
+            return found;
+        }
+    }
+    panic!("expected listener event did not arrive");
+}
+
+#[test]
+fn a_v4_listener_joins_a_v4_host_and_receives_the_stream_through_the_handles() {
+    let session = "ffi-quic-join";
+    let (host, port) = quic_host(session);
+    let listener = FfiListenerTransportHandle::connect_quic(
+        endpoint_payload(session, port, port, port),
+        0,
+        listener_id(),
+        "127.0.0.1".to_owned(),
+        host_spki(),
+        signer(false),
+    )
+    .expect("v4 listener connects");
+    listener
+        .send_join_request("QUIC listener".to_owned(), None)
+        .expect("join");
+    let (sync_port, audio_port) = wait_host(&host, |event| match event {
+        FfiHostTransportEvent::JoinRequestReceived {
+            device_id,
+            sync_port,
+            audio_port,
+            ..
+        } if device_id == listener_id() => Some((sync_port, audio_port)),
+        _ => None,
+    });
+    assert!(
+        sync_port != 0 && audio_port != 0,
+        "the join reports real ports"
+    );
+    host.send_join_approval(listener_id(), false)
+        .expect("approval");
+    host.authorize_listener(listener_id(), sync_port, audio_port)
+        .expect("authorized");
+    wait_listener(&listener, |event| {
+        matches!(event, FfiListenerTransportEvent::JoinApproved { .. }).then_some(())
+    });
+
+    host.broadcast_stream_start("stream-q".to_owned(), 5_000, 48_000, 2, FRAMES, None, None)
+        .expect("start");
+    wait_listener(&listener, |event| match event {
+        FfiListenerTransportEvent::StreamStarted { stream_id, .. } => {
+            (stream_id == "stream-q").then_some(())
+        }
+        _ => None,
+    });
+    let delivery = host
+        .broadcast_audio(
+            "stream-q".to_owned(),
+            0,
+            48_000,
+            2,
+            FRAMES,
+            0,
+            5_000,
+            vec![7_u8; FRAMES as usize * 4],
+        )
+        .expect("audio");
+    assert_eq!(delivery.successful_peers, 1);
+    let sequence = wait_listener(&listener, |event| match event {
+        FfiListenerTransportEvent::AudioReceived { sequence, .. } => Some(sequence),
+        _ => None,
+    });
+    assert_eq!(sequence, 0);
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn a_v3_listener_cannot_join_a_v4_host() {
+    let session = "ffi-quic-only";
+    let (host, port) = quic_host(session);
+    let outcome = FfiListenerTransportHandle::connect(
+        endpoint_payload(session, port, port, port),
+        0,
+        "plain-listener".to_owned(),
+        "127.0.0.1".to_owned(),
+    );
+    assert!(outcome.is_err(), "a v4 host has no v3 control port");
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn a_v4_listener_never_falls_back_to_a_v3_host() {
+    let session = "ffi-quic-no-fallback";
+    let port = free_udp_port();
+    let control = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("probe")
+        .local_addr()
+        .expect("address")
+        .port();
+    let host = FfiHostTransportHandle::bind_with_host_clock(
+        "127.0.0.1".to_owned(),
+        control,
+        port,
+        free_udp_port(),
+        session.to_owned(),
+        0,
+    )
+    .expect("v3 host binds");
+    let outcome = FfiListenerTransportHandle::connect_quic(
+        endpoint_payload(session, control, port, port),
+        0,
+        listener_id(),
+        "127.0.0.1".to_owned(),
+        host_spki(),
+        signer(false),
+    );
+    assert!(
+        outcome.is_err(),
+        "no QUIC endpoint, no connection, no v3 retry"
+    );
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn a_v4_host_refuses_to_bind_without_its_platform_key() {
+    let outcome = FfiHostTransportHandle::bind_quic_with_host_clock(
+        "127.0.0.1".to_owned(),
+        0,
+        "ffi-quic-no-key".to_owned(),
+        0,
+        signer(true),
+    );
+    assert!(matches!(
+        outcome,
+        Err(FfiHostTransportError::InvalidConfiguration(_))
+    ));
+}

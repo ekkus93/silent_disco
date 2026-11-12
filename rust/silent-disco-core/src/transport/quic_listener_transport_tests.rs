@@ -12,6 +12,7 @@ use p256::pkcs8::EncodePrivateKey;
 use super::quic_host_transport::QuicHostTransport;
 use super::quic_host_worker::{QuicHostConfig, QuicHostEvent, QuicHostWorker};
 use super::quic_listener_transport::QuicListenerTransport;
+use super::quic_listener_worker::QUIC_CONNECT_TIMEOUT;
 use super::secure_admission::SECURE_ADMISSION_GENERATION;
 use super::secure_control_tls::{HostTlsIdentity, host_tls_identity_from_pkcs8};
 use super::secure_identity::device_id_for_listener_key;
@@ -427,4 +428,36 @@ fn a_host_sending_an_invalid_control_is_disconnected_with_the_reason() {
         _ => panic!("expected the disconnect"),
     }
     assert_eq!(listener.counters().unauthorized_frames, 1);
+}
+
+#[test]
+fn a_v4_listener_gives_up_on_a_silent_endpoint_within_the_connect_timeout() {
+    let identity = identity();
+    // A UDP port with nothing listening: no QUIC answer, and quinn ignores
+    // the ICMP refusal, so only the connect timeout ends the attempt.
+    let dead = std::net::UdpSocket::bind("127.0.0.1:0")
+        .expect("probe")
+        .local_addr()
+        .expect("address")
+        .port();
+    let endpoint = NetworkEndpoint {
+        address: Ipv4Addr::LOCALHOST.into(),
+        control_port: dead,
+        sync_port: dead,
+        audio_port: dead,
+    };
+    let started = Instant::now();
+    let error = QuicListenerTransport::connect(listener_config(endpoint, &identity, 49), clock())
+        .expect_err("nothing answers");
+    let waited = started.elapsed();
+    assert_eq!(error.kind, TransportErrorKind::Connect);
+    assert!(
+        error.message.contains("no QUIC answer"),
+        "{}",
+        error.message
+    );
+    assert!(
+        waited >= QUIC_CONNECT_TIMEOUT && waited < QUIC_CONNECT_TIMEOUT + Duration::from_secs(1),
+        "gave up after {waited:?}"
+    );
 }

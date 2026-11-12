@@ -12,7 +12,7 @@ use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_OPERATION_TIMEOUT, DEFAULT_TRANSPORT_EVENT_CAPACITY,
     DEFAULT_TRANSPORT_QUEUE_CAPACITY, ListenerTransportConfig, ListenerTransportNode,
     ManualHostEndpoint, SecureHostTarget, SystemTransportClock, TransportChannel, TransportClock,
-    TransportEvent, TransportFactory, production_transport_factory,
+    TransportEvent, TransportProtocol, transport_factory_for,
 };
 
 use crate::listener_playback::{FfiListenerPlaybackHandle, FfiSyncConfidence};
@@ -127,6 +127,7 @@ impl FfiListenerTransportHandle {
             local_device_id,
             local_address,
             None,
+            TransportProtocol::LegacyV3,
         )
     }
 
@@ -147,28 +148,42 @@ impl FfiListenerTransportHandle {
         host_tls_public_key_der: Vec<u8>,
         proof_signer: Arc<dyn FfiListenerProofSigner>,
     ) -> Result<Arc<Self>, FfiListenerTransportError> {
-        // The host admits a TLS listener only under the device ID its proof key
-        // maps to. Refuse any other ID here, before a connection is attempted.
-        let spki = proof_signer
-            .spki_der()
-            .map_err(|error| FfiListenerTransportError::InvalidEndpoint(error.to_string()))?;
-        let bound_device =
-            silent_disco_core::transport::secure_identity::device_id_for_listener_key(&spki);
-        if local_device_id != bound_device.as_str() {
-            return Err(FfiListenerTransportError::InvalidEndpoint(
-                "local device ID must be the one bound to the listener key".to_owned(),
-            ));
-        }
-        let target = SecureHostTarget {
-            host_spki: host_tls_public_key_der,
-            signer: Arc::new(CallbackSigner(proof_signer)),
-        };
+        let target = secure_target(&local_device_id, host_tls_public_key_der, proof_signer)?;
         Self::open(
             raw_endpoint,
             now_wall_clock_ms,
             local_device_id,
             local_address,
             Some(target),
+            TransportProtocol::LegacyV3,
+        )
+    }
+
+    /// Joins a v4 host over QUIC: one connection to the endpoint's control
+    /// port, pinned to `host_tls_public_key_der`, carrying control, clock
+    /// probes and audio. The listener proves its key through `proof_signer`.
+    /// A failed handshake or proof is an error, never a v3 retry.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "uniffi::export requires owned parameters at the foreign boundary"
+    )]
+    #[uniffi::constructor]
+    pub fn connect_quic(
+        raw_endpoint: String,
+        now_wall_clock_ms: u64,
+        local_device_id: String,
+        local_address: String,
+        host_tls_public_key_der: Vec<u8>,
+        proof_signer: Arc<dyn FfiListenerProofSigner>,
+    ) -> Result<Arc<Self>, FfiListenerTransportError> {
+        let target = secure_target(&local_device_id, host_tls_public_key_der, proof_signer)?;
+        Self::open(
+            raw_endpoint,
+            now_wall_clock_ms,
+            local_device_id,
+            local_address,
+            Some(target),
+            TransportProtocol::SecureV4,
         )
     }
 
@@ -622,6 +637,7 @@ impl FfiListenerTransportHandle {
         local_device_id: String,
         local_address: String,
         secure_host: Option<SecureHostTarget>,
+        protocol: TransportProtocol,
     ) -> Result<Arc<Self>, FfiListenerTransportError> {
         let endpoint = ManualHostEndpoint::parse(&raw_endpoint, now_wall_clock_ms)?;
         let device_id = DeviceId::new(local_device_id)
@@ -643,7 +659,7 @@ impl FfiListenerTransportHandle {
         };
         let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
         let transport =
-            production_transport_factory().connect_listener(config, Arc::clone(&clock))?;
+            transport_factory_for(protocol).connect_listener(config, Arc::clone(&clock))?;
         Ok(Arc::new(Self {
             playback: Mutex::new(None),
             forwarded_audio: AtomicU64::new(0),
@@ -673,3 +689,27 @@ mod callback_pcm_tests;
 #[cfg(test)]
 #[path = "callback_late_join_tests.rs"]
 mod callback_late_join_tests;
+
+/// The pinned host and the listener's signer, after checking that the claimed
+/// device ID is the one the signer's key maps to. The host admits a proven
+/// listener only under that ID, so any other is refused before connecting.
+fn secure_target(
+    local_device_id: &str,
+    host_tls_public_key_der: Vec<u8>,
+    proof_signer: Arc<dyn FfiListenerProofSigner>,
+) -> Result<SecureHostTarget, FfiListenerTransportError> {
+    let spki = proof_signer
+        .spki_der()
+        .map_err(|error| FfiListenerTransportError::InvalidEndpoint(error.to_string()))?;
+    let bound_device =
+        silent_disco_core::transport::secure_identity::device_id_for_listener_key(&spki);
+    if local_device_id != bound_device.as_str() {
+        return Err(FfiListenerTransportError::InvalidEndpoint(
+            "local device ID must be the one bound to the listener key".to_owned(),
+        ));
+    }
+    Ok(SecureHostTarget {
+        host_spki: host_tls_public_key_der,
+        signer: Arc::new(CallbackSigner(proof_signer)),
+    })
+}

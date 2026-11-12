@@ -16,7 +16,7 @@ use silent_disco_core::transport::{
     DEFAULT_OPERATION_TIMEOUT, DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT,
     DEFAULT_TRANSPORT_EVENT_CAPACITY, DEFAULT_TRANSPORT_QUEUE_CAPACITY, HostTransportConfig,
     HostTransportNode, SystemTransportClock, TransportChannel, TransportClock, TransportDelivery,
-    TransportEvent, TransportFactory, production_transport_factory,
+    TransportEvent, TransportProtocol, transport_factory_for,
 };
 
 use super::types::{
@@ -104,6 +104,7 @@ impl FfiHostTransportHandle {
             session_id,
             host_now_elapsed_ms,
             None,
+            TransportProtocol::LegacyV3,
         )
     }
 
@@ -140,6 +141,42 @@ impl FfiHostTransportHandle {
             session_id,
             host_now_elapsed_ms,
             Some(Arc::new(identity)),
+            TransportProtocol::LegacyV3,
+        )
+    }
+
+    /// Binds a v4 host: one QUIC endpoint on `port` (0 picks one) that carries
+    /// control, clock probes and audio, each listener on its own encrypted
+    /// connection. The platform key is the TLS identity whose SPKI the
+    /// invitation carries. Only v4 listeners can join; this never falls back
+    /// to v3, and fails closed if the platform cannot supply its key.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "uniffi::export requires owned String and Arc parameters at the foreign boundary"
+    )]
+    #[uniffi::constructor]
+    pub fn bind_quic_with_host_clock(
+        local_address: String,
+        port: u16,
+        session_id: String,
+        host_now_elapsed_ms: u64,
+        tls_signer: Arc<dyn FfiListenerProofSigner>,
+    ) -> Result<Arc<Self>, FfiHostTransportError> {
+        let identity = host_tls_identity_from_external_key(Arc::new(CallbackSigner(tls_signer)))
+            .map_err(|error| {
+                FfiHostTransportError::InvalidConfiguration(format!(
+                    "host TLS identity unavailable: {error}"
+                ))
+            })?;
+        Self::bind_configured(
+            local_address,
+            port,
+            0,
+            0,
+            session_id,
+            host_now_elapsed_ms,
+            Some(Arc::new(identity)),
+            TransportProtocol::SecureV4,
         )
     }
 
@@ -696,6 +733,7 @@ impl FfiHostTransportHandle {
         session_id: String,
         host_now_elapsed_ms: u64,
         secure_control: Option<Arc<HostTlsIdentity>>,
+        protocol: TransportProtocol,
     ) -> Result<Arc<Self>, FfiHostTransportError> {
         let bind_address: IpAddr = local_address.parse().map_err(|_| {
             FfiHostTransportError::InvalidConfiguration(
@@ -731,7 +769,7 @@ impl FfiHostTransportHandle {
                 SystemTransportClock::starting_at(host_now_elapsed_ms)
             }
         });
-        let transport = production_transport_factory().bind_host(config, clock)?;
+        let transport = transport_factory_for(protocol).bind_host(config, clock)?;
         Ok(Arc::new(Self {
             inner: Mutex::new(Some(Inner {
                 transport,

@@ -38,7 +38,7 @@ impl FfiListenerProofSigner for PlatformSigner {
     }
 }
 
-fn signer(fail_spki: bool) -> Arc<dyn FfiListenerProofSigner> {
+pub(super) fn signer(fail_spki: bool) -> Arc<dyn FfiListenerProofSigner> {
     Arc::new(PlatformSigner {
         key: SigningKey::from_slice(&[61_u8; 32]).expect("fixture key"),
         fail_spki,
@@ -126,7 +126,7 @@ fn free_ports() -> (u16, u16, u16) {
     }
 }
 
-fn endpoint_payload(session: &str, control: u16, sync: u16, audio: u16) -> String {
+pub(super) fn endpoint_payload(session: &str, control: u16, sync: u16, audio: u16) -> String {
     format!(
         r#"{{"hostAddress":"127.0.0.1","controlPort":{control},"syncPort":{sync},"audioPort":{audio},"sessionId":"{session}","protocolVersion":{},"inviteCodeRequired":false,"expiresAtMs":null}}"#,
         silent_disco_core::runtime::current_protocol_version()
@@ -362,7 +362,7 @@ fn a_pinned_listener_for_another_session_is_never_approved_by_the_host() {
 
 /// The device ID the fixture listener key (seed 61) is bound to. TLS joins must
 /// claim exactly this ID.
-fn listener_id() -> String {
+pub(super) fn listener_id() -> String {
     let spki = SigningKey::from_slice(&[61_u8; 32])
         .expect("listener key")
         .verifying_key()
