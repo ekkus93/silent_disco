@@ -1710,3 +1710,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Core and desktop loopback rejoin tests pass; device rerun with new manual.control logging did not reproduce (Stop and close arrived).
 - Fix: QuicHostWorker shutdown now closes peers gracefully (writer drains, finish, wait up to 2 s for ack) instead of closing at once, which could discard a just-sent Stop. Likely cause, not proven; loopback cannot show it. Handoff §49.
 - Found: workflow_harness ignores the shared-address opt-in, so its 4 tests fail when the env var is set on a CGNAT network (pre-existing).
+
+## 2026-11-12T14:41:47Z - claude-opus-5-5 - Stop lost on immediate host shutdown: real cause fixed
+- A54 run 11 (device test now shuts down straight after stopping) reproduced the run-8 anomaly: phone got no `Stopped`, only the graceful close; host showed `queue_depth=1` after stop.
+- Cause: the desktop transport worker (`desktop/src-tauri/src/platform/host_transport/worker.rs`) left its loop on the stop flag without sending queued broadcast frames, dropping the Stop for v3 and v4. Fix: `flush_broadcast_frames` on clean shutdown. Regression test `a_host_shut_down_straight_after_stopping_still_delivers_the_stop` failed before, passes after.
+- Lesson: the §49 loopback tests waited for Stop before shutdown and hid the bug; test the operator's real sequence. Handoff §50.

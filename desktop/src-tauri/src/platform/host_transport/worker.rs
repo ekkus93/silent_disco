@@ -49,6 +49,15 @@ fn run_transport_worker(
         }
     }
 
+    // A clean shutdown first sends what the playback pump already queued,
+    // so a Stop issued just before shutdown still reaches every listener
+    // ahead of the close. After a worker failure the node is not trusted
+    // to send, so the queue is dropped as before.
+    let flush_error = if primary_error.is_none() {
+        flush_broadcast_frames(&*node, broadcast_receiver, status, clock.as_ref()).err()
+    } else {
+        None
+    };
     let drain_error = fail_queued_effects(effect_receiver, &**sink, status).err();
     let shutdown_error = node
         .shutdown()
@@ -56,6 +65,7 @@ fn run_transport_worker(
         .err();
     status.running.store(false, Ordering::Release);
     primary_error
+        .or(flush_error)
         .or(drain_error)
         .or(shutdown_error)
         .map_or(Ok(()), Err)
@@ -116,6 +126,25 @@ fn process_broadcast_frames(
                 set_last_error(status, DesktopNetworkError::transport(&error).to_string())?;
             }
         }
+    }
+    Ok(())
+}
+
+/// Sends every frame still queued at shutdown. Bounded by the queue's
+/// capacity: the shutdown flag already refuses new frames, so one pass
+/// over a full queue empties it.
+fn flush_broadcast_frames(
+    node: &dyn HostTransportNode,
+    receiver: &Receiver<ProtocolFrame>,
+    status: &SharedStatus,
+    clock: &dyn TransportClock,
+) -> Result<(), DesktopNetworkError> {
+    let ticks = usize::from(BROADCAST_FRAME_QUEUE_CAPACITY).div_ceil(MAX_BROADCAST_FRAMES_PER_TICK);
+    for _ in 0..=ticks {
+        if status.broadcast.queue_depth.load(Ordering::Acquire) == 0 {
+            return Ok(());
+        }
+        process_broadcast_frames(node, receiver, status, clock)?;
     }
     Ok(())
 }

@@ -16,7 +16,7 @@ use crate::platform::start_playback;
 use p256::ecdsa::SigningKey;
 use p256::pkcs8::EncodePublicKey;
 use silent_disco_core::domain::DeviceId;
-use silent_disco_core::protocol::{ControlMessage, DeviceIdentity, JoinRequest};
+use silent_disco_core::protocol::{ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame};
 use silent_disco_core::runtime::{
     CoreActorHandle, CoreCommand, CoreNotification, NetworkEndpoint, SessionAdvertisement,
 };
@@ -193,4 +193,46 @@ fn a_v4_listener_that_rejoins_before_its_old_connection_ends_receives_stop_and_a
     });
     stop_and_shut_down(host, second);
     drop(first);
+}
+
+/// Reads the listener until the host disconnects and reports whether a
+/// Stop arrived first.
+fn stop_arrives_before_disconnect(listener: &mut dyn ListenerTransportNode) -> bool {
+    let mut stopped = false;
+    loop {
+        match listener.recv_event(Duration::from_secs(12)) {
+            Ok(TransportEvent::PeerDisconnected { .. }) => return stopped,
+            Ok(TransportEvent::FrameReceived {
+                frame: ProtocolFrame::Control(ControlMessage::Stop(_)),
+                ..
+            }) => stopped = true,
+            Ok(_) => {}
+            Err(error) if error.kind == TransportErrorKind::Timeout => {
+                panic!("no disconnect within 12 s")
+            }
+            Err(error) => panic!("listener failed: {error}"),
+        }
+    }
+}
+
+/// The A54 run 11 defect: an operator who shuts the host down straight after
+/// stopping left the Stop in the desktop broadcast queue, so the phone only
+/// saw the connection close.
+#[test]
+fn a_host_shut_down_straight_after_stopping_still_delivers_the_stop() {
+    let Some(host) = start_v4_host() else { return };
+    let mut listener = join_and_approve_v4(&host);
+    start_playback::start(&host.handle, &host.network, &host.registry).expect("start playback");
+    wait_for_control(&mut *listener, |m| {
+        matches!(m, ControlMessage::StreamStart(_))
+    });
+
+    host.network.stop_playback().expect("stop playback");
+    host.network.shutdown().expect("host shutdown");
+
+    assert!(
+        stop_arrives_before_disconnect(&mut *listener),
+        "the listener saw the host close without receiving Stop"
+    );
+    host.actor.shutdown().expect("actor shutdown");
 }

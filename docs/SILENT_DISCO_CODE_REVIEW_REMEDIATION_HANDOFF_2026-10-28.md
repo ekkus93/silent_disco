@@ -849,3 +849,13 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 **Also found.** `workflow_harness` picks its address with the shared-address opt-in but never applies the opt-in to its host, so its four tests fail with "host transport never started" when `SILENT_DISCO_DEVICE_TEST_ALLOW_SHARED_ADDRESS_SPACE` is set on a carrier-NAT network; without the variable they skip. Pre-existing (same failure with this change removed); not fixed here.
 
 **Gates.** `check-rust.sh` 899 passed; desktop `cargo test --locked --all-features` 418 passed, clippy clean; Android `./gradlew test lintDebug` BUILD SUCCESSFUL.
+
+## 50. 2026-11-12 — The stop-after-reconnect anomaly: real cause found and fixed
+
+**Run 11 on the A54 (passed as a test, reproduced the anomaly).** The device test now shuts down straight after stopping. Late join, a 12 s Wi-Fi drop and the rejoin all worked as in run 10. After the stop, the phone logged no `Stopped`; it logged `ConnectionClosed … control stream finished` at 06:36:27.717 (the graceful close from §49 arrived) and stopped 1.5 s later on the closed connection, not on a Stop. The host's diagnostics right after the stop showed `queue_depth=1`: the Stop was still in the desktop broadcast queue.
+
+**Cause.** `stop_playback` makes the pump queue the Stop on the desktop transport worker's broadcast queue and returns. `shutdown` then sets the worker's stop flag; the worker leaves its loop and shuts the node down without sending what is still queued. The Stop is dropped on the host, before any transport sees it, for v3 and v4 alike. Run 8 had the same shape; run 10 passed only because the test then waited 2 s between stop and shutdown. The §49 desktop loopback tests missed it because they waited for the Stop to arrive before shutting down. The §49 QUIC worker change is still correct but was not this cause.
+
+**Fix.** On a clean shutdown (no worker failure) the worker now sends every frame still queued (`flush_broadcast_frames`, bounded by the queue capacity; the stop flag already refuses new frames) before shutting the node down. After a worker failure the queue is dropped as before. Regression test `a_host_shut_down_straight_after_stopping_still_delivers_the_stop` (`secure_rejoin_tests.rs`, real desktop host runtime and a real v4 listener): stop, shut down at once, the listener must see Stop before the disconnect. It failed before the fix and passes after.
+
+**Gates.** Desktop `cargo test --all-features` 412 passed (with the shared-address opt-in: the three v4 rejoin tests pass; the four `workflow_harness` failures are the pre-existing §49 gap); clippy clean; `npm run check` passed (196 Vitest tests).
