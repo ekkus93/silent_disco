@@ -248,6 +248,39 @@ fn a_host_shutdown_is_reported_to_the_listener() {
     }
 }
 
+/// A Stop sent just before the host shuts down must still reach the
+/// listener: closing a QUIC connection discards unacknowledged stream data,
+/// so shutdown waits for the queued frames first (handoff §48). Loopback
+/// does not lose packets, so this guards the order of events, not the loss
+/// case itself.
+#[test]
+fn control_frames_sent_just_before_host_shutdown_arrive_before_the_close() {
+    let identity = identity(9);
+    let mut host = host(&identity, 8);
+    let listener = listener(&host, &identity.spki, 31).expect("listener");
+    let peer = admitted(&host);
+
+    for index in 0..50_u8 {
+        host.send_control(peer, vec![index; 1_000]).expect("queued");
+    }
+    host.shutdown();
+    let mut received = 0_u8;
+    loop {
+        match next_listener_event(&listener) {
+            QuicListenerEvent::Control(frame) => {
+                assert_eq!(frame[0], received, "frames arrive in order");
+                received += 1;
+            }
+            QuicListenerEvent::Closed(_) => break,
+            QuicListenerEvent::Datagram(_) => {}
+        }
+    }
+    assert_eq!(
+        received, 50,
+        "every frame sent before shutdown arrived first"
+    );
+}
+
 #[test]
 fn an_oversized_control_frame_is_refused_without_breaking_the_connection() {
     let identity = identity(9);

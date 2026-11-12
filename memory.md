@@ -1705,3 +1705,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Run 8 passed: mid-stream join and rejoin after a 12 s Wi-Fi drop, same key-bound ID, all frames fully delivered while connected, sync Excellent. Handoff §48.
 - Open finding: after the reconnect, host Stop + shutdown not observed promptly (97 concealed, BUFFERING until 8 s idle timeout); the no-reconnect run stopped cleanly. One occurrence, undiagnosed.
 - Owner (2026-11-12): skip two-listener testing for now; full UI redesign planned later, so UI findings are logged, not fixed.
+
+## 2026-11-12T12:30:05Z - claude-opus-5-5 - v4 stop-after-reconnect: narrowed and likely cause fixed
+- Core and desktop loopback rejoin tests pass; device rerun with new manual.control logging did not reproduce (Stop and close arrived).
+- Fix: QuicHostWorker shutdown now closes peers gracefully (writer drains, finish, wait up to 2 s for ack) instead of closing at once, which could discard a just-sent Stop. Likely cause, not proven; loopback cannot show it. Handoff §49.
+- Found: workflow_harness ignores the shared-address opt-in, so its 4 tests fail when the env var is set on a CGNAT network (pre-existing).

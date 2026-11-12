@@ -275,6 +275,10 @@ class ManualListenerTransportController(
                     handleGate.withExpectedPoll(handle) { it.pollEvent(POLL_TIMEOUT_MS) }
                 } catch (error: FfiListenerTransportException) {
                     if (!isActive || handleGate.currentHandle() !== handle) break
+                    logger.i(
+                        "manual.control",
+                        "event loop ended: ${error::class.simpleName} ${error.message.orEmpty()}",
+                    )
                     val playbackFailure = stopPlayback()
                     val transportFailure = closeExistingHandle()
                     val cleanupFailure = playbackFailure ?: transportFailure
@@ -297,6 +301,7 @@ class ManualListenerTransportController(
         handle: FfiListenerTransportHandle,
         event: FfiListenerTransportEvent,
     ) {
+        logControlEvent(event)
         when (event) {
             is FfiListenerTransportEvent.Hello -> _connectState.value = ManualConnectUiState.AwaitingApproval(
                 hostName = event.hostName,
@@ -404,3 +409,27 @@ internal fun mapPostConnectionFailure(
             (cleanupFailure.message ?: cleanupFailure::class.simpleName.orEmpty()),
     )
 }
+
+/**
+ * Records every control and terminal event the listener receives, so a
+ * device run can tell a Stop or close that never arrived from one that
+ * arrived and was not applied. Audio and clock replies are too frequent to
+ * log here and are covered by the per-second samples.
+ */
+private fun ManualListenerTransportController.logControlEvent(event: FfiListenerTransportEvent) {
+    val description = when (event) {
+        is FfiListenerTransportEvent.AudioReceived,
+        is FfiListenerTransportEvent.SyncResponseReceived,
+        -> return
+        is FfiListenerTransportEvent.StreamStarted -> "StreamStarted stream=${event.streamId}"
+        is FfiListenerTransportEvent.Stopped -> "Stopped stream=${event.streamId} hostStopTimeMs=${event.hostStopTimeMs}"
+        is FfiListenerTransportEvent.Paused -> "Paused"
+        is FfiListenerTransportEvent.TrackBoundary -> "TrackBoundary"
+        is FfiListenerTransportEvent.HostDisconnected -> "HostDisconnected reason=${event.reason}"
+        is FfiListenerTransportEvent.ConnectionClosed -> "ConnectionClosed message=${event.message}"
+        is FfiListenerTransportEvent.Rejected -> "Rejected message=${event.message}"
+        else -> event::class.simpleName.orEmpty()
+    }
+    logger.i("manual.control", description)
+}
+

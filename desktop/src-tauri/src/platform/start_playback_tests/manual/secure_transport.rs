@@ -85,7 +85,7 @@ fn manual_real_android_listener_joins_over_secure_transport() {
 }
 
 /// Late join and reconnect over v4, with one QR scan. The host starts a
-/// two-minute song before any listener exists; the phone joins mid-stream
+/// ten-minute song before any listener exists; the phone joins mid-stream
 /// from the signed QR and must pick up the stream already in progress. Then
 /// the phone's Wi-Fi is turned off for longer than the QUIC idle timeout,
 /// turned back on, and the app's own "Try again", "Connect manually" and
@@ -110,7 +110,8 @@ fn manual_real_android_listener_late_joins_and_reconnects_over_secure_transport(
         "song-v4-rejoin",
         &C_MAJOR_SCALE_HZ,
         1.0,
-        150,
+        // Long enough that it cannot end before a person scans the QR.
+        600,
         AudioContainer::Wav,
     );
     let identity = fixed_identity_for_tests(22);
@@ -163,6 +164,10 @@ fn manual_real_android_listener_late_joins_and_reconnects_over_secure_transport(
 
     eprintln!("stopping playback...");
     network.stop_playback().expect("stop playback");
+    print_diagnostics(&handle, &network, "v4-after-stop");
+    // Shut down straight after stopping, as an operator would: the host
+    // must still deliver the Stop before closing (handoff §48).
+    eprintln!("shutting the host down...");
     network.shutdown().expect("stop desktop host transport");
     actor.shutdown().expect("actor shutdown");
     eprintln!("done.");

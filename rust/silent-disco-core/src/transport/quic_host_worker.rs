@@ -159,6 +159,9 @@ const EVENT_BACKOFF: Duration = Duration::from_millis(2);
 /// is closed anyway. Closing a QUIC connection discards unacknowledged
 /// stream data, so the close waits for the acknowledgement first.
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
+/// Extra time on top of [`CLOSE_GRACE`] for the writers to run before a
+/// shutdown closes whatever is still open.
+const SHUTDOWN_SLACK: Duration = Duration::from_millis(500);
 
 /// Handle to a running host QUIC endpoint.
 pub struct QuicHostWorker {
@@ -403,9 +406,28 @@ async fn run_host(
             }
         }
     }
-    for (_, peer) in shared.peers().drain() {
-        peer.connection.close(0_u32.into(), b"host shutting down");
+    // Closing a QUIC connection discards control data the peer has not yet
+    // acknowledged, so a Stop sent just before shutdown could be lost and
+    // the listener left waiting for the idle timeout. Close every peer the
+    // way `close_peer` does: let its writer finish what is queued and wait
+    // (bounded) for the acknowledgement, all peers at once.
+    let peers: Vec<PeerEntry> = shared.peers().drain().map(|(_, peer)| peer).collect();
+    for peer in &peers {
+        if peer
+            .control
+            .send(ControlWrite::Close("host shutting down".to_owned()))
+            .await
+            .is_err()
+        {
+            peer.connection.close(0_u32.into(), b"host shutting down");
+        }
     }
+    let _ = tokio::time::timeout(CLOSE_GRACE + SHUTDOWN_SLACK, async {
+        for peer in &peers {
+            peer.connection.closed().await;
+        }
+    })
+    .await;
     endpoint.close(0_u32.into(), b"host shutting down");
     endpoint.wait_idle().await;
 }
