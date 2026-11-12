@@ -76,7 +76,7 @@ mod playback_controls_tests;
 const MAX_CACHED_TRACK_BOUNDARIES: usize = 100;
 
 #[derive(Default)]
-pub(super) struct PlaybackControls {
+pub(crate) struct PlaybackControls {
     stream_start: Option<StreamStart>,
     boundaries: VecDeque<TrackBoundary>,
     pause: Option<Pause>,
@@ -163,7 +163,7 @@ impl PlaybackControls {
 
     /// Returns false for stale or unrelated playback controls so that live
     /// listeners cannot receive controls rejected by late-join replay.
-    pub(super) fn update(&mut self, message: &ControlMessage) -> bool {
+    pub(crate) fn update(&mut self, message: &ControlMessage) -> bool {
         match message {
             ControlMessage::StreamStart(start) => {
                 // Stop retires this generation, including its original
@@ -352,7 +352,7 @@ impl PlaybackControls {
     /// Older low-level transport callers can send fixture audio before any
     /// `StreamStart`, but once playback controls are established, a paused or
     /// retired producer must never leak its buffered UDP frames.
-    pub(super) fn permits_audio(&mut self, packet: &AudioDatagram) -> bool {
+    pub(crate) fn permits_audio(&mut self, packet: &AudioDatagram) -> bool {
         let allowed = match &self.stream_start {
             Some(start) => {
                 start.session_id == packet.session_id
@@ -431,7 +431,7 @@ impl PlaybackControls {
     /// send-ahead can queue future boundaries, so derive the position from
     /// the presentation clock rather than the most recently sent UDP packet.
     /// While paused, freeze at the pause deadline; Resume reanchors Start.
-    pub(super) fn snapshot_at(&self, now: MonotonicMillis) -> Vec<ControlMessage> {
+    pub(crate) fn snapshot_at(&self, now: MonotonicMillis) -> Vec<ControlMessage> {
         let Some(mut start) = self.stream_start.clone() else {
             return Vec::new();
         };
@@ -459,7 +459,7 @@ impl PlaybackControls {
 
     /// Unlike a new join, recovery of an existing admitted listener must
     /// replay a missed terminal Stop when playback is no longer active.
-    pub(super) fn recovery_snapshot_at(&self, now: MonotonicMillis) -> Vec<ControlMessage> {
+    pub(crate) fn recovery_snapshot_at(&self, now: MonotonicMillis) -> Vec<ControlMessage> {
         if self.stream_start.is_some() {
             self.snapshot_at(now)
         } else {

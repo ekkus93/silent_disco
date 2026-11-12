@@ -13,6 +13,12 @@ mod quic_datagram_tests;
 #[cfg(feature = "quic")]
 pub mod quic_framing;
 #[cfg(feature = "quic")]
+mod quic_host_node;
+#[cfg(feature = "quic")]
+pub mod quic_host_transport;
+#[cfg(all(test, feature = "quic"))]
+mod quic_host_transport_tests;
+#[cfg(feature = "quic")]
 pub mod quic_host_worker;
 #[cfg(feature = "quic")]
 pub mod quic_listener_worker;

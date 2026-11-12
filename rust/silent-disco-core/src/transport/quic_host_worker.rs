@@ -54,7 +54,13 @@ pub enum QuicHostEvent {
         listener: VerifiedListenerKey,
     },
     /// A connection failed admission or was refused for capacity.
-    Refused { remote: SocketAddr, reason: String },
+    Refused {
+        remote: SocketAddr,
+        reason: String,
+        /// `true` when the host was at its peer limit, `false` when the
+        /// connection failed the handshake or the v4 proof.
+        at_capacity: bool,
+    },
     /// One control frame from a peer, in order.
     Control { peer: u64, frame: Vec<u8> },
     /// One datagram from a peer.
@@ -106,6 +112,8 @@ enum Command {
         reply: Reply<()>,
     },
     BroadcastDatagram {
+        /// `None` sends to every admitted peer.
+        peers: Option<Vec<u64>>,
         datagram: Vec<u8>,
         reply: oneshot::Sender<BroadcastResults>,
     },
@@ -116,9 +124,16 @@ enum Command {
     Shutdown,
 }
 
+/// One item on a peer's control writer queue.
+enum ControlWrite {
+    Frame(Vec<u8>, Reply<()>),
+    /// Write everything queued before this, then close the connection.
+    Close(String),
+}
+
 struct PeerEntry {
     connection: quinn::Connection,
-    control: mpsc::Sender<(Vec<u8>, Reply<()>)>,
+    control: mpsc::Sender<ControlWrite>,
 }
 
 #[derive(Default)]
@@ -139,6 +154,11 @@ impl Shared {
 const QUEUE_CAPACITY: usize = 256;
 /// Retry interval while the event queue is full for a control frame.
 const EVENT_BACKOFF: Duration = Duration::from_millis(2);
+/// How long a closing peer may take to acknowledge its last control frames
+/// (for example a `JoinRejection` or `Disconnect`) before the connection
+/// is closed anyway. Closing a QUIC connection discards unacknowledged
+/// stream data, so the close waits for the acknowledgement first.
+const CLOSE_GRACE: Duration = Duration::from_secs(2);
 
 /// Handle to a running host QUIC endpoint.
 pub struct QuicHostWorker {
@@ -286,10 +306,34 @@ impl QuicHostWorker {
     /// # Errors
     /// Returns [`QuicHostError::Stopped`] if the worker has stopped.
     pub fn broadcast_datagram(&self, datagram: Vec<u8>) -> Result<BroadcastResults, QuicHostError> {
-        self.request(|reply| Command::BroadcastDatagram { datagram, reply })
+        self.request(|reply| Command::BroadcastDatagram {
+            peers: None,
+            datagram,
+            reply,
+        })
     }
 
-    /// Closes one peer's connection.
+    /// Sends one datagram to each listed peer, each on its own connection.
+    /// A listed peer that is no longer admitted reports
+    /// [`QuicHostError::UnknownPeer`].
+    ///
+    /// # Errors
+    /// Returns [`QuicHostError::Stopped`] if the worker has stopped.
+    pub fn send_datagram_to(
+        &self,
+        peers: Vec<u64>,
+        datagram: Vec<u8>,
+    ) -> Result<BroadcastResults, QuicHostError> {
+        self.request(|reply| Command::BroadcastDatagram {
+            peers: Some(peers),
+            datagram,
+            reply,
+        })
+    }
+
+    /// Closes one peer's connection after its already queued control frames
+    /// have been written and acknowledged (bounded by a short grace period).
+    /// The peer stops accepting new sends at once.
     ///
     /// # Errors
     /// Returns [`QuicHostError::Stopped`] if the worker has stopped.
@@ -337,6 +381,7 @@ async fn run_host(
                     send_event_lossless(&events, QuicHostEvent::Refused {
                         remote,
                         reason: "host is at its peer limit".to_owned(),
+                        at_capacity: true,
                     }).await;
                     continue;
                 }
@@ -371,8 +416,8 @@ async fn handle_command(command: Command, shared: &Shared) {
             let sender = shared.peers().get(&peer).map(|entry| entry.control.clone());
             match sender {
                 Some(sender) => {
-                    if let Err(mpsc::error::SendError((_, reply))) =
-                        sender.send((frame, reply)).await
+                    if let Err(mpsc::error::SendError(ControlWrite::Frame(_, reply))) =
+                        sender.send(ControlWrite::Frame(frame, reply)).await
                     {
                         let _ = reply.send(Err(QuicHostError::UnknownPeer(peer)));
                     }
@@ -399,27 +444,50 @@ async fn handle_command(command: Command, shared: &Shared) {
             };
             let _ = reply.send(result);
         }
-        Command::BroadcastDatagram { datagram, reply } => {
-            let connections: Vec<(u64, quinn::Connection)> = shared
-                .peers()
-                .iter()
-                .map(|(peer, entry)| (*peer, entry.connection.clone()))
-                .collect();
+        Command::BroadcastDatagram {
+            peers,
+            datagram,
+            reply,
+        } => {
+            let connections: Vec<(u64, Option<quinn::Connection>)> = {
+                let table = shared.peers();
+                match peers {
+                    None => table
+                        .iter()
+                        .map(|(peer, entry)| (*peer, Some(entry.connection.clone())))
+                        .collect(),
+                    Some(peers) => peers
+                        .into_iter()
+                        .map(|peer| (peer, table.get(&peer).map(|e| e.connection.clone())))
+                        .collect(),
+                }
+            };
             let bytes = bytes::Bytes::from(datagram);
             let results = connections
                 .into_iter()
                 .map(|(peer, connection)| {
-                    let result = connection
-                        .send_datagram(bytes.clone())
-                        .map_err(|error| QuicHostError::Send(error.to_string()));
+                    let result = connection.map_or(Err(QuicHostError::UnknownPeer(peer)), |c| {
+                        c.send_datagram(bytes.clone())
+                            .map_err(|error| QuicHostError::Send(error.to_string()))
+                    });
                     (peer, result)
                 })
                 .collect();
             let _ = reply.send(results);
         }
         Command::Close { peer, reason } => {
-            if let Some(entry) = shared.peers().remove(&peer) {
-                entry.connection.close(0_u32.into(), reason.as_bytes());
+            let entry = shared.peers().remove(&peer);
+            if let Some(entry) = entry {
+                // The writer drains earlier frames, then closes. If its queue
+                // is gone the writer already failed; close directly.
+                if entry
+                    .control
+                    .send(ControlWrite::Close(reason.clone()))
+                    .await
+                    .is_err()
+                {
+                    entry.connection.close(0_u32.into(), reason.as_bytes());
+                }
             }
         }
         Command::Shutdown => {}
@@ -450,7 +518,15 @@ async fn admit_peer(
     let (connection, listener, stream) = match admitted {
         Ok(admitted) => admitted,
         Err(reason) => {
-            send_event_lossless(&events, QuicHostEvent::Refused { remote, reason }).await;
+            send_event_lossless(
+                &events,
+                QuicHostEvent::Refused {
+                    remote,
+                    reason,
+                    at_capacity: false,
+                },
+            )
+            .await;
             return;
         }
     };
@@ -473,7 +549,7 @@ async fn admit_peer(
         },
     )
     .await;
-    tokio::spawn(write_control(send, control_rx));
+    tokio::spawn(write_control(send, connection.clone(), control_rx));
     tokio::spawn(read_datagrams(
         peer,
         connection.clone(),
@@ -488,16 +564,28 @@ async fn admit_peer(
 
 async fn write_control(
     mut send: quinn::SendStream,
-    mut queue: mpsc::Receiver<(Vec<u8>, Reply<()>)>,
+    connection: quinn::Connection,
+    mut queue: mpsc::Receiver<ControlWrite>,
 ) {
-    while let Some((frame, reply)) = queue.recv().await {
-        let result = write_frame(&mut send, &frame)
-            .await
-            .map_err(|error| QuicHostError::Send(error.to_string()));
-        let failed = result.is_err();
-        let _ = reply.send(result);
-        if failed {
-            break;
+    while let Some(write) = queue.recv().await {
+        match write {
+            ControlWrite::Frame(frame, reply) => {
+                let result = write_frame(&mut send, &frame)
+                    .await
+                    .map_err(|error| QuicHostError::Send(error.to_string()));
+                let failed = result.is_err();
+                let _ = reply.send(result);
+                if failed {
+                    break;
+                }
+            }
+            ControlWrite::Close(reason) => {
+                let _ = send.finish();
+                // Bounded: a peer that never acknowledges is closed anyway.
+                let _ = tokio::time::timeout(CLOSE_GRACE, send.stopped()).await;
+                connection.close(0_u32.into(), reason.as_bytes());
+                return;
+            }
         }
     }
     let _ = send.finish();

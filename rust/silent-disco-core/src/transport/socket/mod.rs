@@ -23,6 +23,8 @@ mod secure_test_support;
 #[cfg_attr(test, allow(clippy::items_after_test_module))]
 mod shared;
 
+#[cfg(feature = "quic")]
+pub(crate) use host::PlaybackControls;
 pub use host::SocketHostTransport;
 pub use listener::SocketListenerTransport;
 

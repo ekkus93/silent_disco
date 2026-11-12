@@ -10,6 +10,7 @@
 //! in production uses it yet.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::Error as TlsError;
@@ -19,6 +20,27 @@ use super::secure_control_tls::{HostTlsIdentity, host_server_config, pinned_clie
 /// ALPN of the v4 transport. Both sides require it, so a peer speaking any
 /// other protocol cannot complete the handshake.
 pub const ALPN_V4: &[u8] = b"silent-disco/4";
+
+/// Keep-alive interval on both ends. An approved listener waiting for Play
+/// sends nothing of its own, so without keep-alives its idle connection would
+/// time out before playback starts.
+pub const QUIC_KEEP_ALIVE: Duration = Duration::from_secs(2);
+
+/// A connection that hears nothing (not even a keep-alive) for this long is
+/// closed. This is how the v4 host notices a listener that vanished without
+/// closing, in place of the socket host's inbound-silence eviction; it
+/// matches `DEFAULT_PEER_INBOUND_SILENCE_TIMEOUT`.
+pub const QUIC_IDLE_TIMEOUT: Duration = Duration::from_secs(8);
+
+fn liveness_transport_config() -> Result<quinn::TransportConfig, QuicSetupError> {
+    let idle = quinn::IdleTimeout::try_from(QUIC_IDLE_TIMEOUT)
+        .map_err(|error| QuicSetupError::Quic(error.to_string()))?;
+    let mut transport = quinn::TransportConfig::default();
+    transport
+        .keep_alive_interval(Some(QUIC_KEEP_ALIVE))
+        .max_idle_timeout(Some(idle));
+    Ok(transport)
+}
 
 /// Why a QUIC endpoint configuration could not be built.
 #[derive(Debug)]
@@ -64,7 +86,9 @@ pub fn quic_server_config(
     tls.alpn_protocols = vec![ALPN_V4.to_vec()];
     let quic =
         QuicServerConfig::try_from(tls).map_err(|error| QuicSetupError::Quic(error.to_string()))?;
-    Ok(quinn::ServerConfig::with_crypto(Arc::new(quic)))
+    let mut config = quinn::ServerConfig::with_crypto(Arc::new(quic));
+    config.transport_config(Arc::new(liveness_transport_config()?));
+    Ok(config)
 }
 
 /// Listener (client) endpoint configuration that accepts only the host holding
@@ -78,5 +102,7 @@ pub fn quic_client_config(host_spki: &[u8]) -> Result<quinn::ClientConfig, QuicS
     tls.alpn_protocols = vec![ALPN_V4.to_vec()];
     let quic =
         QuicClientConfig::try_from(tls).map_err(|error| QuicSetupError::Quic(error.to_string()))?;
-    Ok(quinn::ClientConfig::new(Arc::new(quic)))
+    let mut config = quinn::ClientConfig::new(Arc::new(quic));
+    config.transport_config(Arc::new(liveness_transport_config()?));
+    Ok(config)
 }
