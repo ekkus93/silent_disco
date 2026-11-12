@@ -5,6 +5,7 @@
 
 mod automation;
 mod melody;
+mod secure_transport;
 
 use super::super::mdns::{MdnsPublisher, MdnsSdPublisher};
 use super::harness::{real_private_lan_address, start_host_session, submit, wait_snapshot_for};

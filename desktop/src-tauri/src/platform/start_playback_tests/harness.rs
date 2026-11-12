@@ -44,6 +44,26 @@ pub(super) fn start_host_session(
     Arc<DesktopHostNetworkControl>,
     silent_disco_core::runtime::NetworkEndpoint,
 ) {
+    start_host_session_configured(descriptor, interface_name, interface_index, address, |_| {})
+}
+
+/// [`start_host_session`] with a hook that configures the network control
+/// (for example its TLS identity and secure transport switch) before the
+/// host binds.
+pub(super) fn start_host_session_configured(
+    descriptor: AudioSourceDescriptor,
+    interface_name: String,
+    interface_index: u32,
+    address: Ipv4Addr,
+    configure: impl FnOnce(&DesktopHostNetworkControl),
+) -> (
+    CoreActorRuntime,
+    silent_disco_core::runtime::CoreActorHandle,
+    Receiver<CoreNotification>,
+    silent_disco_core::runtime::SessionAdvertisement,
+    Arc<DesktopHostNetworkControl>,
+    silent_disco_core::runtime::NetworkEndpoint,
+) {
     let (sender, receiver) = channel();
     let actor = CoreActorRuntime::start(
         CoreActorConfig::new(DeviceId::new("desktop-playback-host").expect("host id")),
@@ -95,6 +115,7 @@ pub(super) fn start_host_session(
     network
         .set_allow_shared_address_space(device_test_allows_shared_address_space())
         .expect("apply shared address space policy");
+    configure(&network);
     let endpoint = network
         .start_host(&advertisement, handle.clone())
         .expect("start desktop host transport");

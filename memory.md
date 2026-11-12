@@ -1688,3 +1688,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Found a step-3 gap: the p2 QR validator re-parses the embedded payload, so a v4 desktop host could NOT create invitations before this parser change. New desktop test `a_secure_transport_host_issues_an_invitation_advertising_version_4`; a v3-only parser mutation fails it.
 - A session ended mid-mutation and left manual_endpoint.rs mutated; I found and restored it from the pre-mutation backup and reran the check with a trap-based restore. Lesson: always restore mutations with a trap.
 - Gates so far: Rust 895, desktop npm check (196) and desktop Rust 416, clippy clean. Android build running.
+
+## 2026-11-12T10:37:06Z - claude-opus-5-5 - First A54 device run of v4 QUIC: join and playback work
+- Harness: ignored desktop test manual_real_android_listener_joins_over_secure_transport (manual/secure_transport.rs). Shows the signed QR via node qrcode + eog; owner scans with the A54; adb drives the rest. Owner prefers maximum automation and only does the scan.
+- Run 2 passed: key-bound join (v4-...), host 9121/9121 delivered, sync Excellent RTT 10-12 ms; phone accepted 9107, concealed 0, late 0, resyncs 0; 27 underruns all in the first second (known first-stream start issue). 0.15% not accepted, unsplit.
+- Open: Android still shows the "not secured" banner on v4; dialog Connect auto-connects despite a code comment saying it does not. Handoff §46.
