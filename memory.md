@@ -1693,3 +1693,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Harness: ignored desktop test manual_real_android_listener_joins_over_secure_transport (manual/secure_transport.rs). Shows the signed QR via node qrcode + eog; owner scans with the A54; adb drives the rest. Owner prefers maximum automation and only does the scan.
 - Run 2 passed: key-bound join (v4-...), host 9121/9121 delivered, sync Excellent RTT 10-12 ms; phone accepted 9107, concealed 0, late 0, resyncs 0; 27 underruns all in the first second (known first-stream start issue). 0.15% not accepted, unsplit.
 - Open: Android still shows the "not secured" banner on v4; dialog Connect auto-connects despite a code comment saying it does not. Handoff §46.
+
+## 2026-11-12T10:47:04Z - claude-opus-5-5 - v4 A54 run: owner listening verdict
+- Owner listened during the v4 run 2 on the A54: "It sounds clean, no gaps." Recorded in TODO §1 item 2 and handoff §46.
