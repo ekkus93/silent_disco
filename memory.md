@@ -1716,3 +1716,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Cause: the desktop transport worker (`desktop/src-tauri/src/platform/host_transport/worker.rs`) left its loop on the stop flag without sending queued broadcast frames, dropping the Stop for v3 and v4. Fix: `flush_broadcast_frames` on clean shutdown. Regression test `a_host_shut_down_straight_after_stopping_still_delivers_the_stop` failed before, passes after.
 - Lesson: the §49 loopback tests waited for Stop before shutdown and hid the bug; test the operator's real sequence. Handoff §50.
 - A54 run 12 with the fix (2026-11-12 06:45 local): phone logged Stopped 51 ms before the graceful close; 4005 accepted, 0 concealed. Fix confirmed on device (one run).
+
+## 2026-11-12T18:04:36Z - claude-opus-5-5 - Session pause: handoff §51
+- Owner paused the work. Pick-up notes are in handoff §51 (state at 3c408c3c, open items: phase 4 owner decision, two-listener test deferred, optional switch persistence, UI redesign later; device rerun command; environment notes).

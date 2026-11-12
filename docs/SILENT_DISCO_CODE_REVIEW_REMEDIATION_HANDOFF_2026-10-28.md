@@ -861,3 +861,23 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 **Gates.** Desktop `cargo test --all-features` 412 passed (with the shared-address opt-in: the three v4 rejoin tests pass; the four `workflow_harness` failures are the pre-existing §49 gap); clippy clean; `npm run check` passed (196 Vitest tests).
 
 **Run 12 on the A54 (with the fix, same immediate stop-then-shutdown sequence).** Passed. After the rejoin the phone logged `Stopped stream=desktop-stream-502` at 06:45:29.204, then `ConnectionClosed … control stream finished` 51 ms later, and stopped cleanly: 4005 accepted, 4005 emitted, 0 concealed, 0 late, 0 skipped. The host's `queue_depth=1` right after the stop is now sent before the close instead of dropped. Fix confirmed on the device for this sequence (one run).
+
+## 51. 2026-11-12 — Pick up here (session pause)
+
+**State.** `master` at `3c408c3c`, pushed, clean (only the untracked `.serena/`). Remediation TODO §1 item 2 (protect UDP PCM via QUIC, secure transport v4) stays open.
+
+**Done for v4 (§37–§50).** Core QUIC host and listener transports; v4 selection by an explicit opt-in desktop switch, "Secure transport (v4, experimental)", default off and not persisted (off means exactly v3; on means QUIC only, no fallback); FFI `connect_secure` follows the advertised version; Android shows a secure notice for v4 hosts. A54 device evidence: first join and playback (§46, owner heard "clean, no gaps"); late join, 12 s Wi-Fi drop and rejoin (§48); the stop-after-reconnect anomaly is fixed and confirmed on the device (§50: the desktop transport worker dropped a queued Stop at shutdown; fixed in `e12736a9`, A54 run 12 clean).
+
+**Open, in the owner's hands.**
+1. Phase 4, removing plaintext v3: owner's decision; not started.
+2. Two-listener v4 test: deferred by the owner.
+3. Optional: persist the desktop secure-transport switch across launches.
+4. Full UI redesign (owner, later). Logged findings: the disconnect card is below the fold; recovery takes three taps on two screens; a stale verified-invitation dialog is restored after restart; the dialog's Connect connects at once.
+
+**Known gaps (recorded, not fixed).** `workflow_harness` ignores `SILENT_DISCO_DEVICE_TEST_ALLOW_SHARED_ADDRESS_SPACE`, so its four tests fail when that variable is set on this venue's 100.64.x.x network (they skip without it). The QUIC close-wait and graceful-shutdown mutations survive on loopback (no packet loss there).
+
+**How to rerun the A54 device test.** Phone `R5CW31AX4FL` on USB, same LAN as the desktop:
+`SILENT_DISCO_DEVICE_TEST_ADB_SERIAL=R5CW31AX4FL SILENT_DISCO_DEVICE_TEST_ALLOW_SHARED_ADDRESS_SPACE=1 cargo +1.97.1 test --manifest-path desktop/src-tauri/Cargo.toml manual_real_android_listener_late_joins_and_reconnects_over_secure_transport -- --ignored --nocapture`
+adb drives the phone; a person scans the QR only when the log prints `>>> SCAN THE QR NOW`. Capture `adb logcat` and grep `manual.control` (control receipt) and `manual.audio.summary`.
+
+**Environment notes.** The machine has 7 GiB of RAM; Claude Code stops background jobs under memory pressure, and other projects' dev servers compete. Launch the desktop app with `GDK_BACKEND=x11 NO_COLOR=1 CARGO_TERM_COLOR=never npm run tauri dev` from `desktop/` (X11 so the window can be checked with `xwininfo`; no colour so readiness can be grepped). Never `pkill -f`/`pgrep -f` with a pattern that also matches the calling shell's command line (exit 144).
