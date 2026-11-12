@@ -46,7 +46,8 @@ impl ManualHostEndpoint {
     /// # Errors
     ///
     /// Returns a [`TransportErrorKind::Protocol`] error when the advertised
-    /// protocol version does not match [`current_protocol_version`], and a
+    /// protocol version is not one this build supports (see
+    /// [`supports_endpoint_version`]), and a
     /// [`TransportErrorKind::InvalidConfiguration`] error for every other
     /// malformed, oversized, expired, or unsupported field.
     pub fn parse(raw: &str, now_wall_clock_ms: u64) -> Result<Self, TransportError> {
@@ -87,14 +88,14 @@ impl ManualHostEndpoint {
         .map_err(|_| invalid("connection ports must all be nonzero"))?;
         let session_id = SessionId::new(payload.session_id)
             .map_err(|error| invalid(&format!("session ID is invalid: {error}")))?;
-        if payload.protocol_version != current_protocol_version() {
+        if !supports_endpoint_version(payload.protocol_version) {
             return Err(TransportError::new(
                 TransportErrorKind::Protocol,
                 TransportChannel::Control,
                 format!(
-                    "unsupported protocol version {}; this build supports version {}",
+                    "unsupported protocol version {}; this build supports {}",
                     payload.protocol_version,
-                    current_protocol_version()
+                    supported_versions_text()
                 ),
             ));
         }
@@ -119,6 +120,45 @@ impl ManualHostEndpoint {
             expires_at_ms,
         })
     }
+}
+
+impl ManualHostEndpoint {
+    /// Whether the host advertises secure transport (v4 QUIC).
+    #[must_use]
+    pub fn is_secure_v4(&self) -> bool {
+        is_secure_v4_version(self.protocol_version)
+    }
+}
+
+#[cfg(feature = "quic")]
+const fn is_secure_v4_version(version: u16) -> bool {
+    version == super::quic_transport_factory::SECURE_V4_ENDPOINT_VERSION
+}
+
+#[cfg(not(feature = "quic"))]
+const fn is_secure_v4_version(_version: u16) -> bool {
+    false
+}
+
+/// Endpoint versions this build can connect to: the v3 socket protocol, plus
+/// v4 secure transport when the build includes QUIC.
+#[must_use]
+pub fn supports_endpoint_version(version: u16) -> bool {
+    version == current_protocol_version() || is_secure_v4_version(version)
+}
+
+#[cfg(feature = "quic")]
+fn supported_versions_text() -> String {
+    format!(
+        "versions {} and {}",
+        current_protocol_version(),
+        super::quic_transport_factory::SECURE_V4_ENDPOINT_VERSION
+    )
+}
+
+#[cfg(not(feature = "quic"))]
+fn supported_versions_text() -> String {
+    format!("version {}", current_protocol_version())
 }
 
 fn invalid(message: &str) -> TransportError {
@@ -255,6 +295,24 @@ mod tests {
         assert_eq!(
             ManualHostEndpoint::parse(payload, 0).unwrap_err().kind,
             TransportErrorKind::Protocol
+        );
+    }
+
+    #[test]
+    fn accepts_a_secure_v4_endpoint_only_in_a_quic_build() {
+        let payload = r#"{"hostAddress":"192.168.1.50","controlPort":4000,"syncPort":4000,"audioPort":4000,"sessionId":"s","protocolVersion":4,"inviteCodeRequired":false,"expiresAtMs":null}"#;
+        let parsed = ManualHostEndpoint::parse(payload, 0);
+        if cfg!(feature = "quic") {
+            let endpoint = parsed.expect("a QUIC build accepts version 4");
+            assert!(endpoint.is_secure_v4());
+        } else {
+            assert_eq!(parsed.unwrap_err().kind, TransportErrorKind::Protocol);
+        }
+        let v5 = payload.replace("\"protocolVersion\":4", "\"protocolVersion\":5");
+        assert_eq!(
+            ManualHostEndpoint::parse(&v5, 0).unwrap_err().kind,
+            TransportErrorKind::Protocol,
+            "an unknown version is still refused"
         );
     }
 

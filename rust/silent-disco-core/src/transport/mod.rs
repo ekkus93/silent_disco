@@ -88,7 +88,9 @@ mod virtual_wire_tests;
 
 pub use boundary::{HostTransportNode, ListenerTransportNode, TransportFactory};
 pub use clock::{ManualTransportClock, SystemTransportClock, TransportClock};
-pub use manual_endpoint::{MAX_MANUAL_ENDPOINT_PAYLOAD_BYTES, ManualHostEndpoint};
+pub use manual_endpoint::{
+    MAX_MANUAL_ENDPOINT_PAYLOAD_BYTES, ManualHostEndpoint, supports_endpoint_version,
+};
 #[cfg(feature = "quic")]
 pub use quic_transport_factory::{
     QuicTransportFactory, SECURE_V4_ENDPOINT_VERSION, TransportProtocol, transport_factory_for,

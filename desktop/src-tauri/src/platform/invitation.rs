@@ -234,6 +234,28 @@ mod tests {
         assert_eq!(invitation.expires_at_ms, "1300000");
     }
 
+    /// A host with secure transport on advertises version 4. The shared QR
+    /// validator re-parses the embedded connection payload, so it must
+    /// accept version 4, or the host could not issue invitations at all.
+    #[test]
+    fn a_secure_transport_host_issues_an_invitation_advertising_version_4() {
+        let mut v4 = advertisement(ApprovalMode::Manual);
+        v4.protocol_version = silent_disco_core::transport::SECURE_V4_ENDPOINT_VERSION;
+        let invitation = build_signed_invitation(
+            &v4,
+            endpoint(),
+            &HostDraft::default(),
+            &identity(),
+            1_000_000_u64,
+        )
+        .expect("a v4 host can still issue invitations");
+        assert!(
+            invitation.payload.contains(r#"\"protocolVersion\":4"#),
+            "{}",
+            invitation.payload
+        );
+    }
+
     #[test]
     fn invite_code_is_embedded_only_when_the_approval_mode_requires_it() {
         let draft = HostDraft {

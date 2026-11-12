@@ -1681,3 +1681,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Desktop "Secure transport (v4, experimental)" checkbox in the network policy card; off by default, NOT persisted (resets every launch; persisting needs a core settings migration), refused while bound. On: QUIC factory only, protocolVersion 4 in manual details/invite/mDNS, refuses to host without a TLS identity.
 - Desktop lock: tokio 1.53.1 -> 1.54.1 plus the quinn crates, matching rust/Cargo.lock.
 - Tests: 5 desktop Rust (one real QUIC listener admitted on the LAN address) and 2 Vitest; 2 mutations killed. npm run check OK, desktop cargo test 415, Rust gate 892. Disk at 95% (26 GB free). Handoff §44. Next: step 4, the Android listener (endpoint version 4, Keystore signer, connect_quic), then the A54 run.
+
+## 2026-11-12T10:01:49Z - claude-opus-5-5 - v4 selection step 4 (in progress): listener resolves protocol from the endpoint version
+- Core `ManualHostEndpoint::parse` accepts protocolVersion 4 only in quic builds (`supports_endpoint_version`, `is_secure_v4`); unknown versions still refused.
+- FFI listener: plain `connect` refuses a v4 endpoint at once ("join it from the host's signed invitation"); `connect_secure` (Android's invitation path) follows the advertised version: 4 -> QUIC, 3 -> TLS over TCP; `connect_quic` requires 4. So the Android listener needs no Kotlin change to join a v4 desktop host from its signed QR.
+- Found a step-3 gap: the p2 QR validator re-parses the embedded payload, so a v4 desktop host could NOT create invitations before this parser change. New desktop test `a_secure_transport_host_issues_an_invitation_advertising_version_4`; a v3-only parser mutation fails it.
+- A session ended mid-mutation and left manual_endpoint.rs mutated; I found and restored it from the pre-mutation backup and reran the check with a trap-based restore. Lesson: always restore mutations with a trap.
+- Gates so far: Rust 895, desktop npm check (196) and desktop Rust 416, clippy clean. Android build running.

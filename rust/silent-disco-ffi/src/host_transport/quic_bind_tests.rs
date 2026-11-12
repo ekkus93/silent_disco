@@ -9,7 +9,10 @@ use p256::pkcs8::EncodePublicKey;
 use super::FfiHostTransportHandle;
 use super::secure_bind_tests::{endpoint_payload, listener_id, signer};
 use super::types::{FfiHostTransportError, FfiHostTransportEvent};
-use crate::listener_transport::{FfiListenerTransportEvent, FfiListenerTransportHandle};
+use crate::listener_transport::{
+    FfiListenerTransportError, FfiListenerTransportEvent, FfiListenerTransportHandle,
+};
+use silent_disco_core::transport::SECURE_V4_ENDPOINT_VERSION;
 
 /// 5 ms of 48 kHz stereo 16-bit PCM.
 const FRAMES: u32 = 240;
@@ -22,6 +25,17 @@ fn host_spki() -> Vec<u8> {
         .expect("spki")
         .as_bytes()
         .to_vec()
+}
+
+/// What a v4 host advertises: one port, protocol version 4.
+fn v4_payload(session: &str, port: u16) -> String {
+    endpoint_payload(session, port, port, port).replace(
+        &format!(
+            "\"protocolVersion\":{}",
+            silent_disco_core::runtime::current_protocol_version()
+        ),
+        &format!("\"protocolVersion\":{SECURE_V4_ENDPOINT_VERSION}"),
+    )
 }
 
 fn free_udp_port() -> u16 {
@@ -75,23 +89,11 @@ fn wait_listener<T>(
     panic!("expected listener event did not arrive");
 }
 
-#[test]
-fn a_v4_listener_joins_a_v4_host_and_receives_the_stream_through_the_handles() {
-    let session = "ffi-quic-join";
-    let (host, port) = quic_host(session);
-    let listener = FfiListenerTransportHandle::connect_quic(
-        endpoint_payload(session, port, port, port),
-        0,
-        listener_id(),
-        "127.0.0.1".to_owned(),
-        host_spki(),
-        signer(false),
-    )
-    .expect("v4 listener connects");
+fn join_and_approve(host: &FfiHostTransportHandle, listener: &FfiListenerTransportHandle) {
     listener
         .send_join_request("QUIC listener".to_owned(), None)
         .expect("join");
-    let (sync_port, audio_port) = wait_host(&host, |event| match event {
+    let (sync_port, audio_port) = wait_host(host, |event| match event {
         FfiHostTransportEvent::JoinRequestReceived {
             device_id,
             sync_port,
@@ -108,9 +110,25 @@ fn a_v4_listener_joins_a_v4_host_and_receives_the_stream_through_the_handles() {
         .expect("approval");
     host.authorize_listener(listener_id(), sync_port, audio_port)
         .expect("authorized");
-    wait_listener(&listener, |event| {
+    wait_listener(listener, |event| {
         matches!(event, FfiListenerTransportEvent::JoinApproved { .. }).then_some(())
     });
+}
+
+#[test]
+fn a_v4_listener_joins_a_v4_host_and_receives_the_stream_through_the_handles() {
+    let session = "ffi-quic-join";
+    let (host, port) = quic_host(session);
+    let listener = FfiListenerTransportHandle::connect_quic(
+        v4_payload(session, port),
+        0,
+        listener_id(),
+        "127.0.0.1".to_owned(),
+        host_spki(),
+        signer(false),
+    )
+    .expect("v4 listener connects");
+    join_and_approve(&host, &listener);
 
     host.broadcast_stream_start("stream-q".to_owned(), 5_000, 48_000, 2, FRAMES, None, None)
         .expect("start");
@@ -143,17 +161,60 @@ fn a_v4_listener_joins_a_v4_host_and_receives_the_stream_through_the_handles() {
 }
 
 #[test]
-fn a_v3_listener_cannot_join_a_v4_host() {
+fn a_plain_v3_connect_refuses_a_v4_host_before_connecting() {
     let session = "ffi-quic-only";
     let (host, port) = quic_host(session);
+    let started = Instant::now();
     let outcome = FfiListenerTransportHandle::connect(
-        endpoint_payload(session, port, port, port),
+        v4_payload(session, port),
         0,
         "plain-listener".to_owned(),
         "127.0.0.1".to_owned(),
     );
-    assert!(outcome.is_err(), "a v4 host has no v3 control port");
+    assert!(
+        matches!(outcome, Err(FfiListenerTransportError::InvalidEndpoint(ref m)) if m.contains("signed invitation")),
+        "a v4 endpoint needs the pinned invitation path"
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "refused, not timed out"
+    );
     host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn a_pinned_listener_with_a_v4_invitation_joins_over_quic() {
+    // Android's invitation path: connect_secure follows the advertised version.
+    let session = "ffi-quic-pinned";
+    let (host, port) = quic_host(session);
+    let listener = FfiListenerTransportHandle::connect_secure(
+        v4_payload(session, port),
+        0,
+        listener_id(),
+        "127.0.0.1".to_owned(),
+        host_spki(),
+        signer(false),
+    )
+    .expect("a pinned listener joins a v4 host over QUIC");
+    join_and_approve(&host, &listener);
+    listener.shutdown().expect("listener shutdown");
+    host.shutdown().expect("host shutdown");
+}
+
+#[test]
+fn a_quic_only_connect_refuses_an_endpoint_that_is_not_v4() {
+    let outcome = FfiListenerTransportHandle::connect_quic(
+        endpoint_payload("ffi-not-v4", 4000, 4001, 4002),
+        0,
+        listener_id(),
+        "127.0.0.1".to_owned(),
+        host_spki(),
+        signer(false),
+    );
+    assert!(matches!(
+        outcome,
+        Err(FfiListenerTransportError::InvalidEndpoint(ref m)) if m.contains("does not use secure transport")
+    ));
 }
 
 #[test]
@@ -174,8 +235,10 @@ fn a_v4_listener_never_falls_back_to_a_v3_host() {
         0,
     )
     .expect("v3 host binds");
+    // The endpoint claims v4 but only a v3 host is there: QUIC gets no
+    // answer, and nothing retries over v3.
     let outcome = FfiListenerTransportHandle::connect_quic(
-        endpoint_payload(session, control, port, port),
+        v4_payload(session, port),
         0,
         listener_id(),
         "127.0.0.1".to_owned(),

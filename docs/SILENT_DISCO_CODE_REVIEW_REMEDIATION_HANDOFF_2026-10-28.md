@@ -780,3 +780,18 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 **Gates.** Desktop `npm run check` exit 0 (196 Vitest); desktop `cargo test --locked --all-features` 415 passed; `cargo check --locked --all-features`; desktop clippy `--all-targets -D warnings` clean; Rust `check-rust.sh` 892 passed; line gate passes. Disk 95% used afterwards (26 GB free).
 
 **Next.** Step 4: the Android listener. `ManualHostEndpoint` must accept version 4 and report it, the v3 `connect` must refuse a version-4 endpoint, `connect_quic` must require one, and the Android listener must take the `tk` from a signed invitation and use the Keystore signer with `connect_quic`. Then the A54 run against the desktop host with the switch on.
+
+## 45. 2026-11-12 — Selecting v4, step 4: the listener follows the advertised version (remediation §1 item 2)
+
+**Code.**
+- `transport/manual_endpoint.rs`: `parse` accepts protocol version 4 (`SECURE_V4_ENDPOINT_VERSION`) only in builds with `quic`; other unknown versions are still a `Protocol` error, whose message now lists what the build supports. New `supports_endpoint_version` and `ManualHostEndpoint::is_secure_v4`.
+- Gap in step 3, fixed here: the shared `p2` QR validator re-parses the embedded connection payload with this parser, so with the switch on the desktop host could not issue invitations at all ("unsupported protocol version 4"). Step 3's tests checked the advertised version but not invitation creation.
+- FFI listener (`listener_transport/handle.rs`): each constructor names what it wants (`Requested`), resolved against the parsed endpoint before any connection. `connect` (plain v3) refuses a v4 endpoint immediately with "this host uses secure transport (v4); join it from the host's signed invitation". `connect_secure` (pinned; Android's signed-invitation path with the Keystore signer) uses QUIC for a v4 endpoint and TLS over TCP for v3; both are pinned and authenticated, so there is no path to plaintext. `connect_quic` refuses a non-v4 endpoint. The Android listener therefore joins a v4 desktop host from its QR with no Kotlin change.
+
+**Tests.** FFI `quic_bind_tests.rs` (now 6): the v4 payloads carry version 4; plain `connect` refuses a v4 endpoint in under 500 ms; a pinned `connect_secure` with a v4 invitation joins over QUIC and is approved; `connect_quic` refuses a v3 endpoint; a v4 endpoint pointing at a v3 host fails at the 3 s connect cap with no v3 retry. The 9 TLS tests in `secure_bind_tests.rs` (v3 pinned path) still pass. Core: `accepts_a_secure_v4_endpoint_only_in_a_quic_build`. Desktop: `a_secure_transport_host_issues_an_invitation_advertising_version_4`. Mutations killed: pinned path always v3; plain connect accepting v4; parser accepting only v3 (the desktop invitation test fails with the exact step-3 error).
+
+**Process note.** A session ended during that last mutation, leaving the parser mutated on disk; it was found on resume, restored from the pre-mutation copy, and the check was rerun with a trap that restores the file on exit. Nothing was committed in the mutated state.
+
+**Gates.** `check-rust.sh` 895 passed; desktop `npm run check` (196 Vitest), desktop `cargo test --locked --all-features` 416, desktop clippy clean; Android `./gradlew assembleDebug test lintDebug` BUILD SUCCESSFUL; line gate passes.
+
+**Next.** Step 5, the A54: desktop host with the switch on, the phone scans the signed QR, joins over QUIC, is approved, and plays; capture both sides' diagnostics.
