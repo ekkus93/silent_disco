@@ -811,3 +811,13 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 **Not established.** Two listeners, reconnect/late join over v4, the 3 s connect cap on the device, and the graceful-close behaviour on a lossy link.
 
 **Found on device.** The Android listener's connect screen still shows the red "Local network connection is not secured … This version does not encrypt or authenticate live session traffic" banner on a v4 connection. That is now wrong for v4 and must follow the protocol actually used. Also observed: the verified dialog's Connect connected immediately (after the permission continuation), although `prefillManualEndpointFromInvitationImpl`'s comment says it deliberately does not auto-connect; to be checked against the intended UX.
+
+## 47. 2026-11-12 — Android connect screen: secure notice for v4 hosts
+
+**Problem (found on device, §46).** The Android "Connect manually" screen, which both the signed-QR join and a pasted payload use, always showed `LegacyLanSecurityWarning` ("Local network connection is not secured … does not encrypt"). That is false for a v4 host.
+
+**Code.** `FfiManualHostEndpoint` gains `secure_transport`, set by the FFI from `ManualHostEndpoint::is_secure_v4()`, so presentation never infers it from the version number. `ManualEndpointFormState.secureTransport` carries it, set on a valid parse and cleared on blank or invalid input. `ManualEndpointScreen` shows the new `SecureTransportNotice` ("Secure connection (v4, experimental)": controls, clock and audio are encrypted for this phone, the host must hold the key from its signed invitation, and without that invitation the phone cannot join) instead of the warning when it is set. The wording holds before a connection exists, because a v4 endpoint can only be joined through the pinned path (§45). The discovery join screen and Android's own host screens are v3-only and keep the warning.
+
+**Tests.** FFI `the_parser_marks_only_a_v4_endpoint_as_secure_transport`. Instrumented `ManualEndpointScreenTest`: a v3 host shows the warning and no notice; a secure-transport host shows the notice and neither the warning tag nor its text. Run on the A54 with the existing `LegacyLanSecurityWarningTest`: 13 tests, 0 failures (`connectedDebugAndroidTest` filtered to those two classes, app left installed).
+
+**Gates.** `check-rust.sh` 896 passed; `./gradlew assembleDebug test lintDebug connectedDebugAndroidTest` (two classes) BUILD SUCCESSFUL.

@@ -9,6 +9,8 @@ data class ManualEndpointFormState(
     val sessionId: String? = null,
     val protocolVersion: Int? = null,
     val inviteCodeRequired: Boolean = false,
+    /** Set by the Rust parser: the host uses secure transport (v4). */
+    val secureTransport: Boolean = false,
 )
 
 /** Lifecycle of one manual-endpoint connection attempt, driven by real Rust transport events. */

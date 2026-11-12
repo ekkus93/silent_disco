@@ -1696,3 +1696,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-12T10:47:04Z - claude-opus-5-5 - v4 A54 run: owner listening verdict
 - Owner listened during the v4 run 2 on the A54: "It sounds clean, no gaps." Recorded in TODO §1 item 2 and handoff §46.
+
+## 2026-11-12T10:55:20Z - claude-opus-5-5 - Android secure notice for v4 hosts
+- FfiManualHostEndpoint.secure_transport (from is_secure_v4) -> ManualEndpointFormState.secureTransport -> ManualEndpointScreen shows SecureTransportNotice instead of the "not secured" banner. 13 instrumented tests pass on the A54. Handoff §47.
+- connectedDebugAndroidTest on the A54: pass -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true so the app (and its Keystore listener key) is not uninstalled.

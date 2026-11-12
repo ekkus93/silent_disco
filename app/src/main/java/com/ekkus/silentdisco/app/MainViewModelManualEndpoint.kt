@@ -41,6 +41,7 @@ internal fun MainViewModel.updateManualEndpointInputImpl(raw: String) {
                 sessionId = null,
                 protocolVersion = null,
                 inviteCodeRequired = false,
+                secureTransport = false,
             ),
         )
         return
@@ -56,6 +57,7 @@ internal fun MainViewModel.updateManualEndpointInputImpl(raw: String) {
                         sessionId = result.endpoint.sessionId,
                         protocolVersion = result.endpoint.protocolVersion.toInt(),
                         inviteCodeRequired = result.endpoint.inviteCodeRequired,
+                        secureTransport = result.endpoint.secureTransport,
                     ),
                 )
             }
@@ -68,6 +70,7 @@ internal fun MainViewModel.updateManualEndpointInputImpl(raw: String) {
                         sessionId = null,
                         protocolVersion = null,
                         inviteCodeRequired = false,
+                        secureTransport = false,
                     ),
                 )
             }

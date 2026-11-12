@@ -266,3 +266,13 @@ fn a_v4_host_refuses_to_bind_without_its_platform_key() {
         Err(FfiHostTransportError::InvalidConfiguration(_))
     ));
 }
+
+#[test]
+fn the_parser_marks_only_a_v4_endpoint_as_secure_transport() {
+    use crate::listener_transport::parse_manual_host_endpoint;
+    let v4 = parse_manual_host_endpoint(v4_payload("ffi-parse-v4", 4000), 0).expect("v4 parses");
+    assert!(v4.secure_transport);
+    let v3 = parse_manual_host_endpoint(endpoint_payload("ffi-parse-v3", 4000, 4001, 4002), 0)
+        .expect("v3 parses");
+    assert!(!v3.secure_transport);
+}

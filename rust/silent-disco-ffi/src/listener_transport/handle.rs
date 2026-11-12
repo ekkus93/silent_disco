@@ -53,6 +53,7 @@ pub fn parse_manual_host_endpoint(
         protocol_version: endpoint.protocol_version,
         invite_code_required: endpoint.invite_code_required,
         expires_at_ms: endpoint.expires_at_ms,
+        secure_transport: endpoint.is_secure_v4(),
     })
 }
 

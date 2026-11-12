@@ -62,6 +62,43 @@ class ManualEndpointScreenTest {
     }
 
     @Test
+    fun aV3HostShowsThePlaintextWarningAndNoSecureNotice() {
+        setContent(
+            AppUiState(
+                manualEndpointForm = ManualEndpointFormState(
+                    rawInput = "{}",
+                    hostAddress = "192.168.1.50",
+                    sessionId = "session-1",
+                    protocolVersion = 3,
+                ),
+            ),
+        )
+
+        composeRule.onNodeWithTag("legacy-lan-security-warning").assertExists()
+        composeRule.onNodeWithTag("secure-transport-notice").assertDoesNotExist()
+    }
+
+    @Test
+    fun aSecureTransportHostShowsTheSecureNoticeInsteadOfThePlaintextWarning() {
+        setContent(
+            AppUiState(
+                manualEndpointForm = ManualEndpointFormState(
+                    rawInput = "{}",
+                    hostAddress = "192.168.1.50",
+                    sessionId = "session-1",
+                    protocolVersion = 4,
+                    secureTransport = true,
+                ),
+            ),
+        )
+
+        composeRule.onNodeWithTag("secure-transport-notice").assertExists()
+        composeRule.onNodeWithText("Secure connection (v4, experimental)").assertExists()
+        composeRule.onNodeWithTag("legacy-lan-security-warning").assertDoesNotExist()
+        composeRule.onNodeWithText("Local network connection is not secured").assertDoesNotExist()
+    }
+
+    @Test
     fun validationErrorIsShownNextToTheField() {
         setContent(
             AppUiState(

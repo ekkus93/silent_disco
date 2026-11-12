@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import com.ekkus.silentdisco.ui.components.LegacyLanSecurityWarning
+import com.ekkus.silentdisco.ui.components.SecureTransportNotice
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -82,7 +83,9 @@ fun ManualEndpointScreen(
                 "Paste the connection payload copied from the desktop host.",
                 style = MaterialTheme.typography.bodyLarge,
             )
-            LegacyLanSecurityWarning()
+            // The notice follows the protocol the Rust parser found: a v4 host
+            // can only be joined securely, anything else is plaintext v3.
+            if (form.secureTransport) SecureTransportNotice() else LegacyLanSecurityWarning()
             OutlinedTextField(
                 value = form.rawInput,
                 onValueChange = onInputChanged,

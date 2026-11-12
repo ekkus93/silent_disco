@@ -16,6 +16,11 @@ pub struct FfiManualHostEndpoint {
     pub protocol_version: u16,
     pub invite_code_required: bool,
     pub expires_at_ms: Option<u64>,
+    /// The host uses secure transport (v4 QUIC). Such a host can only be
+    /// joined through the pinned invitation path, which encrypts the session
+    /// and checks the host key; a plain join is refused before connecting.
+    /// Decided here, so presentation never infers it from the version number.
+    pub secure_transport: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
