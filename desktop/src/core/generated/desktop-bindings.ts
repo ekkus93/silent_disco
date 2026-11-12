@@ -93,7 +93,12 @@ export type NetworkInterfaceSnapshotDto = { preference: NetworkBindPreferenceDto
  * The current shared-address-space opt-in, so the UI renders the
  * authoritative value rather than tracking its own copy.
  */
-allowSharedAddressSpace: boolean, };
+allowSharedAddressSpace: boolean,
+/**
+ * Whether the next host start uses secure transport (v4 QUIC). Off by
+ * default and reset on every launch; v3 listeners cannot join a v4 host.
+ */
+secureTransport: boolean, };
 
 export type CommandReceiptDto = { operationId: string, acceptedAtRevision: string, };
 

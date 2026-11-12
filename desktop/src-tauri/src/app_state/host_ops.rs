@@ -608,6 +608,37 @@ impl DesktopAppState {
         network.snapshot()
     }
 
+    /// Turns secure transport (v4 QUIC) on or off for the next host start.
+    /// Not persisted: an experimental mode that locks out v3 listeners
+    /// returns to off on every launch.
+    pub(crate) fn set_secure_transport(
+        &self,
+        enabled: bool,
+    ) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+        let network = {
+            let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+            match &*state {
+                DesktopRuntimeState::Ready(ready) => Arc::clone(&ready.network),
+                DesktopRuntimeState::Failed(error) | DesktopRuntimeState::ShutdownFailed(error) => {
+                    return Err(error.clone());
+                }
+                DesktopRuntimeState::Closed
+                | DesktopRuntimeState::Opening { .. }
+                | DesktopRuntimeState::Closing => {
+                    return Err(DesktopErrorDto::new(
+                        "desktop.profile.not_ready",
+                        "runtime",
+                        "error",
+                        true,
+                        "no desktop profile is ready",
+                    ));
+                }
+            }
+        };
+        network.set_secure_transport(enabled)?;
+        network.snapshot()
+    }
+
     pub(crate) fn set_host_network_preference(
         &self,
         request: &SetNetworkBindPreferenceRequest,

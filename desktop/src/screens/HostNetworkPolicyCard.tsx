@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import {
   setAllowSharedAddressSpace,
   setHostNetworkPreference,
+  setSecureTransport,
   toDesktopBridgeError,
 } from "../core/client";
 import type {
@@ -89,6 +90,19 @@ export function HostNetworkPolicyCard({ available, disabled }: HostNetworkPolicy
       setSnapshot(await setAllowSharedAddressSpace(allow));
     } catch (cause: unknown) {
       setError(toDesktopBridgeError(cause, "set shared address space policy").message);
+      await refresh();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const changeSecureTransport = async (enabled: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      setSnapshot(await setSecureTransport(enabled));
+    } catch (cause: unknown) {
+      setError(toDesktopBridgeError(cause, "set secure transport").message);
       await refresh();
     } finally {
       setSaving(false);
@@ -231,6 +245,32 @@ export function HostNetworkPolicyCard({ available, disabled }: HostNetworkPolicy
                 </span>
               </span>
             </label>
+          </div>
+
+          <div className="rounded-xl border border-violet-200/15 bg-black/20 p-3">
+            <label className="flex items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={snapshot.secureTransport}
+                disabled={controlsDisabled}
+                onChange={(event) => void changeSecureTransport(event.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                <span className="font-semibold">Secure transport (v4, experimental)</span>
+                <span className="mt-1 block text-violet-100/65">
+                  Encrypts control and audio separately for each listener over QUIC. Only listeners
+                  that support secure transport can join; current Android listeners cannot yet.
+                  Resets to off when the app restarts.
+                </span>
+              </span>
+            </label>
+            {snapshot.secureTransport ? (
+              <p role="status" className="mt-2 text-sm text-amber-200">
+                Secure transport is on: listeners using the older protocol (v3) cannot join this
+                host.
+              </p>
+            ) : null}
           </div>
         </div>
       ) : null}

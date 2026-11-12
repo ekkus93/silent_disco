@@ -90,7 +90,9 @@ pub use boundary::{HostTransportNode, ListenerTransportNode, TransportFactory};
 pub use clock::{ManualTransportClock, SystemTransportClock, TransportClock};
 pub use manual_endpoint::{MAX_MANUAL_ENDPOINT_PAYLOAD_BYTES, ManualHostEndpoint};
 #[cfg(feature = "quic")]
-pub use quic_transport_factory::{QuicTransportFactory, TransportProtocol, transport_factory_for};
+pub use quic_transport_factory::{
+    QuicTransportFactory, SECURE_V4_ENDPOINT_VERSION, TransportProtocol, transport_factory_for,
+};
 pub use socket::{SocketHostTransport, SocketListenerTransport, SocketTransportFactory};
 pub use types::{
     DEFAULT_IO_TIMEOUT, DEFAULT_MAX_CONSECUTIVE_FAILURES, DEFAULT_MAX_TRANSPORT_PEERS,

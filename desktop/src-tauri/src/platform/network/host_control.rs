@@ -30,8 +30,8 @@ use silent_disco_core::runtime::{
 };
 use silent_disco_core::transport::secure_control_tls::HostTlsIdentity;
 use silent_disco_core::transport::{
-    HostTransportConfig, SystemTransportClock, TransportClock, TransportFactory,
-    production_transport_factory,
+    HostTransportConfig, QuicTransportFactory, SECURE_V4_ENDPOINT_VERSION, SystemTransportClock,
+    TransportClock, TransportFactory, production_transport_factory,
 };
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
@@ -68,12 +68,18 @@ pub(super) struct NetworkState {
     /// TLS identity presented on the control port. `None` refuses TLS
     /// listeners with a visible reason; plaintext listeners are unaffected.
     pub(super) secure_control: Option<Arc<HostTlsIdentity>>,
+    /// Operator opt-in to secure transport (v4 QUIC), owner decision
+    /// 2026-11-12. Off by default and not persisted, so every launch starts
+    /// on v3. On, the next host binds QUIC only and v3 listeners cannot join.
+    pub(super) secure_transport: bool,
     pub(super) active: Option<ActiveBinding>,
 }
 
 pub(crate) struct DesktopHostNetworkControl {
     provider: Arc<dyn NetworkInterfaceProvider>,
     transport_factory: Arc<dyn TransportFactory>,
+    /// Used instead of `transport_factory` while secure transport is on.
+    secure_factory: Arc<dyn TransportFactory>,
     ports: HostPorts,
     mdns: Arc<dyn MdnsPublisher>,
     pub(in crate::platform) monitor: Arc<DesktopMonitorControl>,
@@ -100,6 +106,7 @@ impl DesktopHostNetworkControl {
         Self {
             provider,
             transport_factory,
+            secure_factory: Arc::new(QuicTransportFactory),
             ports,
             mdns: Arc::new(NullMdnsPublisher),
             monitor: DesktopMonitorControl::new(Arc::new(NullAudioOutputBackend)),
@@ -107,6 +114,7 @@ impl DesktopHostNetworkControl {
                 preference: BindPreference::Automatic,
                 allow_shared_address_space: false,
                 secure_control: None,
+                secure_transport: false,
                 active: None,
             }),
         }
@@ -119,6 +127,18 @@ impl DesktopHostNetworkControl {
     #[must_use]
     pub(in crate::platform) fn with_mdns_publisher(mut self, mdns: Arc<dyn MdnsPublisher>) -> Self {
         self.mdns = mdns;
+        self
+    }
+
+    /// Replaces the factory used while secure transport is on, so tests can
+    /// observe which protocol a host start chose.
+    #[cfg(test)]
+    #[must_use]
+    pub(in crate::platform) fn with_secure_factory(
+        mut self,
+        factory: Arc<dyn TransportFactory>,
+    ) -> Self {
+        self.secure_factory = factory;
         self
     }
 
@@ -170,6 +190,7 @@ impl DesktopHostNetworkControl {
             &state.preference,
             state.active.as_ref(),
             state.allow_shared_address_space,
+            state.secure_transport,
         ))
     }
 
@@ -194,6 +215,24 @@ impl DesktopHostNetworkControl {
             .dto());
         }
         state.allow_shared_address_space = allow;
+        Ok(())
+    }
+
+    /// Turns secure transport (v4 QUIC) on or off for the next host start.
+    /// Refused while a host endpoint is active: a live session cannot change
+    /// protocol under its listeners.
+    pub(crate) fn set_secure_transport(&self, enabled: bool) -> Result<(), DesktopErrorDto> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        if state.active.is_some() && state.secure_transport != enabled {
+            return Err(DesktopNetworkError::invalid_state(
+                "secure transport cannot change while a host endpoint is active",
+            )
+            .dto());
+        }
+        state.secure_transport = enabled;
         Ok(())
     }
 
@@ -227,6 +266,7 @@ impl DesktopHostNetworkControl {
             &state.preference,
             None,
             state.allow_shared_address_space,
+            state.secure_transport,
         ))
     }
 
@@ -297,9 +337,27 @@ impl DesktopHostNetworkControl {
         config.sync_port = self.ports.sync;
         config.audio_port = self.ports.audio;
         config.secure_control.clone_from(&state.secure_control);
+        // v4 is chosen only by the operator's switch, never by the presence
+        // of an identity, and never falls back to v3.
+        let factory = if state.secure_transport {
+            if state.secure_control.is_none() {
+                return Err(DesktopNetworkError::invalid_state(
+                    "secure transport needs the host TLS identity, which is not available",
+                ));
+            }
+            &self.secure_factory
+        } else {
+            &self.transport_factory
+        };
+        // What listeners are told: a v4 host advertises version 4 in its
+        // manual details, invitation and mDNS record, so a v3-only listener
+        // refuses it at once instead of trying v3.
+        let mut published = advertisement.clone();
+        if state.secure_transport {
+            published.protocol_version = SECURE_V4_ENDPOINT_VERSION;
+        }
         let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());
-        let node = self
-            .transport_factory
+        let node = factory
             .bind_host(config, Arc::clone(&clock))
             .map_err(|error| DesktopNetworkError::transport(&error))?;
         let endpoint = node.endpoint();
@@ -316,13 +374,13 @@ impl DesktopHostNetworkControl {
         // connection payload stays fully functional regardless of mDNS's
         // fate (30.2 "retain manual endpoint as visibly available
         // alternative").
-        let mdns = match self.mdns.publish(advertisement, endpoint) {
+        let mdns = match self.mdns.publish(&published, endpoint) {
             Ok(registration) => MdnsPublicationState::Active(registration),
             Err(error) => MdnsPublicationState::Failed(error),
         };
         state.active = Some(ActiveBinding {
             selected,
-            advertisement: advertisement.clone(),
+            advertisement: published,
             runtime,
             playback: None,
             stream_diagnostics: None,

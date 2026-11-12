@@ -13,6 +13,12 @@ use super::{
     SocketTransportFactory, TransportClock, TransportError, TransportFactory,
 };
 
+/// The `protocolVersion` a v4 host advertises in its connection payload,
+/// invitation and mDNS record. Frames on the wire keep their own header
+/// version; this number tells a listener to connect over QUIC. A v3-only
+/// listener refuses it as an unsupported version instead of trying v3.
+pub const SECURE_V4_ENDPOINT_VERSION: u16 = 4;
+
 /// The wire protocol a host or listener speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TransportProtocol {

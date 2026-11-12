@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-fn interface(name: &str, index: u32, address: IpAddr) -> InterfaceRecord {
+pub(super) fn interface(name: &str, index: u32, address: IpAddr) -> InterfaceRecord {
     InterfaceRecord {
         name: name.to_owned(),
         index,
@@ -57,13 +57,13 @@ fn loopback() -> InterfaceRecord {
 }
 
 #[derive(Default)]
-struct SequenceProvider {
+pub(super) struct SequenceProvider {
     snapshots: Mutex<VecDeque<Vec<InterfaceRecord>>>,
     last: Mutex<Vec<InterfaceRecord>>,
 }
 
 impl SequenceProvider {
-    fn new(snapshots: impl IntoIterator<Item = Vec<InterfaceRecord>>) -> Self {
+    pub(super) fn new(snapshots: impl IntoIterator<Item = Vec<InterfaceRecord>>) -> Self {
         Self {
             snapshots: Mutex::new(snapshots.into_iter().collect()),
             last: Mutex::new(Vec::new()),
@@ -162,13 +162,13 @@ impl HostTransportNode for FakeHostNode {
     }
 }
 
-struct FakeTransportFactory {
+pub(super) struct FakeTransportFactory {
     shutdown_called: Arc<AtomicBool>,
-    seen_config: Mutex<Option<HostTransportConfig>>,
+    pub(super) seen_config: Mutex<Option<HostTransportConfig>>,
 }
 
 impl FakeTransportFactory {
-    fn new(shutdown_called: Arc<AtomicBool>) -> Self {
+    pub(super) fn new(shutdown_called: Arc<AtomicBool>) -> Self {
         Self {
             shutdown_called,
             seen_config: Mutex::new(None),
@@ -251,7 +251,7 @@ impl MdnsPublisher for VanishingInterfaceMdnsPublisher {
     }
 }
 
-fn advertisement() -> SessionAdvertisement {
+pub(super) fn advertisement() -> SessionAdvertisement {
     SessionAdvertisement::new(
         SessionId::new("session-block21").expect("session ID"),
         DeviceId::new("desktop-block21").expect("device ID"),

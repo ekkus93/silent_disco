@@ -97,6 +97,10 @@ pub struct MonitorStatusDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename_all = "camelCase")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "a wire snapshot of independent flags the UI renders one-for-one"
+)]
 pub struct NetworkInterfaceSnapshotDto {
     pub preference: NetworkBindPreferenceDto,
     pub candidates: Vec<NetworkAddressCandidateDto>,
@@ -110,4 +114,7 @@ pub struct NetworkInterfaceSnapshotDto {
     /// The current shared-address-space opt-in, so the UI renders the
     /// authoritative value rather than tracking its own copy.
     pub allow_shared_address_space: bool,
+    /// Whether the next host start uses secure transport (v4 QUIC). Off by
+    /// default and reset on every launch; v3 listeners cannot join a v4 host.
+    pub secure_transport: bool,
 }

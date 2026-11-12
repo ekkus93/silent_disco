@@ -173,5 +173,6 @@ export function networkSnapshot(): NetworkInterfaceSnapshotDto {
     activeBindingValid: true,
     interfaceChange: null,
     allowSharedAddressSpace: false,
+    secureTransport: false,
   };
 }

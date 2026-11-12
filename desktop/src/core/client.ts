@@ -416,6 +416,10 @@ export async function setAllowSharedAddressSpace(
   return invokeDesktop<NetworkInterfaceSnapshotDto>("set_allow_shared_address_space", { allow });
 }
 
+export async function setSecureTransport(enabled: boolean): Promise<NetworkInterfaceSnapshotDto> {
+  return invokeDesktop<NetworkInterfaceSnapshotDto>("set_secure_transport", { enabled });
+}
+
 export async function createHostInvitation(): Promise<HostInvitationDto> {
   return invokeDesktop<HostInvitationDto>("create_host_invitation");
 }

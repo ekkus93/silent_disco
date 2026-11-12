@@ -6,13 +6,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NetworkInterfaceSnapshotDto } from "../core/generated/desktop-bindings";
 import { HostNetworkPolicyCard } from "./HostNetworkPolicyCard";
 
-const { getHostNetworkState, setHostNetworkPreference, setAllowSharedAddressSpace } = vi.hoisted(
-  () => ({
-    getHostNetworkState: vi.fn(),
-    setHostNetworkPreference: vi.fn(),
-    setAllowSharedAddressSpace: vi.fn(),
-  }),
-);
+const {
+  getHostNetworkState,
+  setHostNetworkPreference,
+  setAllowSharedAddressSpace,
+  setSecureTransport,
+} = vi.hoisted(() => ({
+  getHostNetworkState: vi.fn(),
+  setHostNetworkPreference: vi.fn(),
+  setAllowSharedAddressSpace: vi.fn(),
+  setSecureTransport: vi.fn(),
+}));
 
 vi.mock("../core/client", async () => {
   const actual = await vi.importActual<typeof import("../core/client")>("../core/client");
@@ -21,6 +25,7 @@ vi.mock("../core/client", async () => {
     getHostNetworkState,
     setHostNetworkPreference,
     setAllowSharedAddressSpace,
+    setSecureTransport,
   };
 });
 
@@ -52,6 +57,7 @@ function networkSnapshot(overrides: Partial<NetworkInterfaceSnapshotDto> = {}) {
     activeBindingValid: false,
     interfaceChange: null,
     allowSharedAddressSpace: false,
+    secureTransport: false,
     ...overrides,
   } satisfies NetworkInterfaceSnapshotDto;
 }
@@ -253,5 +259,50 @@ describe("HostNetworkPolicyCard", () => {
     await waitFor(() => expect(setAllowSharedAddressSpace).toHaveBeenCalledWith(true));
     await waitFor(() => expect(screen.getByLabelText(/Allow shared address space/)).toBeChecked());
     expect(await screen.findByText(/Ready to bind wlo1 at 100\.64\.64\.132/)).toBeInTheDocument();
+  });
+
+  // Owner decision 2026-11-12: v4 is an explicit opt-in, off by default, and
+  // the card must say plainly that v3 listeners are locked out while it is on.
+  it("keeps secure transport off by default and warns once it is turned on", async () => {
+    setSecureTransport.mockResolvedValue(networkSnapshot({ secureTransport: true }));
+
+    render(<HostNetworkPolicyCard available disabled={false} />);
+
+    const toggle = await screen.findByLabelText(/Secure transport \(v4, experimental\)/);
+    expect(toggle).not.toBeChecked();
+    expect(screen.queryByText(/cannot join this host/)).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(setSecureTransport).toHaveBeenCalledWith(true));
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Secure transport \(v4, experimental\)/)).toBeChecked(),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      /older protocol \(v3\) cannot join this host/,
+    );
+  });
+
+  it("cannot change secure transport while a session is bound", async () => {
+    getHostNetworkState.mockResolvedValue(
+      networkSnapshot({
+        secureTransport: true,
+        activeBinding: {
+          interfaceName: "enp1s0",
+          address: "192.168.1.20",
+          controlPort: 41000,
+          syncPort: 41000,
+          audioPort: 41000,
+          mdns: { active: true, failureReason: null },
+        },
+        activeBindingValid: true,
+      }),
+    );
+
+    render(<HostNetworkPolicyCard available disabled={false} />);
+
+    const toggle = await screen.findByLabelText(/Secure transport \(v4, experimental\)/);
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
   });
 });

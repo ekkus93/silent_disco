@@ -131,6 +131,7 @@ const networkSnapshot: NetworkInterfaceSnapshotDto = {
   activeBindingValid: false,
   interfaceChange: null,
   allowSharedAddressSpace: false,
+  secureTransport: false,
 };
 
 const hostSessionSnapshot: HostSessionSnapshotDto = {

@@ -20,6 +20,7 @@ pub(super) fn snapshot_from(
     preference: &BindPreference,
     active: Option<&ActiveBinding>,
     allow_shared_address_space: bool,
+    secure_transport: bool,
 ) -> NetworkInterfaceSnapshotDto {
     let mut candidates = address_candidates(interfaces, allow_shared_address_space);
     candidates.sort_by(|left, right| {
@@ -68,6 +69,7 @@ pub(super) fn snapshot_from(
         active_binding_valid,
         interface_change,
         allow_shared_address_space,
+        secure_transport,
     }
 }
 

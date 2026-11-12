@@ -1676,3 +1676,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - FFI enables core quic; new UniFFI constructors `bind_quic_with_host_clock` and `connect_quic`; old constructors unchanged. 4 FFI tests, both v4->v3 mutations killed.
 - Owner asked for the 3 s connect cap (2026-11-12) after I reported that a v4 listener aimed at a closed/v3/unreachable host waited 8 s (quinn ignores ICMP refusals; the handshake used the idle timeout). Now `QUIC_CONNECT_TIMEOUT` = 3 s, matching v3's connect timeout; test plus a killed mutation.
 - Android assembleDebug assembleRelease test lintDebug passed (27 min, before the cap). Release arm64 .so 11.4 MB (October baseline 5.5 MB). Rust gate 892. Handoff §43. Next: desktop host v4 setting (default off) and the invite v4 marker.
+
+## 2026-11-12T09:38:44Z - claude-opus-5-5 - v4 selection step 3: desktop host switch
+- Desktop "Secure transport (v4, experimental)" checkbox in the network policy card; off by default, NOT persisted (resets every launch; persisting needs a core settings migration), refused while bound. On: QUIC factory only, protocolVersion 4 in manual details/invite/mDNS, refuses to host without a TLS identity.
+- Desktop lock: tokio 1.53.1 -> 1.54.1 plus the quinn crates, matching rust/Cargo.lock.
+- Tests: 5 desktop Rust (one real QUIC listener admitted on the LAN address) and 2 Vitest; 2 mutations killed. npm run check OK, desktop cargo test 415, Rust gate 892. Disk at 95% (26 GB free). Handoff §44. Next: step 4, the Android listener (endpoint version 4, Keystore signer, connect_quic), then the A54 run.

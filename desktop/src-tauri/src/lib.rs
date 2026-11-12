@@ -121,6 +121,7 @@ pub fn run() -> tauri::Result<()> {
             host_commands::get_host_network_state,
             host_commands::set_host_network_preference,
             host_commands::set_allow_shared_address_space,
+            host_commands::set_secure_transport,
             host_commands::create_host_invitation,
             app_state::attach_notifications,
             app_state::close_profile,

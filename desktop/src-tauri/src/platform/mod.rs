@@ -77,6 +77,8 @@ mod host_transport_tests;
 #[cfg(test)]
 mod monitor_tests;
 #[cfg(test)]
+mod network_secure_transport_tests;
+#[cfg(test)]
 mod network_tests;
 #[cfg(test)]
 mod start_playback_tests;

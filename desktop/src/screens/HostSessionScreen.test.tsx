@@ -116,6 +116,7 @@ beforeEach(() => {
     activeBindingValid: true,
     interfaceChange: null,
     allowSharedAddressSpace: false,
+    secureTransport: false,
   });
   vi.mocked(client.approveJoinRequest).mockResolvedValue({
     operationId: "command-1",

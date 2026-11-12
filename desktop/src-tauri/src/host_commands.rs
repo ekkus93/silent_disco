@@ -471,6 +471,16 @@ pub fn set_allow_shared_address_space(
     state.set_allow_shared_address_space(allow)
 }
 
+/// Turns secure transport (v4 QUIC) on or off for the next host start.
+#[allow(clippy::needless_pass_by_value)]
+#[tauri::command]
+pub fn set_secure_transport(
+    state: State<'_, DesktopAppState>,
+    enabled: bool,
+) -> Result<NetworkInterfaceSnapshotDto, DesktopErrorDto> {
+    state.set_secure_transport(enabled)
+}
+
 pub(crate) fn parse_snapshot_revision(value: &str) -> Result<SnapshotRevision, DesktopErrorDto> {
     if value.is_empty()
         || (value.len() > 1 && value.starts_with('0'))

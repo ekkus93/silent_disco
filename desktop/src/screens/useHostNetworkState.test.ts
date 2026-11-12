@@ -30,6 +30,7 @@ function snapshot(
     activeBindingValid: false,
     interfaceChange: null,
     allowSharedAddressSpace: false,
+    secureTransport: false,
     ...overrides,
   };
 }
