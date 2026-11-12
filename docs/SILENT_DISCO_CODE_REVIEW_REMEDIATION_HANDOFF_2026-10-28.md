@@ -648,3 +648,24 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 **Gates.** Rust `check-rust.sh` exit 0, 23 suites, 832 passed. Desktop check and line gate pass. A54 TLS device tests 4/4 after rebuild.
 
 **Limits.** `FRAME_DEADLINE` is a fixed constant, not a host setting. Partial frames over plaintext are unchanged, and the TCP reader already has its own frame deadline.
+
+## 37. 2026-11-11 — QUIC datagram adapter, phase 1 (remediation §1 item 2)
+
+**Scope.** Phase 1 of the ADR's UDP PCM design: add the QUIC stack behind a feature, prove it works with the pinned TLS stack and the Android build, and prove one audio packet fits in one datagram. No production path uses it.
+
+**Dependencies.** `quinn =0.11.12` with `default-features = false` and `runtime-tokio`, `rustls-ring`; `tokio =1.54.1` with `rt`, `net`, `time`, `sync`. Both optional, enabled by the core feature `quic`. `cargo tree -i rustls` shows a single `rustls v0.23.46` shared by the core, quinn and quinn-proto `0.11.19`. quinn's async I/O runs on Tokio; the plan for the production adapter is a private current-thread runtime owned by one transport thread behind a synchronous API, matching the owner-thread model of the TLS frame channel, rather than a hand-written driver over `quinn-proto`.
+
+**Code.** `transport/quic_datagram.rs`: `quic_server_config(&HostTlsIdentity)` and `quic_client_config(host_spki)` reuse `host_server_config` and `pinned_client_config` from the TLS control path, so a QUIC handshake authenticates the host exactly as the TCP one does. Both set ALPN `silent-disco/4` (`ALPN_V4`).
+
+**Tests** (`quic_datagram_tests.rs`, real loopback QUIC):
+- A pinned listener connects; the host sends one encoded 5 ms audio frame (960 PCM bytes plus header) as a DATAGRAM; it arrives byte for byte, and `max_datagram_size()` is at least its length. The negotiated ALPN is `silent-disco/4`.
+- A listener pinned to another host key is refused.
+- A peer offering `silent-disco/3` is refused. Mutation check: a server that also accepts `silent-disco/3` fails this test. (Removing the server ALPN entirely is not a useful mutation: rustls in QUIC mode requires a negotiated ALPN and refuses everything.)
+- quinn only answers a handshake after the application calls `accept()`; the refusal tests drive the host side for that reason.
+
+**Datagram size.** Settled by the measurement above: the existing 5 ms packets fit, so the ADR's fragmentation option is not needed. The ADR records this.
+
+**Gates.** `check-rust.sh` (all features, so `quic` is built, linted and tested) exit 0, 854 passed. Core with `quic` cross-compiles via the pinned `cargo-ndk 4.1.2` for armeabi-v7a, arm64-v8a, x86 and x86_64 at platform 29, NDK 28.2.13676358. Desktop `cargo check --locked` passes; `assembleDebug` passes; line gate passes.
+
+**Not done.** Phase 2 (v4 handshake and control on stream 0, proof bound to the exporter), phase 3 (sync then PCM on datagrams, post-decryption freshness checks), phase 4 (no plaintext UDP in production), the runtime feature switch, and any device evidence.
+

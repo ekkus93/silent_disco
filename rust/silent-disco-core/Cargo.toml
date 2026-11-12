@@ -15,6 +15,13 @@ serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
 sha2 = "=0.10.9"
 symphonia = { version = "=0.6.0", default-features = false, features = ["wav", "pcm", "flac", "mp3", "id3v1", "id3v2"] }
+# v4 secure datagram transport (ADR, UDP PCM design, phase 1). Behind the
+# `quic` feature until the production paths move onto it.
+quinn = { version = "=0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "net", "time", "sync"], optional = true }
+
+[features]
+quic = ["dep:quinn", "dep:tokio"]
 
 [target.'cfg(target_os = "android")'.dependencies]
 rustix = { version = "=1.1.4", features = ["time"] }

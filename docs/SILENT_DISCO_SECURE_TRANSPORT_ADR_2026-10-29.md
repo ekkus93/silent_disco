@@ -60,9 +60,11 @@ The `JoinRequestSummary` trust projection must come from the **verified v4 peer 
 
 Before choosing exact QUIC dependency versions, confirm Android minSdk/API29 integration, Rust/UniFFI threading and JNI-backed Keystore signing, QUIC exporter/channel-binding APIs, desktop OS key-store coverage, certificate rotation, transport memory limits and GitHub-hosted CI support. If QUIC's platform signing or latency proves unsuitable, amend this ADR with a measured alternative **before** implementing any custom datagram cryptography.
 
-## UDP PCM and synchronization design (proposed, for owner review; not implemented)
+## UDP PCM and synchronization design (owner-approved 2026-11-09; phase 1 implemented)
 
-Status: design only. Nothing here is implemented or verified. It follows the decision above (QUIC datagrams, no hand-derived UDP AEAD).
+Status: the owner approved this design on 2026-11-09 (decisions 1 and 3 below). Phase 1 is implemented behind the `quic` feature (remediation handoff §37); phases 2-4 are not. It follows the decision above (QUIC datagrams, no hand-derived UDP AEAD).
+
+**Datagram size, resolved by measurement (2026-11-11).** The packetizer already sends 5 ms packets (240 frames, 960 PCM bytes plus the header), which is option (b) below. One encoded 5 ms audio frame fits in a single QUIC datagram on a loopback connection (`quic_datagram_tests.rs`), so fragmentation (option a) is not needed and is not planned. `CLAUDE.md` still names a 20 ms target; that mismatch is a separate owner decision.
 
 **Connection layout.** One QUIC connection per host↔listener pair, with the host as the server. Bidirectional stream 0 carries the v4 handshake, listener proof, join/approval, lifecycle, clock-control and TrackBoundary messages. QUIC DATAGRAM frames carry PCM and synchronization probes. There are no separate UDP sockets, keys or nonces: QUIC packet protection and the TLS 1.3 traffic secrets cover the datagrams.
 
