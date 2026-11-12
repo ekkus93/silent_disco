@@ -8,9 +8,9 @@
 //! host: control frames are never dropped, datagrams may be and are counted.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -77,20 +77,38 @@ impl std::error::Error for QuicListenerError {}
 type Reply = oneshot::Sender<Result<(), QuicListenerError>>;
 
 enum Command {
-    SendControl { frame: Vec<u8>, reply: Reply },
-    SendDatagram { datagram: Vec<u8>, reply: Reply },
-    Shutdown,
+    SendControl {
+        frame: Vec<u8>,
+        reply: Reply,
+    },
+    SendDatagram {
+        datagram: Vec<u8>,
+        reply: Reply,
+    },
+    /// Write what is queued, wait (bounded) for it to be acknowledged, then
+    /// close. Used for both `close` and `shutdown`.
+    Close {
+        reason: String,
+    },
 }
 
 const QUEUE_CAPACITY: usize = 256;
 const EVENT_BACKOFF: Duration = Duration::from_millis(2);
+/// How long a closing listener waits for the host to acknowledge its last
+/// control frames (such as a `Disconnect`). Closing a QUIC connection
+/// discards unacknowledged stream data, so the close waits first.
+const CLOSE_GRACE: Duration = Duration::from_secs(2);
 
 /// Handle to a connected, admitted listener connection.
 pub struct QuicListenerWorker {
     commands: mpsc::Sender<Command>,
-    events: Receiver<QuicListenerEvent>,
+    /// Locked only while receiving, never by the send methods, so a send
+    /// (such as a clock probe) never waits behind a blocked receive. The
+    /// lock is what makes the handle `Sync`.
+    events: Mutex<Receiver<QuicListenerEvent>>,
     dropped_datagrams: Arc<AtomicU64>,
     max_datagram_size: Option<usize>,
+    local_addr: SocketAddr,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -145,21 +163,29 @@ impl QuicListenerWorker {
                             return;
                         }
                     };
-                    let _ = ready_tx.send(Ok(connection.max_datagram_size()));
+                    let local = endpoint.local_addr().map_err(|error| error.to_string());
+                    let ready = local.map(|local| (connection.max_datagram_size(), local));
+                    let failed = ready.is_err();
+                    let _ = ready_tx.send(ready);
+                    if failed {
+                        connection.close(1_u32.into(), b"no local address");
+                        return;
+                    }
                     run_listener(connection, stream, worker_dropped, event_tx, command_rx).await;
                     endpoint.wait_idle().await;
                 });
             })
             .map_err(|error| QuicListenerError::Connect(error.to_string()))?;
-        let max_datagram_size = ready_rx
+        let (max_datagram_size, local_addr) = ready_rx
             .recv()
             .map_err(|_| QuicListenerError::Connect("worker ended before connecting".to_owned()))?
             .map_err(QuicListenerError::Connect)?;
         Ok(Self {
             commands: command_tx,
-            events,
+            events: Mutex::new(events),
             dropped_datagrams: dropped,
             max_datagram_size,
+            local_addr,
             thread: Some(thread),
         })
     }
@@ -168,6 +194,12 @@ impl QuicListenerWorker {
     #[must_use]
     pub const fn max_datagram_size(&self) -> Option<usize> {
         self.max_datagram_size
+    }
+
+    /// The local UDP address of this connection (unspecified IP, real port).
+    #[must_use]
+    pub const fn local_addr(&self) -> SocketAddr {
+        self.local_addr
     }
 
     /// Datagrams dropped because the event queue was full.
@@ -185,7 +217,8 @@ impl QuicListenerWorker {
         &self,
         timeout: Duration,
     ) -> Result<Option<QuicListenerEvent>, QuicListenerError> {
-        match self.events.recv_timeout(timeout) {
+        let events = self.events.lock().unwrap_or_else(PoisonError::into_inner);
+        match events.recv_timeout(timeout) {
             Ok(event) => Ok(Some(event)),
             Err(RecvTimeoutError::Timeout) => Ok(None),
             Err(RecvTimeoutError::Disconnected) => Err(QuicListenerError::Stopped),
@@ -219,9 +252,26 @@ impl QuicListenerWorker {
         self.request(|reply| Command::SendDatagram { datagram, reply })
     }
 
-    /// Closes the connection and joins the worker thread. Idempotent.
+    /// Closes the connection after already sent control frames are
+    /// acknowledged (bounded by a short grace period). Sends fail from then
+    /// on, and a `Closed` event follows. Does not join the thread.
+    ///
+    /// # Errors
+    /// Returns [`QuicListenerError::Stopped`] if the worker has stopped.
+    pub fn close(&self, reason: &str) -> Result<(), QuicListenerError> {
+        self.commands
+            .blocking_send(Command::Close {
+                reason: reason.to_owned(),
+            })
+            .map_err(|_| QuicListenerError::Stopped)
+    }
+
+    /// Closes the connection as [`Self::close`] does and joins the worker
+    /// thread. Idempotent.
     pub fn shutdown(&mut self) {
-        let _ = self.commands.blocking_send(Command::Shutdown);
+        let _ = self.commands.blocking_send(Command::Close {
+            reason: "listener shut down".to_owned(),
+        });
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -292,7 +342,13 @@ async fn run_listener(
                 break ended.unwrap_or_else(|error| error.to_string());
             }
             command = commands.recv() => match command {
-                None | Some(Command::Shutdown) => break "listener shut down".to_owned(),
+                None => break "listener shut down".to_owned(),
+                Some(Command::Close { reason }) => {
+                    let _ = send.finish();
+                    // Bounded: a host that never acknowledges is closed anyway.
+                    let _ = tokio::time::timeout(CLOSE_GRACE, send.stopped()).await;
+                    break reason;
+                }
                 Some(Command::SendControl { frame, reply }) => {
                     let result = write_frame(&mut send, &frame)
                         .await

@@ -1660,3 +1660,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Found and fixed: quinn's defaults (30 s idle, no keep-alive) would drop an approved listener waiting for Play. Both ends now use a 2 s keep-alive and an 8 s idle timeout, which replaces inbound-silence eviction. The worker's broadcast went to pending peers too; there is now `send_datagram_to` for approved peers only. Peer close now waits (up to 2 s) for acknowledgement of the last control frames.
 - 10 loopback tests; mutations killed: keep-alive, pending audio, join identity. The close-wait mutation SURVIVES on loopback (no loss there); it needs a lossy link or device evidence.
 - Rust gate 876 passed; core without quic clippy-clean. Handoff §40. Next: step 3b, the listener adapter with post-decryption freshness checks; then v4 selection in factory/FFI/desktop and an A54 run (the phone is connected over USB, R5CW31AX4FL).
+
+## 2026-11-12T08:17:03Z - claude-opus-5-5 - Ralph loop: §1 item 2 phase 2 step 3b (v4 QUIC listener transport adapter)
+- `QuicListenerTransport` implements `ListenerTransportNode` over the listener worker, reusing the socket listener's validation functions. Requires `secure_host`; `local_routes` reports the QUIC connection's port.
+- Decision: post-decryption freshness checks are NOT duplicated in the transport. The jitter buffer and scheduler already reject wrong session/stream generation, duplicates, already-played sequences, reorder-window overflow and late packets, for every transport. Recorded in handoff §41.
+- Listener worker: local_addr, close(&self), graceful close on shutdown, receiver behind its own mutex (Sync without blocking sends).
+- 7 tests; 3 of 4 mutations killed; the graceful-close mutation survives on loopback (same as the host side). Rust gate 883 passed. Next: QUIC TransportFactory and v4 selection in FFI/desktop/Android, then an A54 run.

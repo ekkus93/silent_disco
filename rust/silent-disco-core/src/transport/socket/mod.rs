@@ -27,6 +27,8 @@ mod shared;
 pub(crate) use host::PlaybackControls;
 pub use host::SocketHostTransport;
 pub use listener::SocketListenerTransport;
+#[cfg(feature = "quic")]
+pub(crate) use listener::{validate_listener_inbound, validate_listener_outbound};
 
 use std::sync::Arc;
 

@@ -643,7 +643,7 @@ fn spawn_listener_udp_receiver(
         })
 }
 
-fn validate_listener_outbound(
+pub(crate) fn validate_listener_outbound(
     device_id: &DeviceId,
     message: &ControlMessage,
 ) -> Result<(), TransportError> {
@@ -676,7 +676,7 @@ fn validate_listener_outbound(
     }
 }
 
-pub(super) fn validate_listener_inbound(
+pub(crate) fn validate_listener_inbound(
     device_id: &DeviceId,
     frame: &ProtocolFrame,
 ) -> Result<(), TransportError> {
