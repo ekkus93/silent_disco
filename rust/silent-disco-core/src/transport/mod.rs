@@ -26,6 +26,8 @@ pub mod quic_listener_transport;
 mod quic_listener_transport_tests;
 #[cfg(feature = "quic")]
 pub mod quic_listener_worker;
+#[cfg(all(test, feature = "quic"))]
+mod quic_reconnect_tests;
 #[cfg(feature = "quic")]
 pub mod quic_transport_factory;
 #[cfg(all(test, feature = "quic"))]

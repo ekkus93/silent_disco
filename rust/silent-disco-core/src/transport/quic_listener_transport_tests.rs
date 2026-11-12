@@ -31,11 +31,11 @@ use crate::runtime::NetworkEndpoint;
 
 const WAIT: Duration = Duration::from_secs(10);
 
-fn session() -> SessionId {
+pub(super) fn session() -> SessionId {
     id_session("session-quic-listener")
 }
 
-fn identity() -> Arc<HostTlsIdentity> {
+pub(super) fn identity() -> Arc<HostTlsIdentity> {
     let key = SigningKey::from_slice(&[12; 32]).expect("fixture key");
     Arc::new(
         host_tls_identity_from_pkcs8(key.to_pkcs8_der().expect("pkcs8").as_bytes())
@@ -43,17 +43,17 @@ fn identity() -> Arc<HostTlsIdentity> {
     )
 }
 
-fn host(identity: &Arc<HostTlsIdentity>) -> QuicHostTransport {
+pub(super) fn host(identity: &Arc<HostTlsIdentity>) -> QuicHostTransport {
     let mut config = HostTransportConfig::loopback(session());
     config.secure_control = Some(Arc::clone(identity));
     QuicHostTransport::bind(config, clock()).expect("QUIC host binds")
 }
 
-fn clock() -> Arc<SystemTransportClock> {
+pub(super) fn clock() -> Arc<SystemTransportClock> {
     Arc::new(SystemTransportClock::starting_at(1_000))
 }
 
-fn listener_config(
+pub(super) fn listener_config(
     endpoint: NetworkEndpoint,
     identity: &HostTlsIdentity,
     seed: u8,
@@ -68,7 +68,7 @@ fn listener_config(
     config
 }
 
-fn connect(
+pub(super) fn connect(
     endpoint: NetworkEndpoint,
     identity: &HostTlsIdentity,
     seed: u8,
@@ -77,12 +77,12 @@ fn connect(
         .expect("listener connects")
 }
 
-fn device(listener_seed: u8) -> DeviceId {
+pub(super) fn device(listener_seed: u8) -> DeviceId {
     let key = SigningKey::from_slice(&[listener_seed; 32]).expect("listener key");
     device_id_for_listener_key(&key.spki_der().expect("spki"))
 }
 
-fn join(listener: &QuicListenerTransport, device: &DeviceId) {
+pub(super) fn join(listener: &QuicListenerTransport, device: &DeviceId) {
     let routes = listener.local_routes();
     listener
         .send_control(&ControlMessage::JoinRequest(JoinRequest {
@@ -98,11 +98,11 @@ fn join(listener: &QuicListenerTransport, device: &DeviceId) {
         .expect("join sent");
 }
 
-fn next(listener: &QuicListenerTransport) -> TransportEvent {
+pub(super) fn next(listener: &QuicListenerTransport) -> TransportEvent {
     listener.recv_event(WAIT).expect("listener event")
 }
 
-fn next_control(listener: &QuicListenerTransport) -> ControlMessage {
+pub(super) fn next_control(listener: &QuicListenerTransport) -> ControlMessage {
     match next(listener) {
         TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
@@ -114,7 +114,7 @@ fn next_control(listener: &QuicListenerTransport) -> ControlMessage {
 }
 
 /// Joins, approves and authorizes one listener; returns it ready for playback.
-fn admitted(
+pub(super) fn admitted(
     host: &mut QuicHostTransport,
     identity: &HostTlsIdentity,
     seed: u8,
