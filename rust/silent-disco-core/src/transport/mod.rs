@@ -3,6 +3,10 @@ mod clock;
 pub mod control_protocol;
 mod manual_endpoint;
 #[cfg(feature = "quic")]
+pub mod quic_admission;
+#[cfg(all(test, feature = "quic"))]
+mod quic_admission_tests;
+#[cfg(feature = "quic")]
 pub mod quic_datagram;
 #[cfg(all(test, feature = "quic"))]
 mod quic_datagram_tests;

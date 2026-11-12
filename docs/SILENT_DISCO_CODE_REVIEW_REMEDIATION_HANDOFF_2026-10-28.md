@@ -669,3 +669,23 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 
 **Not done.** Phase 2 (v4 handshake and control on stream 0, proof bound to the exporter), phase 3 (sync then PCM on datagrams, post-decryption freshness checks), phase 4 (no plaintext UDP in production), the runtime feature switch, and any device evidence.
 
+## 38. 2026-11-11 — v4 admission over QUIC, phase 2 first step (remediation §1 item 2)
+
+**Scope.** The listener possession proof over a QUIC connection, bound to that connection's exporter. Not yet connected to the host actor, peer registry or listener state machine.
+
+**Protocol.** The listener opens the connection's first bidirectional stream and writes `V4_HELLO` (`b"silent-disco/v4\0"`). The host refuses any other first 16 bytes before issuing a challenge. The host then sends a fresh 32-byte nonce, and the listener answers with the same length-prefixed `(listener SPKI, signature)` frame as the TCP proof (`build_listener_response`). The transcript binding is `export_keying_material(label = LISTENER_PROOF_EXPORTER_LABEL, context = b"")` on the QUIC connection. The whole exchange is bounded by `QUIC_ADMISSION_TIMEOUT` (5 s). After admission the same stream stays open as the control channel (`QuicControlStream`).
+
+**Code.** `transport/quic_admission.rs`: `quic_binding`, `quic_host_admit` (returns `VerifiedListenerKey` and the stream), `quic_listener_prove`. `secure_listener_proof.rs`: `MAX_FIELD_BYTES` and `fresh_nonce` are now `pub(crate)` so the QUIC path reuses them; no behaviour change.
+
+**Tests** (`quic_admission_tests.rs`, real loopback QUIC with pinned host):
+- Valid proof: the host admits; its verified key's canonical device ID equals the listener key's; the stream then carries `approved` / `ack` both ways.
+- A signer claiming another key's SPKI is refused (`Proof`).
+- A proof for another session is refused (`Proof`).
+- A peer whose first bytes are a v3 hello is refused (`Channel`), and no nonce reaches it.
+- A correct proof for this session and nonce but bound to another connection's exporter is refused (`Proof`). This proves the exporter binding is enforced, which the TCP path noted as not separately proven.
+- Mutations killed: `quic_binding` returning a constant (the replay test fails); removing the hello check (the non-v4 test fails).
+
+**Gates.** `check-rust.sh` exit 0, 859 passed; line gate passes.
+
+**Not done.** Running admission inside a host peer worker with a sync façade, feeding admitted QUIC peers to the actor, the listener join state machine over QUIC, sync and PCM datagrams with post-decryption freshness checks (phase 3), and removing plaintext UDP (phase 4).
+

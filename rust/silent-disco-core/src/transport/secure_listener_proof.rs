@@ -41,7 +41,7 @@ pub const LISTENER_PROOF_EXPORTER_LABEL: &[u8] = b"silent-disco listener proof v
 /// Bound on each length-prefixed field. A P-256 SPKI is about 91 bytes and a
 /// DER ECDSA signature is at most 72 bytes; the limit leaves room for variation
 /// while refusing hostile lengths before allocation.
-const MAX_FIELD_BYTES: usize = 256;
+pub(crate) const MAX_FIELD_BYTES: usize = 256;
 
 /// Socket timeouts for the proof exchange, so a stalled peer cannot hold a
 /// thread indefinitely.
@@ -145,7 +145,7 @@ pub fn client_binding(connection: &ClientConnection) -> Result<[u8; 32], rustls:
     Ok(binding)
 }
 
-fn fresh_nonce() -> Result<[u8; 32], ProofExchangeError> {
+pub(crate) fn fresh_nonce() -> Result<[u8; 32], ProofExchangeError> {
     let mut nonce = [0_u8; 32];
     rustls::crypto::ring::default_provider()
         .secure_random

@@ -1643,3 +1643,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Three real loopback QUIC tests: a 5 ms audio frame fits one DATAGRAM and arrives intact; the wrong pin is refused; a non-v4 ALPN is refused (a mutation accepting v3 is killed). quinn answers a handshake only after `accept()`.
 - Core+quic cross-compiles for all four Android ABIs (cargo ndk 4.1.2 via `cargo +1.97.1 ndk`, with PATH including .gradle/rust-tools/cargo-ndk-4.1.2/bin; ANDROID_HOME=/home/phil/Android/Sdk; no local.properties).
 - Gates: Rust 854 passed; desktop --locked check; assembleDebug; line gate. Handoff §37; the ADR now marks the design approved and fragmentation unnecessary (5 ms packets fit).
+
+## 2026-11-12T00:08:29Z - claude-opus-5-5 - Ralph loop: §1 item 2 phase 2 step 1 (v4 proof over QUIC)
+- `transport/quic_admission.rs`: the listener opens the first bidi stream, sends `V4_HELLO`, gets a nonce, and answers with the TCP proof frame bound to the QUIC exporter. Bounded by 5 s. The stream stays open as the control channel.
+- Five loopback tests (valid then control both ways; claimed key; other session; non-v4 hello refused before a nonce; proof bound to another connection refused). Mutations killed: constant binding, skipped hello check.
+- Rust gate 859 passed. Handoff §38. Next: run admission in a host peer worker and feed admitted QUIC peers to the actor.
