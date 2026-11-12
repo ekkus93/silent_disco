@@ -821,3 +821,17 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 **Tests.** FFI `the_parser_marks_only_a_v4_endpoint_as_secure_transport`. Instrumented `ManualEndpointScreenTest`: a v3 host shows the warning and no notice; a secure-transport host shows the notice and neither the warning tag nor its text. Run on the A54 with the existing `LegacyLanSecurityWarningTest`: 13 tests, 0 failures (`connectedDebugAndroidTest` filtered to those two classes, app left installed).
 
 **Gates.** `check-rust.sh` 896 passed; `./gradlew assembleDebug test lintDebug connectedDebugAndroidTest` (two classes) BUILD SUCCESSFUL.
+
+## 48. 2026-11-12 — v4 late join and reconnect on the A54
+
+**Harness.** `manual_real_android_listener_late_joins_and_reconnects_over_secure_transport` in `manual/secure_transport.rs` (same invocation as §46). The v4 host starts a 150 s scale before any listener exists; a person scans the signed QR; the phone joins mid-stream; after 15 s the phone's Wi-Fi is turned off for 12 s (`adb shell svc wifi disable`, longer than the 8 s QUIC idle timeout), turned back on, and the app's own recovery path is used: "Try again" (which returns to Nearby sessions), "Connect manually" (the form keeps the payload; the app keeps the pinned host key in memory), "Connect". No second scan. Script fixes made along the way: scroll when a target is below the fold; dismiss a verified-invitation dialog restored from an earlier run (it appears a few seconds after launch); show the QR only once the phone's scanner is open; follow the three-tap recovery path.
+
+**Run 8 (passed; earlier attempts failed in the automation, not the transport).** Host 100.64.67.71:42939.
+- Late join: 16022 frames had been sent to no listener before the join; the join arrived from `v4-929620b6…` and was approved; in the next 15 s 3005 frames were fully delivered, none partially or undelivered; sync Excellent, RTT 10.25 ms.
+- Drop: with the phone's Wi-Fi off the host showed 0 listeners within 12 s.
+- Reconnect: the phone reached the host again; the same key-bound ID joined and was approved; 4006 frames were fully delivered in the next 20 s; sync Excellent, RTT 9.6 ms. The clock offset changed (79.6 s to 125.1 s) because each connection starts a fresh listener transport clock.
+- Phone, session 2: 19 consecutive seconds (03:40:34-03:40:52) with 0 underruns and 0 concealment; start-up underruns only in the first second (the known first-stream start issue).
+
+**Open finding (one occurrence, not diagnosed).** When the host stopped playback and shut down after the reconnect, the phone concealed 97 packets, sat in BUFFERING, and ended its session about 8 s after audio stopped (the QUIC idle timeout), so it apparently observed neither the Stop control nor the host's connection close. In §46's run without a reconnect, the phone reached STOPPED about 2 s after the host stopped, with 0 concealed. Next: rerun to see whether it reproduces, with host-side delivery reporting for the Stop broadcast and listener-side logging of control receipt.
+
+**UI findings (for the owner's planned UI redesign, not fixed now).** After a drop, the "Host disconnected / Try again" card is below the fold of the connect form; recovery takes three taps on two screens; a verified-invitation dialog from an earlier session is restored after an app restart.

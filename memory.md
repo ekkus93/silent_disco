@@ -1700,3 +1700,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-12T10:55:20Z - claude-opus-5-5 - Android secure notice for v4 hosts
 - FfiManualHostEndpoint.secure_transport (from is_secure_v4) -> ManualEndpointFormState.secureTransport -> ManualEndpointScreen shows SecureTransportNotice instead of the "not secured" banner. 13 instrumented tests pass on the A54. Handoff §47.
 - connectedDebugAndroidTest on the A54: pass -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true so the app (and its Keystore listener key) is not uninstalled.
+
+## 2026-11-12T11:42:35Z - claude-opus-5-5 - v4 late join and reconnect on the A54
+- Run 8 passed: mid-stream join and rejoin after a 12 s Wi-Fi drop, same key-bound ID, all frames fully delivered while connected, sync Excellent. Handoff §48.
+- Open finding: after the reconnect, host Stop + shutdown not observed promptly (97 concealed, BUFFERING until 8 s idle timeout); the no-reconnect run stopped cleanly. One occurrence, undiagnosed.
+- Owner (2026-11-12): skip two-listener testing for now; full UI redesign planned later, so UI findings are logged, not fixed.
