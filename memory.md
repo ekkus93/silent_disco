@@ -1715,3 +1715,4 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - A54 run 11 (device test now shuts down straight after stopping) reproduced the run-8 anomaly: phone got no `Stopped`, only the graceful close; host showed `queue_depth=1` after stop.
 - Cause: the desktop transport worker (`desktop/src-tauri/src/platform/host_transport/worker.rs`) left its loop on the stop flag without sending queued broadcast frames, dropping the Stop for v3 and v4. Fix: `flush_broadcast_frames` on clean shutdown. Regression test `a_host_shut_down_straight_after_stopping_still_delivers_the_stop` failed before, passes after.
 - Lesson: the §49 loopback tests waited for Stop before shutdown and hid the bug; test the operator's real sequence. Handoff §50.
+- A54 run 12 with the fix (2026-11-12 06:45 local): phone logged Stopped 51 ms before the graceful close; 4005 accepted, 0 concealed. Fix confirmed on device (one run).
