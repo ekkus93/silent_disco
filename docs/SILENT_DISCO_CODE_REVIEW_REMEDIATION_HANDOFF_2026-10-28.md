@@ -689,3 +689,19 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 
 **Not done.** Running admission inside a host peer worker with a sync façade, feeding admitted QUIC peers to the actor, the listener join state machine over QUIC, sync and PCM datagrams with post-decryption freshness checks (phase 3), and removing plaintext UDP (phase 4).
 
+## 39. 2026-11-11 — QUIC host and listener workers, phase 2 second step (remediation §1 item 2)
+
+**Decision.** The owner chose option 1: a separate v4 QUIC host transport alongside the existing socket transport, which stays unchanged (including its audio send loop) until v4 is proven. Phase 4 removes plaintext UDP afterwards.
+
+**Code.**
+- `transport/quic_framing.rs`: control frames on a QUIC stream as a u32 big-endian length plus bytes, bounded by `MAX_QUIC_CONTROL_FRAME_BYTES` (protocol header plus the largest control payload).
+- `transport/quic_host_worker.rs`: `QuicHostWorker` binds a quinn server endpoint on its own thread with a current-thread Tokio runtime. Each connection must pass `quic_host_admit` before it becomes a peer. Synchronous API: `recv_event`, `send_control` and `send_datagram` (each waits for its result), `broadcast_datagram` (per-peer results, one shared `Bytes`), `close_peer`, `shutdown`. Events: `Admitted` (with the verified listener key), `Refused`, `Control`, `Datagram`, `Closed`. Queues are bounded: control frames back off while the event queue is full and are never dropped; datagrams are dropped and counted (`dropped_datagrams`). Admissions beyond `max_peers`, counting pending ones, are refused and reported.
+- `transport/quic_listener_worker.rs`: `QuicListenerWorker::connect` pins the host key, connects and proves on the worker thread (the signer is `Arc<dyn ListenerProofSigner + Send + Sync>`), and returns only once admitted. It has the same queue rules and reports `max_datagram_size`.
+- Cargo: Tokio gains `macros`; `bytes =1.12.1` is an optional dependency of the `quic` feature.
+
+**Tests** (`quic_worker_tests.rs`, real loopback): admission (verified key's device ID equals the listener key's), then two ordered control frames up, one down, a 1,000-byte datagram down and a probe up; broadcast to two listeners on separate connections; wrong pin cannot connect; `max_peers = 1` refuses a second listener and reports `Refused`; listener shutdown reports `Closed` and later sends give `UnknownPeer`; host shutdown reports `Closed` to the listener; an oversized control frame is refused locally and the next frame still arrives. The peer-limit mutation is killed; 0 failures in 10 repeated runs.
+
+**Gates.** `check-rust.sh` exit 0, 866 passed. The core with `quic` cross-compiles for all four Android ABIs at API 29. The line gate passes. The disk filled up during the first gate run; with the owner's approval, the Rust debug and Android cross-compile build outputs were deleted and the gate was rerun from scratch.
+
+**Not done.** Adapters implementing `HostTransportNode` and `ListenerTransportNode` over the workers (protocol frame encoding and decoding, `TransportEvent` mapping, routes bound to the verified principal, post-decryption session/stream/generation/sequence/deadline checks), then factory, FFI and desktop selection of v4, and device evidence.
+

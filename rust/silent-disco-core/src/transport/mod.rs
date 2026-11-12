@@ -10,6 +10,14 @@ mod quic_admission_tests;
 pub mod quic_datagram;
 #[cfg(all(test, feature = "quic"))]
 mod quic_datagram_tests;
+#[cfg(feature = "quic")]
+pub mod quic_framing;
+#[cfg(feature = "quic")]
+pub mod quic_host_worker;
+#[cfg(feature = "quic")]
+pub mod quic_listener_worker;
+#[cfg(all(test, feature = "quic"))]
+mod quic_worker_tests;
 pub mod secure_admission;
 pub mod secure_control_external_key;
 pub mod secure_control_session;

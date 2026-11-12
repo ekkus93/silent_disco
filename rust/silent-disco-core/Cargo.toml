@@ -18,10 +18,11 @@ symphonia = { version = "=0.6.0", default-features = false, features = ["wav", "
 # v4 secure datagram transport (ADR, UDP PCM design, phase 1). Behind the
 # `quic` feature until the production paths move onto it.
 quinn = { version = "=0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
-tokio = { version = "=1.54.1", default-features = false, features = ["rt", "net", "time", "sync"], optional = true }
+bytes = { version = "=1.12.1", default-features = false, optional = true }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "net", "time", "sync", "macros"], optional = true }
 
 [features]
-quic = ["dep:quinn", "dep:tokio"]
+quic = ["dep:quinn", "dep:tokio", "dep:bytes"]
 
 [target.'cfg(target_os = "android")'.dependencies]
 rustix = { version = "=1.1.4", features = ["time"] }
