@@ -17,8 +17,12 @@ class FakeRustDomainStore(
     val trustDeviceCalls = mutableListOf<Triple<String, String, Long>>()
     var closeCallCount = 0
 
+    /** When set, [initialize] throws it, as a failed storage open would. */
+    var initializeFailure: Throwable? = null
+
     override suspend fun initialize(): RustStoredTuningSettings {
         initializeCallCount += 1
+        initializeFailure?.let { throw it }
         return initializeResult
     }
 

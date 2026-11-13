@@ -100,16 +100,18 @@ class MainViewModel @JvmOverloads constructor(
     internal val hostElapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
     internal val hostStreamDispatcher: CoroutineDispatcher = Dispatchers.IO,
     internal val closeHostMonitorOutput: () -> Unit = OboeBridge::nativeOboeClose,
+    /** The manual (desktop) listener connection; injectable for JVM tests. */
+    internal val manualListenerController: ManualListenerTransportController =
+        ManualListenerTransportController(
+            application.getExternalFilesDir(null),
+            networkSessionLock = WifiLowLatencyNetworkLock(application),
+        ),
 ) : AndroidViewModel(application) {
     internal val logger = AppLogger()
     internal val diagnosticsStore = DiagnosticsStore()
     internal val metrics = DiagnosticsMetrics()
     internal val decoder = AudioFileDecoder(application.contentResolver)
     internal val hostTimingService = HostTimingService()
-    internal val manualListenerController = ManualListenerTransportController(
-        application.getExternalFilesDir(null),
-        networkSessionLock = WifiLowLatencyNetworkLock(application),
-    )
     internal val liveQueueSourceUris = ConcurrentHashMap<String, Uri>()
     private val persistedAudioReadGrants = PersistedAudioReadGrants(
         application.contentResolver,

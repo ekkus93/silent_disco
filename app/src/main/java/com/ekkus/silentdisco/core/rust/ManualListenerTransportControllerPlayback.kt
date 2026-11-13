@@ -292,7 +292,7 @@ internal fun ManualListenerTransportController.endStream(
         // No stream to end, but a teardown still has to release the
         // output; leaving a low-latency stream running against a
         // released token would burn the radio and the CPU for silence.
-        if (!keepOutputOpen) capture { OboeBridge.nativeOboeClose() }
+        if (!keepOutputOpen) capture { closeNativeOutput() }
         firstFailure?.let { error ->
             _connectState.value = ManualConnectUiState.Failed(
                 error.message ?: "playback teardown failed",
@@ -313,7 +313,7 @@ internal fun ManualListenerTransportController.endStream(
     // own final sample rather than mid-note (see `await_ring_drain`, which
     // documents that a consumer closed first means the ring never drains).
     capture { if (cutAtHostMs != null) runtime.stopAt(cutAtHostMs) else runtime.stop() }
-    if (!keepOutputOpen) capture { OboeBridge.nativeOboeClose() }
+    if (!keepOutputOpen) capture { closeNativeOutput() }
     capture { logPlaybackSummary(runtime) }
     if (keepOutputOpen) {
         // The session continues: keep this stream's clock lock for the next.

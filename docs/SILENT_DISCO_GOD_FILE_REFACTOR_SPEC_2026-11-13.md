@@ -255,7 +255,7 @@ There are 199 top-level functions across the 23 files, 55 of them in `MainViewMo
 
 Each of these becomes a narrow interface method or a one-way dependency:
 
-1. **Host → listener teardown.** Host start and teardown (`HostActions`, `RustHost`, `RustHostRecovery`) cancel `playbackJob` and `resyncJob` and reset `currentStreamId`, which listener code owns. → The coordinator closes the listener controllers when the role becomes host. No field is shared.
+1. **Host → listener teardown.** Host stop (`stopHostPlaybackImpl`) and host teardown (`RustHost`, `RustHostRecovery`) cancel `playbackJob` and `resyncJob` and reset `currentStreamId`, which listener code owns. → The coordinator closes the listener controllers when the role becomes host. No field is shared.
 2. **HostPlayback → HostSession transport.** `HostPlayback` and `HostActions` broadcast through `hostTransportController`. → HostSession exposes a `HostBroadcaster` interface. HostPlayback depends on HostSession, one way.
 3. **HostSession → HostPlayback teardown.** `RustHost` and `RustHostRecovery` read `latestPackets`, `stagedAudioFilesBySourceId` and `hostStreamJob` during session end and rollback. → HostPlayback gets `stopAndRelease()`, which HostSession calls.
 4. **ListenerSession ↔ ListenerPlayback.** `Synchronization` and `RustListenerPlayback` read `listenerCoreController`, `listenerTransportController`, `listenerTransportConnected` and `listenerTransportRidesWifiDirect`, and `RustListener` drives playback start and stop. → ListenerSession owns the transport and hands stream and sync events to ListenerPlayback through a `ListenerStreamSink` interface. ListenerPlayback sends sync probes through a `ListenerSyncChannel` that ListenerSession implements.

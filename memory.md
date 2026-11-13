@@ -1741,3 +1741,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T08:31:11Z - claude-opus-5-5 - God-file refactor spec and TODO
 - Owner asked for a spec and TODO to fix the God files: docs/SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md and docs/SILENT_DISCO_GOD_FILE_REFACTOR_TODO_2026-11-13.md. Targets: MainViewModel (23 files, ~5,600 lines, 103 properties shared across extension files) split into eight controllers plus a thin coordinator; SilentDiscoApp (one ~700-line composable) split into feature nav graphs; runtime/types.rs optional split. Four owner decisions open (spec §10), including order against the UI redesign.
+
+## 2026-11-13T08:50:18Z - claude-opus-5-5 - God-file refactor §1 inventory and §2 safety net
+- MainViewModel has 68 properties (not 103) and 199 functions across 23 files; owners in spec Appendix A. New MainViewModelRefactorSafetyNetTest (5 characterization tests, 2 mutations killed). Seam: MainViewModel takes manualListenerController; ManualListenerTransportController takes closeNativeOutput. Full Android gate passed. Baseline A54 instrumented run next.

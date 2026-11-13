@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.core.rust
 
+import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.logging.AppLogger
 import com.ekkus.silentdisco.core.model.ManualConnectUiState
 import com.ekkus.silentdisco.core.model.PlaybackState
@@ -85,6 +86,11 @@ class ManualListenerTransportController(
     internal val debugRecordingDirectory: File? = null,
     /** Held for the connection's lifetime; null when the platform provides none. */
     private val networkSessionLock: NetworkSessionLock? = null,
+    /**
+     * Closes the native output on a full teardown. Only JVM tests replace
+     * it; they cannot load the Oboe library.
+     */
+    internal val closeNativeOutput: () -> Unit = OboeBridge::nativeOboeClose,
 ) : AutoCloseable {
     private val lifetime = ManualListenerLifetime()
     internal val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()

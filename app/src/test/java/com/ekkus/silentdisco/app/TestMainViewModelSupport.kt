@@ -11,6 +11,7 @@ import com.ekkus.silentdisco.core.rust.FakeListenerCoreController
 import com.ekkus.silentdisco.core.rust.FakeListenerTransport
 import com.ekkus.silentdisco.core.rust.FakeRustDomainStore
 import com.ekkus.silentdisco.core.rust.HostTransportController
+import com.ekkus.silentdisco.core.rust.ManualListenerTransportController
 import com.ekkus.silentdisco.core.transport.FakeBleTransport
 import com.ekkus.silentdisco.core.transport.FakeMdnsTransport
 import com.ekkus.silentdisco.core.transport.FakeSessionTransport
@@ -111,6 +112,8 @@ fun newTestMainViewModelHarness(
         hostElapsedRealtimeMs = hostElapsedRealtimeMs,
         hostStreamDispatcher = hostStreamDispatcher,
         closeHostMonitorOutput = closeHostMonitorOutput,
+        // JVM tests cannot load Oboe; closing the controller must not call it.
+        manualListenerController = ManualListenerTransportController(closeNativeOutput = {}),
     )
     return MainViewModelHarness(
         viewModel = viewModel,

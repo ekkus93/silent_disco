@@ -119,9 +119,17 @@ class FakeHostCoreController : HostCoreController {
         retryRecoverableFailureCallCount += 1
     }
 
+    /**
+     * Returned by [transitionPlaybackState] when no snapshot has been
+     * published, so a test can drive a playback transition to completion
+     * without pushing a snapshot through the host's snapshot collector.
+     */
+    var transitionSnapshot: FfiCoreSnapshot? = null
+
     override suspend fun transitionPlaybackState(state: FfiPlaybackState): FfiCoreSnapshot {
         transitionPlaybackStateCalls += state
-        return _snapshots.value ?: error("FakeHostCoreController has no snapshot configured")
+        return _snapshots.value ?: transitionSnapshot
+            ?: error("FakeHostCoreController has no snapshot configured")
     }
 
     override fun submitJoinRequest(request: FfiJoinRequestInput) {
