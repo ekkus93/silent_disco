@@ -23,11 +23,11 @@ Android gate: `./gradlew assembleDebug assemblePocDebug assembleRelease assemble
 
 ## 1. Inventory (no code changes)
 
-- [ ] List all 103 `MainViewModel` properties. For each one record its type, mutability, the threads and dispatchers that touch it, which of the 23 `MainViewModel*.kt` files read or write it, and its owner from spec §4. Commit the table as an appendix to the spec.
-- [ ] List all 55 public functions of `MainViewModel.kt`, plus the extension-file functions, each with its owning controller.
-- [ ] Record every cross-group read and write: state of one owner read or written by another group's code. Each one becomes a narrow interface method or an explicit one-way dependency.
-- [ ] Classify the Kotlin timing and domain candidates as either presentation-only or domain/timing that belongs in Rust, citing the Rust owner where one exists: listener boundaries (`pendingListenerTrackBoundaries`, `appliedListenerTrackBoundaries`, `listenerTrackBoundaryJobs`), host boundaries (`hostPendingTrackBoundaries`, `hostBoundaryJobs`), `MainViewModelSynchronization.kt`, and `latestDecodedAudio` / `latestPackets`.
-- [ ] Map existing tests to owners: the 48 JVM test files in `app/src/test/.../app/`, the instrumented classes and the UI tests. List gaps.
+- [x] List all `MainViewModel` properties (68, not the 103 first estimated; spec Appendix A.1). For each one record its type, mutability, the threads and dispatchers that touch it, which of the 23 `MainViewModel*.kt` files read or write it, and its owner from spec §4. Commit the table as an appendix to the spec.
+- [x] List the functions with their owners: 55 in `MainViewModel.kt` and 199 across the 23 files (spec A.2).
+- [x] Record every cross-group read and write (spec A.3): state of one owner read or written by another group's code. Each one becomes a narrow interface method or an explicit one-way dependency.
+- [x] Classify the Kotlin timing and domain candidates (spec A.4: T1 boundaries, T2 pre-runtime sync, T3 decoded audio; all logged for later per owner decision) as either presentation-only or domain/timing that belongs in Rust, citing the Rust owner where one exists: listener boundaries (`pendingListenerTrackBoundaries`, `appliedListenerTrackBoundaries`, `listenerTrackBoundaryJobs`), host boundaries (`hostPendingTrackBoundaries`, `hostBoundaryJobs`), `MainViewModelSynchronization.kt`, and `latestDecodedAudio` / `latestPackets`.
+- [x] Map existing tests to owners (spec A.5; gaps: host monitor, persistence retry, the A.3 teardown sequences, `onCleared`): the 48 JVM test files in `app/src/test/.../app/`, the instrumented classes and the UI tests. List gaps.
 
 ## 2. Safety net
 

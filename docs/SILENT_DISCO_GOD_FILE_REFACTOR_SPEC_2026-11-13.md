@@ -18,8 +18,8 @@ Success means:
 ### 2.1 `MainViewModel` — the God object (Android)
 
 - `app/src/main/java/com/ekkus/silentdisco/app/MainViewModel.kt` is 791 lines, with 22 more `MainViewModel*.kt` extension files: 23 files, about 5,600 lines in total.
-- The class declares 103 properties, most of them `internal var` or mutable collections. Every extension file reads and writes them, so splitting the code into files never split the state.
-- It exposes 55 functions in `MainViewModel.kt` alone, covering role selection, permissions, host setup, live-queue editing, host session lifecycle, approvals, playback control, discovery, joining, the manual endpoint, QR invitation keys, volume, tuning, leaving, manual resync and persistence retry.
+- The class declares 68 properties (Appendix A.1), most of them `internal var` or mutable collections. Every extension file reads and writes them, so splitting the code into files never split the state.
+- It has 55 functions in `MainViewModel.kt` alone (199 across the 23 files), covering role selection, permissions, host setup, live-queue editing, host session lifecycle, approvals, playback control, discovery, joining, the manual endpoint, QR invitation keys, volume, tuning, leaving, manual resync and persistence retry.
 
 The properties observed so far fall into these groups:
 
@@ -35,7 +35,7 @@ The properties observed so far fall into these groups:
 | Background jobs | `playbackJob`, `resyncJob`, `scanJob` and others |
 | UI state | `_uiState` / `uiState` (`AppUiState`) |
 
-The complete inventory is the first TODO item. It must assign every one of the 103 properties to exactly one owner in §4.
+Appendix A assigns every one of the 68 properties to exactly one owner in §4.
 
 The extension files, by size: `MainViewModelRustHost.kt` (787), `MainViewModelRustListener.kt` (654), `MainViewModelHostPlayback.kt` (454), `MainViewModelHostActions.kt` (400), `MainViewModelSynchronization.kt` (386), `MainViewModelRustListenerNetwork.kt` (335), `MainViewModelRustListenerPlayback.kt` (307), `MainViewModelHostStaging.kt` (249), `MainViewModelTransport.kt` (207), `MainViewModelRustHostRecovery.kt` (203), `MainViewModelManualEndpoint.kt` (145), `MainViewModelListenerPlayback.kt` (119), `MainViewModelHostMonitorPlayback.kt` (115), `MainViewModelRustHostEvents.kt` (105), `MainViewModelDiagnostics.kt` (71), `MainViewModelCallbackCapture.kt` (60), `MainViewModelRustHostSync.kt` (56), `MainViewModelDemo.kt` (56), `MainViewModelListenerActions.kt` (48), `MainViewModelRustHostResync.kt` (40), `MainViewModelPersistence.kt` (37), `MainViewModelSupport.kt` (7).
 
@@ -151,3 +151,145 @@ Feature screens get their own state holders driven by the controllers in §4. Th
 2. **Order against the UI redesign:** either (a) the `MainViewModel` split now, with `SilentDiscoApp` §5.1 now and §5.2 in the redesign, (b) the `MainViewModel` split now and all of `SilentDiscoApp` in the redesign, or (c) everything after the redesign.
 3. **Kotlin timing state:** for track boundaries and the pre-runtime sync exchange, if the inventory confirms they are domain or timing logic, should they move to Rust within this refactor, or be logged for a later block?
 4. **`runtime/types.rs`:** split now, or only when it next grows.
+
+
+## Appendix A — Inventory (TODO §1, measured at `6a787b93`)
+
+Owners are the controllers in §4, with the `Controller` suffix dropped. **Service** means a platform service the coordinator creates once and injects into the controllers listed, owned by none of them. **T1–T3** are the timing and domain candidates classified in A.4.
+
+### A.1 Properties
+
+`MainViewModel` declares **68** properties (lines 71–225: constructor parameters and class members), not the 103 first estimated in §2.1. That estimate counted local variables too. "Users" lists the extension files (the `MainViewModel` prefix is dropped) that reference each property; `MainViewModel.kt` itself references most of them. Extension files cannot declare state, so all 68 live on the class.
+
+| Line | Property | Kind | Type | Users | Owner | Note |
+|---|---|---|---|---|---|---|
+| 73 | `domainStore` | internal val | `RustDomainStore` | Persistence,RustHost | Persistence |  |
+| 74 | `hostCoreFactory` | internal val | `(String) -> HostCoreController` | RustHost | HostSession |  |
+| 77 | `listenerCoreFactory` | internal val | `(String) -> ListenerCoreController` | RustListener | ListenerSession |  |
+| 90 | `bleService` | internal val | `BleTransport` | RustHost,RustHostRecovery,RustListenerNetwork,Transport | Service → Discovery, HostSession | BLE both scans (listener) and advertises (host) |
+| 91 | `wifiDirectService` | internal val | `SessionTransport` | Demo,Diagnostics,RustHost,RustHostRecovery,RustListenerNetwork,RustListenerPlayback,Synchronization,Transport | Service → Discovery, HostSession, ListenerSession | used by 8 files across both roles |
+| 92 | `mdnsService` | internal val | `MdnsTransport` | RustListenerNetwork,Transport | Discovery |  |
+| 93 | `listenerTransportController` | internal val | `ListenerTransport` | Diagnostics,RustListener,RustListenerNetwork,RustListenerPlayback,Synchronization | ListenerSession | ListenerPlayback and sync use it through ListenerSession |
+| 94 | `hostTransportController` | internal val | `HostTransportController` | Diagnostics,HostActions,HostPlayback,RustHost,RustHostEvents,RustHostRecovery,RustHostResync,RustHostSync | HostSession | HostPlayback broadcasts through a HostSession interface |
+| 100 | `hostElapsedRealtimeMs` | internal val | `() -> Long` | HostPlayback | HostPlayback |  |
+| 101 | `hostStreamDispatcher` | internal val | `CoroutineDispatcher` | HostPlayback | HostPlayback |  |
+| 102 | `closeHostMonitorOutput` | internal val | `() -> Unit` | HostMonitorPlayback | HostMonitor |  |
+| 104 | `logger` | internal val | `AppLogger(…)` | HostActions,HostPlayback,ListenerActions,ListenerPlayback,ManualEndpoint,Persistence,RustHost,RustHostRecovery,RustListener,RustListenerNetwork,RustListenerPlayback,Synchronization,Transport | Service (all) |  |
+| 105 | `diagnosticsStore` | internal val | `DiagnosticsStore(…)` | Demo,Diagnostics,HostActions,HostPlayback,ListenerActions,ListenerPlayback,RustHost,RustHostRecovery,RustListener,RustListenerPlayback,Synchronization,Transport | Diagnostics | written by 12 files; each controller reports through a Diagnostics API |
+| 106 | `metrics` | internal val | `DiagnosticsMetrics(…)` | Diagnostics,HostActions,HostPlayback,RustListener,Synchronization | Diagnostics |  |
+| 107 | `decoder` | internal val | `AudioFileDecoder(…)` | HostActions,RustListener | HostPlayback | only a comment mentions it in the listener file |
+| 108 | `hostTimingService` | internal val | `HostTimingService(…)` | Synchronization | HostSession | answers listener sync requests; timing candidate T2 |
+| 109 | `manualListenerController` | internal val | `ManualListenerTransportController(…)` | CallbackCapture,ManualEndpoint | ListenerSession | developer capture reads it |
+| 113 | `liveQueueSourceUris` | internal val | `ConcurrentHashMap<String, Uri>(…)` | HostStaging | HostPlayback |  |
+| 114 | `persistedAudioReadGrants` | private val | `PersistedAudioReadGrants(…)` | — | Persistence |  |
+| 123 | `invitedHostTlsKeys` | internal val | `mutableMapOf<String, ByteArray>()` | ManualEndpoint,RustListenerNetwork | ListenerSession |  |
+| 125 | `_uiState` | internal val | `MutableStateFlow(…)` | Demo,Diagnostics,HostActions,HostPlayback,HostStaging,ListenerActions,ListenerPlayback,ManualEndpoint,Persistence,RustHost,RustHostRecovery,RustListener,RustListenerNetwork,RustListenerPlayback,Support,Synchronization,Transport | Coordinator | written by 19 files today; controllers will publish state instead |
+| 134 | `uiState` | public val | `StateFlow<AppUiState>` | HostMonitorPlayback (+ SilentDiscoApp) | Coordinator |  |
+| 136 | `currentSessionId` | @Volatile internal var | `SessionId?` | HostActions,RustHost,RustHostRecovery | HostSession |  |
+| 137 | `currentStreamId` | internal var | `StreamId?` | HostActions,HostPlayback,RustHost,RustHostRecovery,RustListener | ListenerPlayback | **shared**: listener writes it; host code also reads and resets it, split into a host-owned and a listener-owned field |
+| 138 | `listenerStreamHostStartTimeMs` | internal var | `Long?` | RustListener | ListenerPlayback | T1 |
+| 139 | `pendingListenerTrackBoundaries` | internal val | `linkedMapOf<Long, PendingListenerTrackBo` | RustListener | ListenerPlayback | T1 |
+| 146 | `appliedListenerTrackBoundaries` | internal val | `sortedMapOf<Long, PendingListenerTrackBo` | RustListener | ListenerPlayback | T1 |
+| 147 | `listenerStreamStartTrackName` | internal var | `String?` | RustListener | ListenerPlayback |  |
+| 148 | `listenerTrackBoundaryJobs` | internal val | `mutableMapOf<Long, Job>()` | RustListener | ListenerPlayback | T1 |
+| 154 | `listenerSyncEstimator` | internal var | `RustSyncEstimator?` | Synchronization | ListenerPlayback | T2 |
+| 155 | `listenerPlaybackControlExecutor` | internal val | `Executors.newSingleThreadExecutor { runn` | RustListenerPlayback | ListenerPlayback | keep its single thread |
+| 158 | `listenerCallbackCapture` | internal var | `NativeCallbackWavCapture?` | CallbackCapture | Diagnostics |  |
+| 159 | `_callbackCaptureStatus` | internal val | `MutableStateFlow(…)` | CallbackCapture | Diagnostics |  |
+| 160 | `callbackCaptureStatus` | public val | `StateFlow<String>` | — (+ SilentDiscoApp) | Diagnostics |  |
+| 161 | `listenerPlaybackRef` | private val | `AtomicReference<FfiListenerPlaybackHandle?>(…)` | — | ListenerPlayback | AtomicReference handover; move unchanged |
+| 162 | `listenerPlayback` | internal var | `FfiListenerPlaybackHandle?` | CallbackCapture,RustListener,RustListenerPlayback,Synchronization | ListenerPlayback | capture and sync read it |
+| 166 | `listenerPlaybackSessionId` | internal var | `SessionId?` | RustListenerPlayback | ListenerPlayback |  |
+| 173 | `listenerSyncHandover` | internal var | `SessionSyncHandover?` | RustListenerPlayback | ListenerPlayback | T2 |
+| 174 | `hostMonitorPlaybackRef` | private val | `AtomicReference<FfiListenerPlaybackHandle?>(…)` | — | HostMonitor | AtomicReference handover; move unchanged |
+| 175 | `hostMonitorPlayback` | internal var | `FfiListenerPlaybackHandle?` | HostMonitorPlayback | HostMonitor |  |
+| 180 | `latestDecodedAudio` | internal var | `AudioDecodeResult?` | HostActions | HostPlayback | T3 |
+| 181 | `latestPackets` | internal var | `List<AudioPacket>` | HostActions,HostStaging,RustHost,RustHostRecovery | HostPlayback | T3 |
+| 182 | `hostPlaylistStreamer` | internal var | `HostPlaylistStreamController?` | HostActions,HostPlayback,HostStaging | HostPlayback |  |
+| 183 | `hostPlaylistStreamStart` | internal var | `com.ekkus.silentdisco.core.uniffi.FfiPlaylistStreamStart?` | HostActions,HostPlayback,HostStaging | HostPlayback |  |
+| 184 | `hostPlaylistFormat` | internal var | `com.ekkus.silentdisco.core.audio.AudioFormatSpec?` | HostActions,HostStaging | HostPlayback |  |
+| 185 | `stagedAudioFilesBySourceId` | internal val | `ConcurrentHashMap<String, java.io.File>(…)` | HostStaging,RustHost | HostPlayback | HostSession reads it at teardown |
+| 187 | `hostBoundaryJobs` | internal val | `ConcurrentHashMap<Long, Job>(…)` | HostPlayback | HostPlayback | T1 |
+| 188 | `hostPendingTrackBoundaries` | internal val | `ConcurrentHashMap<Long, PendingHostTrackBoundary>(…)` | HostActions,HostPlayback,HostStaging | HostPlayback | T1 |
+| 189 | `hostStreamJob` | internal var | `Job?` | HostActions,HostPlayback,RustHost,RustHostRecovery | HostPlayback | host session teardown cancels it |
+| 190 | `hostPlaybackCommandJob` | internal var | `Job?` | HostActions | HostPlayback |  |
+| 191 | `playbackJob` | internal var | `Job?` | HostActions,ListenerPlayback,RustHost,RustHostRecovery,RustListenerPlayback | ListenerPlayback | **shared**: listener job, but host start cancels it; becomes a role-switch teardown |
+| 192 | `resyncJob` | internal var | `Job?` | HostActions,RustHost,RustHostRecovery,RustListener,Synchronization,Transport | ListenerPlayback | **shared**: listener periodic resync, but host start and teardown cancel it; becomes a role-switch teardown |
+| 193 | `scanJob` | internal var | `Job?` | ListenerActions,Support | Discovery |  |
+| 194 | `pendingSyncCorrelationId` | internal var | `Long?` | Synchronization,Transport | ListenerPlayback | T2 |
+| 196 | `nextSyncCorrelationId` | internal var | `Long` | Synchronization | ListenerPlayback | T2 |
+| 197 | `hostCoreController` | @Volatile internal var | `HostCoreController?` | Diagnostics,RustHost | HostSession |  |
+| 198 | `listenerCoreController` | internal var | `ListenerCoreController?` | Diagnostics,ListenerPlayback,RustListener,RustListenerNetwork,Synchronization,Transport | ListenerSession | sync and playback read it |
+| 199 | `pendingEstablishNetworkOperationId` | internal var | `String?` | RustListenerNetwork | ListenerSession |  |
+| 200 | `listenerTransportConnected` | internal var | `Boolean` | RustListener,RustListenerNetwork,Synchronization | ListenerSession |  |
+| 208 | `listenerTransportRidesWifiDirect` | internal var | `Boolean` | RustListenerNetwork,Synchronization | ListenerSession |  |
+| 209 | `listenerHasPendingWifiDirectJoin` | internal val | `Boolean` | — (+ SilentDiscoApp) | ListenerSession | read by SilentDiscoApp |
+| 211 | `pendingStartAdvertisingOperationId` | @Volatile internal var | `String?` | RustHost,RustHostRecovery | HostSession |  |
+| 213 | `bindingStartAdvertisingOperationId` | internal var | `String?` | RustHost | HostSession |  |
+| 214 | `hostTransportEventLoopStarted` | internal var | `Boolean` | RustHost | HostSession |  |
+| 215 | `listenerTransportEventLoopStarted` | internal var | `Boolean` | RustListener | ListenerSession |  |
+| 216 | `localListenerDeviceId` | internal val | `String` | ManualEndpoint,RustListener,RustListenerNetwork | ListenerSession |  |
+| 224 | `pendingListenerDatagramPorts` | internal val | `PendingHostJoinRoutes<FfiHostTransportHandle>(…)` | RustHost,RustHostEvents,RustHostRecovery | HostSession |  |
+| 225 | `hostRecoveryDispatch` | internal val | `HostRecoveryDispatch(…)` | RustHostResync,RustHostSync | HostSession |  |
+
+### A.2 Functions
+
+There are 199 top-level functions across the 23 files, 55 of them in `MainViewModel.kt`. By file:
+
+| File | Functions | Owner |
+|---|---|---|
+| `MainViewModel.kt` | 55: the UI intents plus init helpers | Each intent forwards to its controller. Role, permission and host-form intents stay with the Coordinator; audio-read-grant helpers go to Persistence; live-queue and setup-audio intents to HostPlayback; join and discovery intents to ListenerSession and Discovery; volume, tuning and manual resync to ListenerPlayback; `swapHostMonitorPlayback` to HostMonitor |
+| `RustHost.kt` (21), `RustHostEvents.kt` (2), `RustHostRecovery.kt` (5), `RustHostResync.kt` (1), `RustHostSync.kt` (1) | host core, effects, events, recovery, resync, sync replies | HostSession |
+| `HostActions.kt` (10) | start, resume, pause and stop playback, authoritative state | HostPlayback. `afterAuthoritativeHostPlayback*` reports to HostSession through an interface |
+| `HostPlayback.kt` (8), `HostStaging.kt` (9) | streaming loop, boundaries, staging | HostPlayback |
+| `HostMonitorPlayback.kt` (5) | the host's local monitor | HostMonitor |
+| `RustListener.kt` (about 20) | listener core, snapshot and notifications, transport events, boundary scheduling | ListenerSession: core, notifications, effects, the event loop. ListenerPlayback: stream start/stop, boundaries (`*ListenerTrackBoundar*`, `listenerBoundary*`) |
+| `RustListenerNetwork.kt` (7), `ManualEndpoint.kt` (7), `ListenerActions.kt` (2) | discovery start and stop, network establishment, manual and QR joins | ListenerSession. `startRustListenerDiscovery`, `stopRustListenerDiscovery` and `scanForSessionsImpl` go to Discovery |
+| `RustListenerPlayback.kt` (8), `ListenerPlayback.kt` (4), `Synchronization.kt` (9) | playback runtime, sync probes, resync | ListenerPlayback |
+| `Transport.kt` (13) | discovery observation plus host and listener transport failures | Split: `observe*`, `handleBle*`, `refreshDiscoveredSessions` and `handleTransportSnapshot` → Discovery; `reportHostBroadcastDelivery`, `hostControlDeliveryMessage` and `handleHostControlFailure` → HostSession; `stopListenerPlaybackForFailure`, `handleListenerConnectionFailure` and `handleListenerDisconnect` → ListenerSession |
+| `Diagnostics.kt` (6), `CallbackCapture.kt` (2) | diagnostics refresh, support report, capture | Diagnostics, fed by a small provider interface from each session controller |
+| `Persistence.kt` (2) | domain persistence init and retry | Persistence |
+| `Demo.kt` (1), `Support.kt` (1) | debug demo, scan-state reset | Coordinator (demo, debug only) and Discovery (`clearScanState`) |
+
+### A.3 Cross-group reads and writes
+
+Each of these becomes a narrow interface method or a one-way dependency:
+
+1. **Host → listener teardown.** Host start and teardown (`HostActions`, `RustHost`, `RustHostRecovery`) cancel `playbackJob` and `resyncJob` and reset `currentStreamId`, which listener code owns. → The coordinator closes the listener controllers when the role becomes host. No field is shared.
+2. **HostPlayback → HostSession transport.** `HostPlayback` and `HostActions` broadcast through `hostTransportController`. → HostSession exposes a `HostBroadcaster` interface. HostPlayback depends on HostSession, one way.
+3. **HostSession → HostPlayback teardown.** `RustHost` and `RustHostRecovery` read `latestPackets`, `stagedAudioFilesBySourceId` and `hostStreamJob` during session end and rollback. → HostPlayback gets `stopAndRelease()`, which HostSession calls.
+4. **ListenerSession ↔ ListenerPlayback.** `Synchronization` and `RustListenerPlayback` read `listenerCoreController`, `listenerTransportController`, `listenerTransportConnected` and `listenerTransportRidesWifiDirect`, and `RustListener` drives playback start and stop. → ListenerSession owns the transport and hands stream and sync events to ListenerPlayback through a `ListenerStreamSink` interface. ListenerPlayback sends sync probes through a `ListenerSyncChannel` that ListenerSession implements.
+5. **Discovery → ListenerSession.** `RustListenerNetwork` reads `mdnsService.discoveredSessions` to pick the endpoint version. → Discovery exposes the discovered sessions as a `StateFlow`.
+6. **Everyone → Diagnostics.** 12 files write `diagnosticsStore`, and 19 write `_uiState`. → Diagnostics exposes a reporting API. Each controller publishes its own state, and the coordinator maps it into `AppUiState`.
+7. **Shared services.** `wifiDirectService`, `bleService` and `logger` are used by both roles. → They become services the coordinator creates, injected into the controllers that need them, with no controller owning them.
+8. **Persistence.** `RustHost` reads `domainStore`. → It's injected into HostSession as a read-only dependency.
+
+### A.4 Timing and domain candidates (owner decision: log for later)
+
+Each moves into its controller unchanged and is logged for a later Rust block:
+
+- **T1, track boundaries.** Listener: `pendingListenerTrackBoundaries`, `appliedListenerTrackBoundaries`, `listenerTrackBoundaryJobs` and `listenerStreamHostStartTimeMs`, plus the `listenerBoundary*` and `*TrackBoundar*` functions. Host: `hostPendingTrackBoundaries` and `hostBoundaryJobs`. Kotlin schedules when a boundary takes effect, which is playback timing. It is not yet confirmed whether this only drives what's shown (titles, track names) or competes with boundary timing in the Rust scheduler. That check comes before any move to Rust.
+- **T2, the pre-runtime sync exchange.** `MainViewModelSynchronization.kt` probes and keeps `listenerSyncEstimator`, `listenerSyncHandover`, the correlation IDs and the `hostTimingService` replies. Rust owns sync (`RustSyncEstimator` wraps it), so Kotlin only orchestrates the probes. The candidate is to move the probe scheduling and handover into Rust.
+- **T3, decoded audio on the host.** `latestDecodedAudio` and `latestPackets` keep the temporary Android platform decoding (CLAUDE.md: until shared Block 23). Removing them belongs to Block 23, not this refactor.
+
+### A.5 Tests by owner
+
+15 JVM test classes build a real `MainViewModel` through `TestMainViewModelSupport.kt` (`newTestMainViewModelHarness`):
+
+| Owner | JVM tests (through the harness) | Other coverage |
+|---|---|---|
+| HostSession | `MainViewModelRustHostEffectTest`, `MainViewModelRustHostNotificationRecoveryTest`, `MainViewModelHostRebindRaceTest`, `MainViewModelStaleApprovalTest`, `HostJoinProjectionFailureTest`, `HostJoinTrustProjectionTest`, `HostResyncProjectionTest` | instrumented: host transport admission, rebind, session rebind, saturation, Keystore v4 |
+| HostPlayback | `MainViewModelHostQueueTest`, `HostQueueBoundarySchedulerTest`, `HostStreamFailureStopTest` | `HostStagingTest`, `HostPacketPresentationTailTest`, `HostPlaybackAuthorityTest`, `HostPlaybackControlStateTest`, `HostPlaybackIdentityTest` (unit); instrumented late join |
+| HostMonitor | none | **gap** |
+| Discovery | `MainViewModelDiscoveryReconcileTest` | `ScanLifecycleTest` |
+| ListenerSession | `MainViewModelRustListenerEffectTest`, `ListenerReconnectReplayTest` | `MainViewModelRustListenerTest` (unit helpers), `SessionSelectionGuardTest`; instrumented manual endpoint and QR screens |
+| ListenerPlayback | `MainViewModelListenerResyncTest` | `ManualResyncStateTest`, `SyncEstimateMappingTest`; A54 device run |
+| Diagnostics | `BridgeQueueDiagnosticsTest` | `SupportReportTest` |
+| Persistence | none | `StorageInitializationPolicyTest`; **gap** for retry |
+| Coordinator | none | `UiStateValidationTest`, `AppPresentationTest` |
+
+**Gaps for TODO §2:**
+- host monitor start, stop and swap;
+- persistence retry;
+- the cross-group sequences in A.3 items 1 and 3 (host start tears down listener jobs; session end releases staged audio);
+- an `onCleared` test.
