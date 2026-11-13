@@ -9,6 +9,7 @@ import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.app.controller.DiagnosticsController
+import com.ekkus.silentdisco.app.controller.PersistenceController
 import com.ekkus.silentdisco.app.controller.ViewModelControllers
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
@@ -69,7 +70,7 @@ import kotlinx.coroutines.runBlocking
 
 class MainViewModel @JvmOverloads constructor(
     application: Application,
-    internal val domainStore: RustDomainStore = AndroidRustDomainStore(application),
+    domainStore: RustDomainStore = AndroidRustDomainStore(application),
     internal val hostCoreFactory: (String) -> HostCoreController = {
         UniFfiHostCoreController(it)
     },
@@ -121,9 +122,15 @@ class MainViewModel @JvmOverloads constructor(
     internal val decoder = AudioFileDecoder(application.contentResolver)
     internal val hostTimingService = HostTimingService()
     internal val liveQueueSourceUris = ConcurrentHashMap<String, Uri>()
-    private val persistedAudioReadGrants = PersistedAudioReadGrants(
-        application.contentResolver,
-        application.getSharedPreferences(AUDIO_GRANT_LEDGER_PREFERENCES, Application.MODE_PRIVATE),
+    internal val persistence = controllers.add(
+        PersistenceController(
+            parentScope = viewModelScope,
+            store = domainStore,
+            readGrants = PersistedAudioReadGrants(
+                application.contentResolver,
+                application.getSharedPreferences(AUDIO_GRANT_LEDGER_PREFERENCES, Application.MODE_PRIVATE),
+            ),
+        ),
     )
 
     /**
@@ -390,17 +397,12 @@ class MainViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun retainAudioReadGrant(uri: Uri, newlyRetained: MutableSet<Uri>) {
-        persistedAudioReadGrants.retain(uri, newlyRetained)
-    }
+    private fun retainAudioReadGrant(uri: Uri, newlyRetained: MutableSet<Uri>) =
+        persistence.retainAudioReadGrant(uri, newlyRetained)
 
-    private fun releaseAudioReadGrant(uri: Uri) {
-        persistedAudioReadGrants.release(uri)
-    }
+    private fun releaseAudioReadGrant(uri: Uri) = persistence.releaseAudioReadGrant(uri)
 
-    private fun cleanupOrphanedAudioReadGrants() {
-        persistedAudioReadGrants.releaseOrphans()
-    }
+    private fun cleanupOrphanedAudioReadGrants() = persistence.releaseOrphanedAudioReadGrants()
 
     private fun cleanupOrphanedHostStagedFiles() {
         val cacheDir = runCatching { getApplication<Application>().cacheDir }.getOrNull() ?: return
@@ -573,7 +575,7 @@ class MainViewModel @JvmOverloads constructor(
         val updated = _uiState.value.tuningSettings.adjust(field, direction)
         viewModelScope.launch {
             runCatching {
-                domainStore.saveTuning(updated.toRustStoredSettings())
+                persistence.saveTuning(updated.toRustStoredSettings())
             }.onSuccess {
                 // A changed sample window invalidates the estimator's current
                 // history, so it is closed and rebuilt rather than mutated in
@@ -720,7 +722,7 @@ class MainViewModel @JvmOverloads constructor(
             runCatching { releaseStagedHostSources() }
             runCatching { stopHostMonitorPlayback() }
                 .onFailure { error -> logger.e("playback.host.stop", "Host monitor cleanup failed", error) }
-            domainStore.close()
+            persistence.closeStore()
         }
         runCatching { controllers.closeAll() }
             .onFailure { error -> logger.e("viewmodel.controllers", "Controller cleanup failed", error) }

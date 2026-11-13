@@ -1753,3 +1753,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T09:22:34Z - claude-opus-5-5 - God-file refactor §4: DiagnosticsController extracted
 - DiagnosticsController owns diagnostics store, metrics, bridge counters, refresh and developer capture; MainViewModel keeps thin wrappers and copies snapshots into AppUiState synchronously. onCleared keeps capture teardown at its original point and closes the controller registry last (idempotent). Full Android gate passed.
+
+## 2026-11-13T09:30:27Z - claude-opus-5-5 - God-file refactor §4: PersistenceController extracted
+- PersistenceController owns the domain store (no longer a MainViewModel property) and the persisted audio read grants; initialize reports a Result that the coordinator maps into AppUiState as before; store closes once. Full Android gate passed.

@@ -1,7 +1,5 @@
 package com.ekkus.silentdisco.app
 
-import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.launch
 
     internal fun MainViewModel.initializeDomainPersistence() {
         _uiState.value = _uiState.value.copy(
@@ -10,10 +8,8 @@ import kotlinx.coroutines.launch
             lastMessage = "Initializing persistent storage",
             lastError = null,
         )
-        viewModelScope.launch {
-            runCatching {
-                domainStore.initialize()
-            }.onSuccess { stored ->
+        persistence.initialize { result ->
+            result.onSuccess { stored ->
                 val tuning = stored.toAppTuningSettings()
                 _uiState.value = _uiState.value.copy(
                     tuningSettings = tuning,

@@ -606,7 +606,7 @@ private suspend fun MainViewModel.executeRustStorageEffect(
 ) {
     when (effect) {
         is FfiStorageEffect.PersistSettings -> runCatching {
-            domainStore.saveTuning(effect.settings.toRustStoredSettings())
+            persistence.saveTuning(effect.settings.toRustStoredSettings())
         }.onSuccess {
             controller.settingsSaved(effect.operationId)
         }.onFailure { error ->
