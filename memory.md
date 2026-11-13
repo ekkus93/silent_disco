@@ -1744,3 +1744,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T08:50:18Z - claude-opus-5-5 - God-file refactor §1 inventory and §2 safety net
 - MainViewModel has 68 properties (not 103) and 199 functions across 23 files; owners in spec Appendix A. New MainViewModelRefactorSafetyNetTest (5 characterization tests, 2 mutations killed). Seam: MainViewModel takes manualListenerController; ManualListenerTransportController takes closeNativeOutput. Full Android gate passed. Baseline A54 instrumented run next.
+
+## 2026-11-13T09:08:45Z - claude-opus-5-5 - God-file refactor §3 controller contract
+- app/controller/ViewModelController.kt (child supervisor scope, close = cancel + release) and ViewModelControllers (reverse-order close, continues past failures); MainViewModel.onCleared closes it first. The AppUiState-combining item is deferred into the DiagnosticsController extraction. A54 baseline: 180 tests, only the 4 known layout failures. MainViewModel.kt is at the 800-line CI limit until extractions shrink it.

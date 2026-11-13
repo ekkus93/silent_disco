@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
+import com.ekkus.silentdisco.app.controller.ViewModelControllers
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.audio.NativeCallbackWavCapture
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
@@ -108,6 +109,9 @@ class MainViewModel @JvmOverloads constructor(
         ),
 ) : AndroidViewModel(application) {
     internal val logger = AppLogger()
+
+    /** Controllers split out of this view-model (refactor spec §4); closed first in [onCleared]. */
+    internal val controllers = ViewModelControllers()
     internal val diagnosticsStore = DiagnosticsStore()
     internal val metrics = DiagnosticsMetrics()
     internal val decoder = AudioFileDecoder(application.contentResolver)
@@ -686,6 +690,8 @@ class MainViewModel @JvmOverloads constructor(
     )
 
     override fun onCleared() {
+        runCatching { controllers.closeAll() }
+            .onFailure { error -> logger.e("viewmodel.controllers", "Controller cleanup failed", error) }
         hostPlaybackCommandJob?.cancel()
         // The runtime holds a pump thread, a ring registration and the native
         // output; none of them are reclaimed by the ViewModel going away.

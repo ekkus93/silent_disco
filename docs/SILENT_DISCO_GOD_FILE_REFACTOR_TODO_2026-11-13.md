@@ -37,8 +37,8 @@ Android gate: `./gradlew assembleDebug assemblePocDebug assembleRelease assemble
 
 ## 3. Coordinator scaffolding
 
-- [ ] Add a small internal controller contract: a `close()`, an owned scope derived from `viewModelScope`, and `StateFlow` state. No behaviour moves yet.
-- [ ] Make `MainViewModel` combine controller state flows into `AppUiState`, so far with no controllers. This proves the mapping pattern without changing behaviour.
+- [x] Add a small internal controller contract (`app/controller/ViewModelController.kt`: `ViewModelController` with a child supervisor scope and `close()` = cancel then `release()`; `ViewModelControllers` closes in reverse order and continues past failures; `MainViewModel.onCleared` closes it first; 4 tests, supervisor mutation killed). Original wording: a `close()`, an owned scope derived from `viewModelScope`, and `StateFlow` state. No behaviour moves yet.
+- [ ] Make `MainViewModel` combine controller state flows into `AppUiState`. **Deferred into the first extraction (`DiagnosticsController`)**: with no controller state there is nothing to combine, and a mapping layer without a user would be speculative. Original wording: so far with no controllers. This proves the mapping pattern without changing behaviour.
 
 ## 4. Extract controllers, one per item, lowest coupling first
 
