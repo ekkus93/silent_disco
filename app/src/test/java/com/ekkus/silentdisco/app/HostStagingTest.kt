@@ -1,5 +1,7 @@
 package com.ekkus.silentdisco.app
 
+import com.ekkus.silentdisco.app.controller.copyAudioStreamToBoundedFile
+import com.ekkus.silentdisco.app.controller.copyProviderAudioToBoundedFile
 import com.ekkus.silentdisco.core.audio.AudioFileAccessException
 import java.io.ByteArrayInputStream
 import java.nio.file.Files

@@ -45,7 +45,7 @@ internal fun MainViewModel.startHostStreamingLoop(
         var pauseStartedAtMs: Long? = null
         var previousSendElapsedMs: Long? = null
         var lastPacket: AudioPacket? = null
-        val start = hostPlaylistStreamStart ?: streamer.streamStart
+        val start = hostPlayback.streamStart ?: streamer.streamStart
         val packetDurationMs = firstPacket.samplesPerPacket * 1_000L / firstPacket.sampleRate
         var authoritativePlaybackObserved = false
 
@@ -84,7 +84,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                         currentEntryId = _uiState.value.hostQueue.firstOrNull()?.entryId,
                         currentDisplayName = _uiState.value.hostQueue.firstOrNull()?.displayName,
                     )
-                    hostPlaylistStreamStart = resumedStart
+                    hostPlayback.streamStart = resumedStart
                     broadcastHostStreamStart(streamId, resumedStart)
                     hostPendingTrackBoundaries.values
                         .sortedBy(PendingHostTrackBoundary::firstSampleIndex)
@@ -307,7 +307,7 @@ internal fun MainViewModel.startHostStreamingLoop(
             handleHostPlaybackEngineFailure(error)
         } finally {
             cancelHostBoundaryJobs()
-            if (hostPlaylistStreamer === streamer) {
+            if (hostPlayback.streamer === streamer) {
                 clearHostPlaylistStream()
             }
         }
@@ -402,7 +402,7 @@ internal fun MainViewModel.scheduleHostQueueBoundary(
             ensureRustHostCore().trackBoundaryApplied(boundary.entryId, boundary.firstSampleIndex.toLong())
         }.onSuccess {
             hostPendingTrackBoundaries.remove(boundary.firstSampleIndex.toLong())
-            hostPlaylistStreamStart = hostPlaylistStreamStart?.copy(
+            hostPlayback.streamStart = hostPlayback.streamStart?.copy(
                 currentEntryId = boundary.entryId,
                 currentDisplayName = boundary.displayName,
             )

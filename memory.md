@@ -1778,3 +1778,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `app/controller/ListenerSessionController.kt` owns the listener core and its platform effects, endpoint / Wi-Fi Direct establishment and release, the join request, the transport event loop, device id and invitation TLS keys. The coordinator implements `ListenerSessionCallbacks`; no UI writes moved into the controller.
 - `SECURE_TRANSPORT_ENDPOINT_VERSION` moved to the controller package (androidTest import updated).
 - 5 new tests; reversing ready-before-join fails 3 tests. 591 JVM tests and the full Android gate (`--max-workers=2`, 9m14s) passed. `MainViewModel.kt` is 780 lines.
+
+## 2026-11-13T23:50:55Z - claude-opus-5-5 - God-file refactor §4: HostPlaybackController part 1
+- New `app/controller/HostSourceStaging.kt` (staged files, live-queue URIs, bounded copy, Rust validation, discard, orphan cleanup; provider/storage/validator seams injectable) and `HostPlaybackController.kt` (streamer, stream start, format, latest packets, retarget, clear). `MainViewModelHostStaging.kt` is now thin wrappers; the copy helpers moved to the controller package.
+- Removed dead `latestDecodedAudio` (never read). 5 new tests; dropping the failed-staging delete fails them. 596 JVM tests and the full Android gate (`--max-workers=2`, 6m16s) passed.
+- Left for part 2+: host boundary jobs/pending boundaries, stream and command jobs, the stream loop and play/pause/stop, `currentStreamId` split.

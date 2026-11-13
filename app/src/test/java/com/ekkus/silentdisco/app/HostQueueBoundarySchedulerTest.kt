@@ -73,7 +73,7 @@ class HostQueueBoundarySchedulerTest {
             displayName = "Second track",
         )
         val viewModel = harness.viewModel
-        viewModel.hostPlaylistStreamStart = start
+        viewModel.hostPlayback.streamStart = start
 
         viewModel.scheduleHostQueueBoundary(
             start = start,
@@ -98,8 +98,8 @@ class HostQueueBoundarySchedulerTest {
         runCurrent()
         assertThat(harness.hostCoreController.trackBoundaryAppliedCalls)
             .containsExactly("entry-2" to 100L)
-        assertThat(viewModel.hostPlaylistStreamStart?.currentEntryId).isEqualTo("entry-2")
-        assertThat(viewModel.hostPlaylistStreamStart?.currentDisplayName).isEqualTo("Second track")
+        assertThat(viewModel.hostPlayback.streamStart?.currentEntryId).isEqualTo("entry-2")
+        assertThat(viewModel.hostPlayback.streamStart?.currentDisplayName).isEqualTo("Second track")
     }
 
     @Test

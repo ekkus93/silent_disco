@@ -89,7 +89,7 @@ private fun MainViewModel.rollbackFailedRustHostStart(): List<String> {
     pendingListenerDatagramPorts.clear()
     currentSessionId = null
     currentStreamId = null
-    latestPackets = emptyList()
+    hostPlayback.latestPackets = emptyList()
     _uiState.value = _uiState.value.copy(discoveredSessions = emptyList())
     return collectRustHostCleanupFailures(
         "stop BLE advertising" to { bleService.stopAdvertising() },
@@ -105,7 +105,7 @@ private fun MainViewModel.finishFailedRustHostStopCleanup(): List<String> {
     pendingListenerDatagramPorts.clear()
     currentSessionId = null
     currentStreamId = null
-    latestPackets = emptyList()
+    hostPlayback.latestPackets = emptyList()
     _uiState.value = _uiState.value.copy(discoveredSessions = emptyList())
     return collectRustHostCleanupFailures(
         "stop playback" to { stopHostMonitorPlayback() },

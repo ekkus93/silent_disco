@@ -189,13 +189,13 @@ internal fun MainViewModel.createRustHostSession() {
             withContext(Dispatchers.IO) {
                 setupAudio.distinctBy { stableOpaqueAudioSourceId(it.uri.toString()) }.forEach { audio ->
                     val sourceId = stableOpaqueAudioSourceId(audio.uri.toString())
-                    if (!stagedAudioFilesBySourceId.containsKey(sourceId)) newlyStaged += sourceId
+                    if (!hostPlayback.staging.isStaged(sourceId)) newlyStaged += sourceId
                     stageAndValidateHostSource(audio)
                 }
             }
         }
         if (preparation.isFailure) {
-            newlyStaged.mapNotNull(stagedAudioFilesBySourceId::remove).forEach { it.delete() }
+            hostPlayback.staging.discard(newlyStaged)
             val error = preparation.exceptionOrNull() ?: IllegalStateException("Audio preparation failed")
             _uiState.value = _uiState.value.copy(lastError = error.message ?: "Could not prepare selected songs")
             return@launch
@@ -494,7 +494,7 @@ private suspend fun MainViewModel.stopAdvertisingForRust(
     )
     currentSessionId = null
     currentStreamId = null
-    latestPackets = emptyList()
+    hostPlayback.latestPackets = emptyList()
     _uiState.value = _uiState.value.copy(
         discoveredSessions = emptyList(),
         lastMessage = "Session ended",

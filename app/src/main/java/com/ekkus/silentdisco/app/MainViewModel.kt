@@ -6,11 +6,12 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.BuildConfig
-import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.app.controller.DiagnosticsController
 import com.ekkus.silentdisco.app.controller.DiscoveryController
 import com.ekkus.silentdisco.app.controller.HostMonitorController
+import com.ekkus.silentdisco.app.controller.HostPlaybackController
+import com.ekkus.silentdisco.app.controller.HostSourceStaging
 import com.ekkus.silentdisco.app.controller.ListenerPlaybackController
 import com.ekkus.silentdisco.app.controller.ListenerSessionController
 import com.ekkus.silentdisco.app.controller.PersistenceController
@@ -43,10 +44,8 @@ import com.ekkus.silentdisco.core.rust.P2ValidatedInvitation
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.rust.UniFfiHostCoreController
 import com.ekkus.silentdisco.core.rust.UniFfiListenerCoreController
-import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
-import com.ekkus.silentdisco.core.rust.HostPlaylistStreamController
 import com.ekkus.silentdisco.core.rust.RustDomainStore
 import com.ekkus.silentdisco.core.sync.HostTimingService
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
@@ -121,7 +120,6 @@ class MainViewModel @JvmOverloads constructor(
     )
     internal val decoder = AudioFileDecoder(application.contentResolver)
     internal val hostTimingService = HostTimingService()
-    internal val liveQueueSourceUris = ConcurrentHashMap<String, Uri>()
     internal val persistence = controllers.add(
         PersistenceController(
             parentScope = viewModelScope,
@@ -143,6 +141,15 @@ class MainViewModel @JvmOverloads constructor(
     )
     internal val hostMonitor = controllers.add(
         HostMonitorController(parentScope = viewModelScope, closeOutput = closeHostMonitorOutput),
+    )
+    internal val hostPlayback = controllers.add(
+        HostPlaybackController(
+            parentScope = viewModelScope,
+            staging = HostSourceStaging(
+                cacheDir = { getApplication<Application>().cacheDir },
+                openInput = { application.contentResolver.openInputStream(it) },
+            ),
+        ),
     )
     internal val listenerSession = controllers.add(
         ListenerSessionController(
@@ -191,12 +198,6 @@ class MainViewModel @JvmOverloads constructor(
         }
     internal fun swapHostMonitorPlayback(value: FfiListenerPlaybackHandle?): FfiListenerPlaybackHandle? =
         hostMonitor.swap(value)
-    internal var latestDecodedAudio: AudioDecodeResult? = null
-    internal var latestPackets: List<AudioPacket> = emptyList()
-    internal var hostPlaylistStreamer: HostPlaylistStreamController? = null
-    internal var hostPlaylistStreamStart: com.ekkus.silentdisco.core.uniffi.FfiPlaylistStreamStart? = null
-    internal var hostPlaylistFormat: com.ekkus.silentdisco.core.audio.AudioFormatSpec? = null
-    internal val stagedAudioFilesBySourceId = ConcurrentHashMap<String, java.io.File>()
     /** Scheduled host queue advances, keyed by the boundary's first sample index. */
     internal val hostBoundaryJobs = ConcurrentHashMap<Long, Job>()
     internal val hostPendingTrackBoundaries = ConcurrentHashMap<Long, PendingHostTrackBoundary>()
@@ -283,7 +284,6 @@ class MainViewModel @JvmOverloads constructor(
                 }
             }
         }.onSuccess { selected ->
-            latestDecodedAudio = null
             val selectedUris = selected.mapTo(mutableSetOf()) { it.uri }
             (priorUris - selectedUris).forEach { uri ->
                 val sourceId = stableOpaqueAudioSourceId(uri.toString())
@@ -347,7 +347,7 @@ class MainViewModel @JvmOverloads constructor(
                             throw IllegalArgumentException("$name: ${error.message ?: "could not be read"}", error)
                         }
                         val sourceId = stableOpaqueAudioSourceId(uri.toString())
-                        if (!stagedAudioFilesBySourceId.containsKey(sourceId)) newlyStagedSourceIds += sourceId
+                        if (!hostPlayback.staging.isStaged(sourceId)) newlyStagedSourceIds += sourceId
                         stageAndValidateHostSource(selected)
                         FfiQueueEntry(
                             entryId = "android-entry-${UUID.randomUUID()}-${index + 1}",
@@ -356,7 +356,7 @@ class MainViewModel @JvmOverloads constructor(
                     }
                 }
             }.getOrElse { error ->
-                newlyStagedSourceIds.mapNotNull(stagedAudioFilesBySourceId::remove).forEach { it.delete() }
+                hostPlayback.staging.discard(newlyStagedSourceIds)
                 newGrants.forEach(::releaseAudioReadGrant)
                 _uiState.value = _uiState.value.copy(lastError = error.message ?: "Could not add songs")
                 return@launch
@@ -369,12 +369,12 @@ class MainViewModel @JvmOverloads constructor(
                             .onFailure { reportRustHostCommandFailure("retarget playback queue", it) }
                     }
                     uris.forEach { uri ->
-                        liveQueueSourceUris[stableOpaqueAudioSourceId(uri.toString())] = uri
+                        hostPlayback.staging.liveQueueUris[stableOpaqueAudioSourceId(uri.toString())] = uri
                     }
                     _uiState.value = _uiState.value.copy(lastError = null, lastMessage = "Songs added to queue")
                 }
                 .onFailure {
-                    newlyStagedSourceIds.mapNotNull(stagedAudioFilesBySourceId::remove).forEach { it.delete() }
+                    hostPlayback.staging.discard(newlyStagedSourceIds)
                     newGrants.forEach(::releaseAudioReadGrant)
                     reportRustHostCommandFailure("add songs", it)
                 }
@@ -388,19 +388,14 @@ class MainViewModel @JvmOverloads constructor(
 
     private fun cleanupOrphanedAudioReadGrants() = persistence.releaseOrphanedAudioReadGrants()
 
-    private fun cleanupOrphanedHostStagedFiles() {
-        val cacheDir = runCatching { getApplication<Application>().cacheDir }.getOrNull() ?: return
-        cacheDir.listFiles()
-            ?.filter { it.name.startsWith("silent-disco-source-") }
-            ?.forEach { it.delete() }
-    }
+    private fun cleanupOrphanedHostStagedFiles() = hostPlayback.staging.deleteOrphans()
 
     internal fun releaseLiveQueueAudioGrants() {
         val setupUris = (listOfNotNull(_uiState.value.hostForm.selectedAudio) +
             _uiState.value.hostForm.additionalAudio).mapTo(mutableSetOf()) { it.uri }
-        liveQueueSourceUris.values.distinct().filterNot(setupUris::contains)
+        hostPlayback.staging.liveQueueUris.values.distinct().filterNot(setupUris::contains)
             .forEach(::releaseAudioReadGrant)
-        liveQueueSourceUris.clear()
+        hostPlayback.staging.liveQueueUris.clear()
     }
 
     fun reorderLiveQueue(entryIds: List<String>) {
@@ -437,9 +432,9 @@ class MainViewModel @JvmOverloads constructor(
                             stableOpaqueAudioSourceId(it.uri.toString()) == removed.sourceId
                         }
                         if (!stillQueued && !stillInDraft) {
-                            liveQueueSourceUris.remove(removed.sourceId)?.let(::releaseAudioReadGrant)
+                            hostPlayback.staging.liveQueueUris.remove(removed.sourceId)?.let(::releaseAudioReadGrant)
                             withContext(Dispatchers.IO) {
-                                stagedAudioFilesBySourceId.remove(removed.sourceId)?.delete()
+                                hostPlayback.staging.discard(listOf(removed.sourceId))
                             }
                         }
                     }

@@ -77,7 +77,7 @@ class HostStreamFailureStopTest {
             assertThat(fixture.viewModel.uiState.value.lastError).isEqualTo(DECODE_FAILURE)
             assertThat(fixture.monitor.stopped).isTrue()
             assertThat(fixture.streamer.cancelled).isTrue()
-            assertThat(fixture.viewModel.hostPlaylistStreamer).isNull()
+            assertThat(fixture.viewModel.hostPlayback.streamer).isNull()
         } finally {
             fixture.viewModel.hostTransportController.close()
         }
@@ -262,7 +262,7 @@ class HostStreamFailureStopTest {
             runCurrent()
             assertThat(fixture.viewModel.hostBoundaryJobs).isEmpty()
             assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
-            assertThat(fixture.viewModel.hostPlaylistStreamer).isNull()
+            assertThat(fixture.viewModel.hostPlayback.streamer).isNull()
         } finally {
             fixture.viewModel.hostTransportController.close()
         }
@@ -369,7 +369,7 @@ class HostStreamFailureStopTest {
         val streamer = FailingPlaylistStreamer(frames)
         val controller = HostPlaylistStreamController(streamer)
         viewModel.hostMonitorPlayback = monitor
-        viewModel.hostPlaylistStreamer = controller
+        viewModel.hostPlayback.streamer = controller
         viewModel.currentStreamId = StreamId(STREAM_ID)
         viewModel._uiState.value = viewModel._uiState.value.copy(hostPlaybackState = PlaybackState.PLAYING)
 

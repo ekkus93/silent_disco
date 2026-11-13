@@ -175,10 +175,10 @@ class MainViewModelRefactorSafetyNetTest {
         advanceUntilIdle()
         viewModel.ensureRustHostCore()
         val staged = File.createTempFile("staged-source", ".wav")
-        viewModel.stagedAudioFilesBySourceId["source-1"] = staged
+        viewModel.hostPlayback.staging.putStaged("source-1", staged)
 
         viewModel.endSession()
-        awaitCondition { viewModel.stagedAudioFilesBySourceId.isEmpty() }
+        awaitCondition { viewModel.hostPlayback.staging.stagedSourceIds.isEmpty() }
 
         assertThat(harness.hostCoreController.endHostSessionCallCount).isEqualTo(1)
         assertThat(staged.exists()).isFalse()

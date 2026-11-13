@@ -76,11 +76,11 @@ internal fun MainViewModel.startHostPlaybackImpl() {
             handleHostPlaybackPreparationFailure(error)
             return@launchHostPlaybackCommand
         }
-        hostPlaylistStreamer = streamer
-        hostPlaylistStreamStart = streamer.streamStart
+        hostPlayback.streamer = streamer
+        hostPlayback.streamStart = streamer.streamStart
         val streamStart = streamer.streamStart
         val format = AudioFormatSpec(streamStart.sampleRate.toInt(), streamStart.channels.toInt())
-        hostPlaylistFormat = format
+        hostPlayback.format = format
         val firstPacket = try {
             withContext(Dispatchers.IO) { streamer.nextAudioPacket(sessionId, streamId) }
         } catch (error: Throwable) {
@@ -88,8 +88,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
             handleHostPlaybackPreparationFailure(error)
             return@launchHostPlaybackCommand
         }
-        latestPackets = listOf(firstPacket)
-        latestDecodedAudio = null
+        hostPlayback.latestPackets = listOf(firstPacket)
         val packetBudgetSummary = firstPacket.let { packet ->
             "${packet.payload.size + 48}B first packet; native streaming decoder"
         }
@@ -144,9 +143,9 @@ internal fun MainViewModel.startHostPlaybackImpl() {
 private fun MainViewModel.resumeHostPlaybackImpl() {
     val sessionId = currentSessionId
     val streamId = currentStreamId
-    val format = hostPlaylistFormat
-    val streamStart = hostPlaylistStreamStart
-    val streamer = hostPlaylistStreamer
+    val format = hostPlayback.format
+    val streamStart = hostPlayback.streamStart
+    val streamer = hostPlayback.streamer
     if (sessionId == null || streamId == null || format == null || streamStart == null || streamer == null) {
         val message = "Host stream cannot resume because prepared audio state is unavailable"
         _uiState.value = _uiState.value.copy(lastError = message)
