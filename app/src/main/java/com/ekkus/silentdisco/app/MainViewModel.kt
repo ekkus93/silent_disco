@@ -12,6 +12,7 @@ import com.ekkus.silentdisco.app.controller.DiagnosticsController
 import com.ekkus.silentdisco.app.controller.DiscoveryController
 import com.ekkus.silentdisco.app.controller.HostMonitorController
 import com.ekkus.silentdisco.app.controller.ListenerPlaybackController
+import com.ekkus.silentdisco.app.controller.ListenerSessionController
 import com.ekkus.silentdisco.app.controller.PersistenceController
 import com.ekkus.silentdisco.app.controller.ViewModelControllers
 import com.ekkus.silentdisco.core.audio.OboeBridge
@@ -143,6 +144,18 @@ class MainViewModel @JvmOverloads constructor(
     internal val hostMonitor = controllers.add(
         HostMonitorController(parentScope = viewModelScope, closeOutput = closeHostMonitorOutput),
     )
+    internal val listenerSession = controllers.add(
+        ListenerSessionController(
+            parentScope = viewModelScope,
+            transport = listenerTransportController,
+            wifiDirect = wifiDirectService,
+            discovery = discovery,
+            coreFactory = listenerCoreFactory,
+            deviceId = { DeviceIdentityStore.get(application) },
+            logger = logger,
+            callbacks = listenerSessionCallbacks(),
+        ),
+    )
     internal val listenerPlaybackController = controllers.add(
         ListenerPlaybackController(
             parentScope = viewModelScope,
@@ -151,11 +164,6 @@ class MainViewModel @JvmOverloads constructor(
         ),
     )
 
-    /**
-     * TLS keys signed into verified invitations, by session id. A listener joining
-     * that session pins its handshake to this key; a session without one stays plaintext.
-     */
-    internal val invitedHostTlsKeys = mutableMapOf<String, ByteArray>()
 
     internal val _uiState = MutableStateFlow(
         AppUiState(
@@ -195,25 +203,16 @@ class MainViewModel @JvmOverloads constructor(
     internal var hostStreamJob: Job? = null
     internal var hostPlaybackCommandJob: Job? = null
     @Volatile internal var hostCoreController: HostCoreController? = null
-    internal var listenerCoreController: ListenerCoreController? = null
-    internal var pendingEstablishNetworkOperationId: String? = null
-    internal var listenerTransportConnected: Boolean = false
-
-    /**
-     * Whether the joined session's transport runs over a Wi-Fi Direct group.
-     * Only then is Wi-Fi Direct's own connection state evidence about the
-     * session; a desktop host joined via mDNS or a manual endpoint never uses
-     * it, and its disconnects arrive as Rust transport events instead.
-     */
-    internal var listenerTransportRidesWifiDirect: Boolean = false
-    internal val listenerHasPendingWifiDirectJoin: Boolean
-        get() = listenerTransportRidesWifiDirect || pendingEstablishNetworkOperationId != null
+    internal var listenerCoreController: ListenerCoreController?
+        get() = listenerSession.core
+        set(value) {
+            listenerSession.core = value
+        }
+    internal val listenerHasPendingWifiDirectJoin: Boolean get() = listenerSession.hasPendingWifiDirectJoin
     @Volatile internal var pendingStartAdvertisingOperationId: String? = null
     /** Suppress duplicate Wi-Fi callbacks for the same in-flight bind operation. */
     internal var bindingStartAdvertisingOperationId: String? = null
     internal var hostTransportEventLoopStarted: Boolean = false
-    internal var listenerTransportEventLoopStarted: Boolean = false
-    internal val localListenerDeviceId: String by lazy { DeviceIdentityStore.get(application) }
 
     /**
      * A listener's sync/audio UDP ports, from its `JoinRequestReceived`
@@ -526,7 +525,7 @@ class MainViewModel @JvmOverloads constructor(
 
     fun cancelJoin() {
         clearScanState()
-        pendingEstablishNetworkOperationId = null
+        listenerSession.pendingEstablishOperationId = null
         _uiState.value = _uiState.value.copy(lastError = "Join cancelled")
         listenerCoreController?.cancelJoin()
     }
@@ -598,7 +597,7 @@ class MainViewModel @JvmOverloads constructor(
         stopCallbackPcmCapture()
         listenerPlaybackController.cancelResync()
         resetListenerSyncAcquisition()
-        pendingEstablishNetworkOperationId = null
+        listenerSession.pendingEstablishOperationId = null
         logger.i("listener.disconnect", "Listener left session")
         _uiState.value = _uiState.value.copy(listenerPlaybackState = PlaybackState.STOPPED)
         listenerCoreController?.cancelJoin()

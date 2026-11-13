@@ -1,6 +1,6 @@
 package com.ekkus.silentdisco.core.rust
 
-import com.ekkus.silentdisco.app.SECURE_TRANSPORT_ENDPOINT_VERSION
+import com.ekkus.silentdisco.app.controller.SECURE_TRANSPORT_ENDPOINT_VERSION
 import com.ekkus.silentdisco.core.identity.HostTlsIdentityManager
 import com.ekkus.silentdisco.core.identity.KeystoreHostTlsSigner
 import com.ekkus.silentdisco.core.identity.KeystoreListenerProofSigner

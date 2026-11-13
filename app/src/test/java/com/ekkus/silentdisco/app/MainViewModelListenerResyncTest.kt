@@ -51,7 +51,7 @@ class MainViewModelListenerResyncTest {
     @Test
     fun wifiDirectStateDoesNotEndASessionThatDoesNotRideWifiDirect() = runTest(dispatcher) {
         val harness = bufferingListener()
-        harness.viewModel.listenerTransportRidesWifiDirect = false
+        harness.viewModel.listenerSession.ridesWifiDirect = false
         harness.wifiDirectService.emitSnapshot(
             TransportSnapshot(state = TransportConnectionState.DISCONNECTED),
         )
@@ -68,7 +68,7 @@ class MainViewModelListenerResyncTest {
     @Test
     fun wifiDirectDisconnectStillEndsASessionThatRidesWifiDirect() = runTest(dispatcher) {
         val harness = bufferingListener()
-        harness.viewModel.listenerTransportRidesWifiDirect = true
+        harness.viewModel.listenerSession.ridesWifiDirect = true
         harness.wifiDirectService.emitSnapshot(
             TransportSnapshot(state = TransportConnectionState.DISCONNECTED),
         )
@@ -85,7 +85,7 @@ class MainViewModelListenerResyncTest {
     fun approvalStartsClockProbesBeforePlaybackRuntimeExists() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.viewModel.ensureRustListenerCore()
-        harness.viewModel.listenerTransportConnected = true
+        harness.viewModel.listenerSession.transportConnected = true
 
         harness.listenerCoreController.publishSnapshot(
             listenerCoreSnapshot(
@@ -110,7 +110,7 @@ class MainViewModelListenerResyncTest {
     @Test
     fun pausedPlaybackKeepsTheListenerSyncProbeLoopActive() = runTest(dispatcher) {
         val harness = bufferingListener()
-        harness.viewModel.listenerTransportConnected = true
+        harness.viewModel.listenerSession.transportConnected = true
         harness.viewModel.propagateListenerPlaybackState(
             playbackState = PlaybackState.PAUSED,
             listenerState = harness.viewModel._uiState.value.listenerState,
@@ -193,7 +193,7 @@ class MainViewModelListenerResyncTest {
     @Test
     fun hostStopReturnsToApprovedAndCancelsTheRuntimeClockProbeLoop() = runTest(dispatcher) {
         val harness = bufferingListener()
-        harness.viewModel.listenerTransportConnected = true
+        harness.viewModel.listenerSession.transportConnected = true
         harness.viewModel._uiState.value = harness.viewModel._uiState.value.copy(
             listenerState = ListenerLifecycleState.PLAYING,
             listenerPlaybackState = PlaybackState.PLAYING,
@@ -301,11 +301,11 @@ class MainViewModelListenerResyncTest {
 
         assertThat(harness.viewModel.listenerHasPendingWifiDirectJoin).isFalse()
 
-        harness.viewModel.pendingEstablishNetworkOperationId = "pending-wifi-direct-join"
+        harness.viewModel.listenerSession.pendingEstablishOperationId = "pending-wifi-direct-join"
         assertThat(harness.viewModel.listenerHasPendingWifiDirectJoin).isTrue()
 
-        harness.viewModel.pendingEstablishNetworkOperationId = null
-        harness.viewModel.listenerTransportRidesWifiDirect = true
+        harness.viewModel.listenerSession.pendingEstablishOperationId = null
+        harness.viewModel.listenerSession.ridesWifiDirect = true
         assertThat(harness.viewModel.listenerHasPendingWifiDirectJoin).isTrue()
     }
 

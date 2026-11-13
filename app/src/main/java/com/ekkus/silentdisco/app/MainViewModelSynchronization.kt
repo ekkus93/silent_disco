@@ -68,7 +68,7 @@ internal fun shouldResyncForOffset(
         listenerPlaybackController.pendingSyncCorrelationId = request.correlationId
         logger.i("sync.probe.requested", "Checking connection timing ($source)")
 
-        if (listenerTransportConnected ||
+        if (listenerSession.transportConnected ||
             wifiDirectService.snapshot.value.state == TransportConnectionState.CONNECTED
         ) {
             val nextState = nextStateForSyncProbe(_uiState.value.listenerState)
@@ -352,7 +352,7 @@ private const val SYNC_ACQUIRE_CADENCE_MS = 250L
                 // session actually runs over it. On an mDNS or manual join it
                 // is idle or scanning, and treating that as a disconnect
                 // would end a healthy session (Block 52.6).
-                if (listenerTransportRidesWifiDirect) {
+                if (listenerSession.ridesWifiDirect) {
                     wifiDirectService.recordHeartbeat()
                     if (wifiDirectService.snapshot.value.state == TransportConnectionState.DISCONNECTED ||
                         wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED

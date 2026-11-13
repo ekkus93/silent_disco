@@ -1773,3 +1773,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `ListenerPlaybackController` now also owns the status-poll and periodic-resync jobs (`playbackJob`/`resyncJob` removed from `MainViewModel`) and the listener track boundaries via `app/controller/ListenerTrackBoundaries.kt` (timers read UI state through a `ListenerBoundaryContext`).
 - 5 new boundary tests; removing the fire-time pause gate fails them. 586 JVM tests and the full Android gate (`--max-workers=2`, 9m39s) passed.
 - `currentStreamId` stays shared on `MainViewModel` until the host extraction splits it.
+
+## 2026-11-13T23:20:16Z - claude-opus-5-5 - God-file refactor §4: ListenerSessionController extracted
+- `app/controller/ListenerSessionController.kt` owns the listener core and its platform effects, endpoint / Wi-Fi Direct establishment and release, the join request, the transport event loop, device id and invitation TLS keys. The coordinator implements `ListenerSessionCallbacks`; no UI writes moved into the controller.
+- `SECURE_TRANSPORT_ENDPOINT_VERSION` moved to the controller package (androidTest import updated).
+- 5 new tests; reversing ready-before-join fails 3 tests. 591 JVM tests and the full Android gate (`--max-workers=2`, 9m14s) passed. `MainViewModel.kt` is 780 lines.

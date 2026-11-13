@@ -98,10 +98,10 @@ internal fun MainViewModel.connectManualEndpointImpl() {
         manualListenerController.connect(
             scope = viewModelScope,
             rawInput = form.rawInput,
-            localDeviceId = localListenerDeviceId,
+            localDeviceId = listenerSession.localDeviceId,
             displayName = "This Android Listener",
             inviteCode = form.inviteCode.ifBlank { null },
-            hostTlsPublicKeyDer = form.sessionId?.let { invitedHostTlsKeys[it] },
+            hostTlsPublicKeyDer = form.sessionId?.let(listenerSession::invitedHostTlsKey),
         )
     }
 }
@@ -124,7 +124,7 @@ internal fun MainViewModel.connectManualEndpointImpl() {
  */
 internal fun MainViewModel.rememberInvitedHostTlsKeyImpl(invitation: P2ValidatedInvitation) {
     val key = invitation.hostTlsPublicKeyDer ?: return
-    invitedHostTlsKeys[invitation.sessionId] = key
+    listenerSession.rememberInvitedHostTlsKey(invitation.sessionId, key)
 }
 
 internal fun MainViewModel.prefillManualEndpointFromInvitationImpl(invitation: P2ValidatedInvitation) {

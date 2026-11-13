@@ -1,7 +1,7 @@
 package com.ekkus.silentdisco.app
 
-import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.app.controller.ListenerBoundaryContext
+import com.ekkus.silentdisco.app.controller.ListenerSessionCallbacks
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.SyncState
@@ -13,7 +13,6 @@ import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
 import com.ekkus.silentdisco.core.transport.MdnsSessionAdvertisement
 import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
-import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
 import com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiListenerLifecycle
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackDiagnostics
@@ -21,11 +20,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiPlaybackPhase
 import com.ekkus.silentdisco.core.uniffi.FfiSyncSampleOutcome
 import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
-import com.ekkus.silentdisco.core.uniffi.FfiPlatformEffect
 import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.launch
 
 private const val CANONICAL_STREAM_SAMPLE_RATE = 48_000L
 
@@ -108,19 +103,18 @@ internal fun nextListenerState(
     return if (currentIsPlaybackTail && incomingIsRustDriven) current else incoming
 }
 
-internal fun MainViewModel.ensureRustListenerCore(): ListenerCoreController {
-    listenerCoreController?.let { return it }
-    val controller = listenerCoreFactory(localListenerDeviceId)
-    listenerCoreController = controller
-    viewModelScope.launch {
-        controller.snapshots.filterNotNull().collect(::applyRustListenerSnapshot)
-    }
-    viewModelScope.launch {
-        controller.notifications.collect { notification ->
-            executeRustListenerNotification(controller, notification)
-        }
-    }
-    return controller
+internal fun MainViewModel.ensureRustListenerCore(): ListenerCoreController = listenerSession.ensureCore()
+
+/** How the listener session reads the UI state and hands results back to it. */
+internal fun MainViewModel.listenerSessionCallbacks() = object : ListenerSessionCallbacks {
+    override fun discoveredSession(sessionId: String): SessionInfo? =
+        _uiState.value.discoveredSessions.firstOrNull { it.id == sessionId }
+    override val selectedSession: SessionInfo? get() = _uiState.value.selectedSession
+    override val inviteCode: String? get() = _uiState.value.connectionProgress.inviteCode.ifBlank { null }
+    override fun hasNearbyPermissions(): Boolean = hasListenerTransportPermissions()
+    override fun onSnapshot(snapshot: FfiCoreSnapshot) = applyRustListenerSnapshot(snapshot)
+    override fun onTransportEvent(core: ListenerCoreController, event: FfiListenerTransportEvent) =
+        handleListenerTransportEvent(core, event)
 }
 
 internal fun MainViewModel.applyRustListenerSnapshot(snapshot: FfiCoreSnapshot) {
@@ -144,7 +138,7 @@ internal fun MainViewModel.applyRustListenerSnapshot(snapshot: FfiCoreSnapshot) 
         ),
         lastError = snapshot.lastError?.message,
     )
-    if (!wasApproved && nextState in APPROVED_OR_LATER && listenerTransportConnected) {
+    if (!wasApproved && nextState in APPROVED_OR_LATER && listenerSession.transportConnected) {
         // Start acquiring the host clock as soon as admission completes. This
         // lets a listener lock sync while the host waits before pressing Play.
         startPeriodicListenerResync()
@@ -156,74 +150,7 @@ internal fun MainViewModel.applyRustListenerSnapshot(snapshot: FfiCoreSnapshot) 
     }
 }
 
-private suspend fun MainViewModel.executeRustListenerNotification(
-    controller: ListenerCoreController,
-    notification: FfiCoreNotification,
-) {
-    when (notification) {
-        is FfiCoreNotification.Snapshot -> applyRustListenerSnapshot(notification.snapshot)
-        is FfiCoreNotification.PlatformEffect -> executeRustListenerPlatformEffect(controller, notification.effect)
-        is FfiCoreNotification.TransportEffect -> Unit // the listener role never emits transport effects
-        is FfiCoreNotification.StorageEffect -> Unit // the listener role does not persist state yet
-        is FfiCoreNotification.Error -> logger.e("rust.listener", notification.error.message)
-        is FfiCoreNotification.Diagnostic -> logger.i(
-            "rust.listener.${notification.diagnostic.name}",
-            notification.diagnostic.fields.joinToString(),
-        )
-    }
-}
-
-private fun MainViewModel.executeRustListenerPlatformEffect(
-    controller: ListenerCoreController,
-    effect: FfiPlatformEffect,
-) {
-    when (effect) {
-        is FfiPlatformEffect.StartDiscovery -> startRustListenerDiscovery(controller, effect)
-        is FfiPlatformEffect.StopDiscovery -> stopRustListenerDiscovery(controller, effect)
-        is FfiPlatformEffect.EstablishNetwork -> establishRustListenerNetwork(controller, effect)
-        is FfiPlatformEffect.ReleaseNetwork -> releaseRustListenerNetwork(controller, effect)
-        is FfiPlatformEffect.StartAdvertising,
-        is FfiPlatformEffect.StopAdvertising,
-        is FfiPlatformEffect.RequestCapabilities,
-        is FfiPlatformEffect.PrepareAudioSource,
-        is FfiPlatformEffect.StartAudioOutput,
-        is FfiPlatformEffect.StopAudioOutput,
-        is FfiPlatformEffect.ShareDiagnostics,
-        -> {
-            val operationId = when (effect) {
-                is FfiPlatformEffect.StartAdvertising -> effect.operationId
-                is FfiPlatformEffect.StopAdvertising -> effect.operationId
-                is FfiPlatformEffect.RequestCapabilities -> effect.operationId
-                is FfiPlatformEffect.PrepareAudioSource -> effect.operationId
-                is FfiPlatformEffect.StartAudioOutput -> effect.operationId
-                is FfiPlatformEffect.StopAudioOutput -> effect.operationId
-                is FfiPlatformEffect.ShareDiagnostics -> effect.operationId
-                else -> error("unreachable platform effect")
-            }
-            controller.platformOperationFailed(
-                operationId,
-                "Platform effect is outside Android listener Block 13",
-                false,
-            )
-        }
-    }
-}
-
-/**
- * Starts (once) the poll loop that forwards [ListenerTransportController]
- * events into the existing [ListenerCoreController] contract established in
- * Block 13.3 -- the controller itself has zero actor knowledge.
- */
-internal fun MainViewModel.ensureListenerTransportEventLoop() {
-    if (listenerTransportEventLoopStarted) return
-    listenerTransportEventLoopStarted = true
-    viewModelScope.launch(Dispatchers.IO) {
-        listenerTransportController.collectCurrentEvents { event ->
-            val controller = listenerCoreController ?: return@collectCurrentEvents
-            handleListenerTransportEvent(controller, event)
-        }
-    }
-}
+internal fun MainViewModel.ensureListenerTransportEventLoop() = listenerSession.ensureEventLoop()
 
 internal fun MainViewModel.handleListenerTransportEvent(
     controller: ListenerCoreController,
@@ -459,18 +386,7 @@ internal fun MainViewModel.reportListenerSyncToHost(
     offsetMs: Double,
     roundTripMs: Double,
     driftPpm: Double,
-) {
-    try {
-        listenerTransportController.sendSynchronizationReport(
-            confidence,
-            offsetMs,
-            roundTripMs,
-            driftPpm,
-        )
-    } catch (error: RuntimeException) {
-        logger.w("sync.report_send_failed", error.message ?: "synchronization report send failed")
-    }
-}
+) = listenerSession.reportSyncToHost(confidence, offsetMs, roundTripMs, driftPpm)
 
 internal fun SyncQualityBadge.toFfiSyncConfidence(): FfiSyncConfidence = when (this) {
     SyncQualityBadge.UNKNOWN -> FfiSyncConfidence.UNKNOWN
