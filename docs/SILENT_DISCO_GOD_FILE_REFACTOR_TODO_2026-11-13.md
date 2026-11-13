@@ -16,10 +16,10 @@ Android gate: `./gradlew assembleDebug assemblePocDebug assembleRelease assemble
 
 ## 0. Owner decisions (spec §10)
 
-- [ ] Spec approved.
-- [ ] Order against the UI redesign chosen: (a), (b) or (c).
-- [ ] Decision on moving Kotlin timing state (track boundaries, pre-runtime sync) to Rust within this refactor or later.
-- [ ] Decision on splitting `runtime/types.rs` now or when it next grows.
+- [x] Spec approved (owner, 2026-11-13, as written).
+- [x] Order against the UI redesign: **(b)**, split `MainViewModel` now and leave all of `SilentDiscoApp` (section 6) to the UI redesign.
+- [x] Kotlin timing state: **log for later**. Each confirmed item moves into its controller unchanged and is logged for a later Rust block. Section 5 is the "otherwise" branch only.
+- [x] `runtime/types.rs`: **split only when it next grows**. The first item of section 7 is deferred; the watchlist item still applies.
 
 ## 1. Inventory (no code changes)
 
