@@ -1747,3 +1747,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T09:08:45Z - claude-opus-5-5 - God-file refactor §3 controller contract
 - app/controller/ViewModelController.kt (child supervisor scope, close = cancel + release) and ViewModelControllers (reverse-order close, continues past failures); MainViewModel.onCleared closes it first. The AppUiState-combining item is deferred into the DiagnosticsController extraction. A54 baseline: 180 tests, only the 4 known layout failures. MainViewModel.kt is at the 800-line CI limit until extractions shrink it.
+
+## 2026-11-13T09:16:07Z - claude-opus-5-5 - 800-line rule relaxed to a guideline in CI too
+- Owner (2026-11-13): 800 lines is a general guideline, not a hard rule; Claude judges God files. scripts/check-source-file-line-counts.sh now lists files at or over 800 for review (GitHub ::warning:: in CI) and always exits 0; workflow names, CLAUDE.md and the God-file spec updated.

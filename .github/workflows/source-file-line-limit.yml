@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   source-file-line-limit:
-    name: Tracked source files stay below 800 lines
+    name: Source files over the 800-line guideline (advisory)
     # Keep push, manual, and PR validation off the owner's persistent machine.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -26,7 +26,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Enforce source file line limit
+      - name: Report files over the 800-line guideline (never fails)
         run: bash scripts/check-source-file-line-counts.sh
 
       - name: Enforce hosted Ubuntu workflow runner policy

@@ -12,7 +12,7 @@ Rules for every item, from spec §3 and §7:
 - Record results in `memory.md` and the newest handoff.
 - Mark only work that is done and verified.
 
-Android gate: `./gradlew assembleDebug assemblePocDebug assembleRelease assembleDebugAndroidTest test lintDebug`. When Rust changes, also run `bash scripts/check-rust.sh` and `cd desktop && npm run check`. Every item also runs `bash scripts/check-source-file-line-counts.sh`.
+Android gate: `./gradlew assembleDebug assemblePocDebug assembleRelease assembleDebugAndroidTest test lintDebug`. When Rust changes, also run `bash scripts/check-rust.sh` and `cd desktop && npm run check`. Every item also runs `bash scripts/check-source-file-line-counts.sh`, which since 2026-11-13 only reports files over 800 lines; review any it lists for mixed responsibilities.
 
 ## 0. Owner decisions (spec §10)
 

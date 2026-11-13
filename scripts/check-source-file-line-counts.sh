@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly MAX_EXCLUSIVE_LINES=800
+# 800 lines is a guideline, not a hard limit (owner decision 2026-11-13,
+# relaxing the 2026-11-05 rule). The point is to avoid God files, which is a
+# judgement about responsibilities, not length. Files at or over the guideline
+# are listed for review (as GitHub warnings in CI); the check never fails.
+readonly GUIDELINE_LINES=800
 
 checked_files=0
-violations=()
+over_guideline=()
 
 while IFS= read -r -d '' file; do
     case "${file}" in
@@ -18,17 +22,25 @@ while IFS= read -r -d '' file; do
     line_count=$(awk 'END { print NR }' "${file}")
     ((checked_files += 1))
 
-    if (( line_count >= MAX_EXCLUSIVE_LINES )); then
-        violations+=("${line_count} ${file}")
+    if (( line_count >= GUIDELINE_LINES )); then
+        over_guideline+=("${line_count} ${file}")
     fi
 done < <(git ls-files -z)
 
-if (( ${#violations[@]} > 0 )); then
-    printf 'Tracked source files must remain below %d physical lines.\n' "${MAX_EXCLUSIVE_LINES}" >&2
-    printf '%s\n' "${violations[@]}" | sort -nr >&2
-    exit 1
+if (( ${#over_guideline[@]} > 0 )); then
+    printf 'Checked %d tracked source files; %d are at or over the %d-line guideline.\n' \
+        "${checked_files}" "${#over_guideline[@]}" "${GUIDELINE_LINES}"
+    printf 'Review each for mixed responsibilities (God files); length alone is not a failure.\n'
+    while IFS= read -r entry; do
+        printf '  %s\n' "${entry}"
+        if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+            printf '::warning file=%s::%s lines, over the %d-line guideline; check it is not a God file.\n' \
+                "${entry#* }" "${entry%% *}" "${GUIDELINE_LINES}"
+        fi
+    done < <(printf '%s\n' "${over_guideline[@]}" | sort -nr)
+    exit 0
 fi
 
-printf 'Checked %d tracked source files; all are below %d physical lines.\n' \
+printf 'Checked %d tracked source files; all are below the %d-line guideline.\n' \
     "${checked_files}" \
-    "${MAX_EXCLUSIVE_LINES}"
+    "${GUIDELINE_LINES}"

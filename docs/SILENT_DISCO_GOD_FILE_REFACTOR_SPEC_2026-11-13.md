@@ -5,7 +5,7 @@ Companion TODO: [SILENT_DISCO_GOD_FILE_REFACTOR_TODO_2026-11-13.md](SILENT_DISCO
 
 ## 1. Purpose
 
-Split the codebase's God files by **responsibility**, so that each unit owns one concern and its own state. This is not about line counts. The 800-line limit stays a guideline (owner decision 2026-11-05) and remains enforced by `scripts/check-source-file-line-counts.sh`. A file is a God file when it mixes unrelated responsibilities or shares mutable state across them, whatever its length.
+Split the codebase's God files by **responsibility**, so that each unit owns one concern and its own state. This is not about line counts. The 800-line limit is a guideline (owner decisions 2026-11-05 and 2026-11-13); since 2026-11-13 `scripts/check-source-file-line-counts.sh` only reports files over it for review and never fails. A file is a God file when it mixes unrelated responsibilities or shares mutable state across them, whatever its length.
 
 Success means:
 - every responsibility named in §4 has exactly one owner;
@@ -143,7 +143,7 @@ Feature screens get their own state holders driven by the controllers in §4. Th
 - No protocol, storage, schema or transport change.
 - No change to the desktop app.
 - No new dependency injection framework.
-- No change to the 800-line policy or its CI gate.
+- No further change to the 800-line policy. The owner relaxed it on 2026-11-13: the CI check now only reports files over 800 lines.
 
 ## 10. Decisions needed from the owner
 
