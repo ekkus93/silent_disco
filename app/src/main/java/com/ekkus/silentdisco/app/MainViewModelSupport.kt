@@ -1,7 +1,6 @@
 package com.ekkus.silentdisco.app
 
 internal fun MainViewModel.clearScanState() {
-    scanJob?.cancel()
-    scanJob = null
+    discovery.cancelScanWindow()
     _uiState.value = _uiState.value.copy(isScanning = false)
 }

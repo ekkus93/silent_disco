@@ -1,22 +1,15 @@
 package com.ekkus.silentdisco.app
 
-import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.BuildConfig
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 internal fun MainViewModel.scanForSessionsImpl() {
     if (!requirePersistenceReady("scan for sessions")) return
     logger.i("listener.scan", "Scanning for nearby sessions")
-    scanJob?.cancel()
+    discovery.cancelScanWindow()
     _uiState.value = _uiState.value.copy(lastMessage = "Scanning for nearby sessions…", lastError = null)
     ensureRustListenerCore().startDiscovery()
 
-    scanJob = viewModelScope.launch {
-        val scanWindowMs = _uiState.value.tuningSettings.normalized().scanWindowMs
-        delay(scanWindowMs)
-        refreshDiscoveredSessions()
-    }
+    discovery.startScanWindow(_uiState.value.tuningSettings.normalized().scanWindowMs)
 }
 
 internal fun MainViewModel.requestJoinImpl() {

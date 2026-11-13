@@ -9,6 +9,7 @@ import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.app.controller.DiagnosticsController
+import com.ekkus.silentdisco.app.controller.DiscoveryController
 import com.ekkus.silentdisco.app.controller.PersistenceController
 import com.ekkus.silentdisco.app.controller.ViewModelControllers
 import com.ekkus.silentdisco.core.audio.OboeBridge
@@ -132,6 +133,15 @@ class MainViewModel @JvmOverloads constructor(
             ),
         ),
     )
+    internal val discovery = controllers.add(
+        DiscoveryController(
+            parentScope = viewModelScope,
+            ble = bleService,
+            mdns = mdnsService,
+            wifiDirect = wifiDirectService,
+            listenerCore = { listenerCoreController },
+        ),
+    )
 
     /**
      * TLS keys signed into verified invitations, by session id. A listener joining
@@ -205,7 +215,6 @@ class MainViewModel @JvmOverloads constructor(
     internal var hostPlaybackCommandJob: Job? = null
     internal var playbackJob: Job? = null
     internal var resyncJob: Job? = null
-    internal var scanJob: Job? = null
     internal var pendingSyncCorrelationId: Long? = null
     /** Monotonic probe ids for the runtime-owned estimator. */
     internal var nextSyncCorrelationId: Long = 1

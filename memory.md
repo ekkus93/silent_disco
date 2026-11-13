@@ -1756,3 +1756,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T09:30:27Z - claude-opus-5-5 - God-file refactor §4: PersistenceController extracted
 - PersistenceController owns the domain store (no longer a MainViewModel property) and the persisted audio read grants; initialize reports a Result that the coordinator maps into AppUiState as before; store closes once. Full Android gate passed.
+
+## 2026-11-13T09:36:21Z - claude-opus-5-5 - God-file refactor §4: DiscoveryController extracted
+- DiscoveryController owns discovery radios start/stop, the scan window and reconciliation into the listener core; failure routing and the Wi-Fi Direct snapshot stay in the coordinator (shared radios). Full Android gate passed.

@@ -42,36 +42,9 @@ internal fun MainViewModel.startRustListenerDiscovery(
     controller: ListenerCoreController,
     effect: FfiPlatformEffect.StartDiscovery,
 ) {
-    // mDNS is a standard-IP convenience layer and does not require the
-    // Bluetooth/Wi-Fi-Direct nearby-device permission set. Start it first so
-    // a desktop host remains discoverable even when the user declines those
-    // optional radios; manual endpoint entry remains available regardless.
-    val mdnsResult = mdnsService.startDiscovery()
-    if (!hasListenerTransportPermissions()) {
-        if (mdnsResult.started) {
-            controller.platformOperationSucceeded(effect.operationId, FfiPlatformCompletion.DiscoveryStarted)
-        } else {
-            controller.platformOperationFailed(
-                effect.operationId,
-                mdnsResult.message ?: "Missing nearby connectivity permissions and mDNS discovery is unavailable",
-                true,
-            )
-        }
-        return
-    }
-
-    val bleResult = bleService.startScanning()
-    if (bleResult.started) {
-        wifiDirectService.discoverPeers()
-    }
-    if (mdnsResult.started || bleResult.started) {
-        controller.platformOperationSucceeded(effect.operationId, FfiPlatformCompletion.DiscoveryStarted)
-    } else {
-        controller.platformOperationFailed(
-            effect.operationId,
-            bleResult.message ?: mdnsResult.message ?: "No discovery backend could start",
-            true,
-        )
+    when (val failure = discovery.start(hasNearbyPermissions = hasListenerTransportPermissions())) {
+        null -> controller.platformOperationSucceeded(effect.operationId, FfiPlatformCompletion.DiscoveryStarted)
+        else -> controller.platformOperationFailed(effect.operationId, failure, true)
     }
 }
 
@@ -79,19 +52,7 @@ internal fun MainViewModel.stopRustListenerDiscovery(
     controller: ListenerCoreController,
     effect: FfiPlatformEffect.StopDiscovery,
 ) {
-    var firstFailure: RuntimeException? = null
-    fun attempt(action: () -> Unit) {
-        try {
-            action()
-        } catch (error: RuntimeException) {
-            val first = firstFailure
-            if (first == null) firstFailure = error else first.addSuppressed(error)
-        }
-    }
-    attempt(mdnsService::stopDiscovery)
-    attempt(bleService::stopScanning)
-    attempt(wifiDirectService::cancelDiscovery)
-    val failure = firstFailure
+    val failure = discovery.stop()
     if (failure == null) {
         controller.platformOperationSucceeded(effect.operationId, FfiPlatformCompletion.DiscoveryStopped)
     } else {
@@ -131,7 +92,7 @@ internal fun MainViewModel.establishRustListenerNetwork(
             controlPort = controlPort,
             syncPort = syncPort,
             audioPort = audioPort,
-            protocolVersion = mdnsService.discoveredSessions.value
+            protocolVersion = discovery.mdnsSessions.value
                 .firstOrNull { it.sessionId == effect.sessionId }
                 ?.protocolVersion
                 ?: SECURE_TRANSPORT_ENDPOINT_VERSION,

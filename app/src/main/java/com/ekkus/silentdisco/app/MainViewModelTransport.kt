@@ -11,16 +11,7 @@ import com.ekkus.silentdisco.core.transport.classifyBroadcastDelivery
 import kotlinx.coroutines.launch
 
     internal fun MainViewModel.observeDiscovery() {
-        viewModelScope.launch {
-            bleService.discoveredSessions.collect {
-                refreshDiscoveredSessions()
-            }
-        }
-        viewModelScope.launch {
-            mdnsService.discoveredSessions.collect {
-                refreshDiscoveredSessions()
-            }
-        }
+        discovery.observe()
         viewModelScope.launch {
             wifiDirectService.snapshot.collect { snapshot ->
                 refreshDiscoveredSessions()
@@ -175,33 +166,4 @@ import kotlinx.coroutines.launch
      * wins because it carries the already-bound standard-IP endpoint and can
      * skip Wi-Fi Direct establishment entirely.
      */
-    internal fun MainViewModel.refreshDiscoveredSessions() {
-        val controller = listenerCoreController ?: return
-        // Only reconcile while the core is discovering (Block 52.3). Stopping
-        // mDNS clears its list, so reconciling afterwards expired the session
-        // the listener had just joined, and resubmitted results the core
-        // rejects once discovery is inactive. Results already found when
-        // discovery starts are submitted by the snapshot handler instead.
-        if (controller.snapshots.value?.discoveryActive != true) return
-        val mdnsSessions = mdnsService.discoveredSessions.value
-            .distinctBy { it.sessionId }
-            .sortedBy { it.sessionName }
-        val mdnsSessionIds = mdnsSessions.map { it.sessionId }.toSet()
-        val bleSessions = bleService.discoveredSessions.value
-            .filter { it.id !in mdnsSessionIds }
-            .distinctBy { it.id }
-            .sortedBy { it.name }
-
-        // Re-submit current advertisements, not only new IDs. The Rust actor
-        // replaces an existing advertisement with the same session ID, which
-        // is how an endpoint-less BLE discovery is upgraded when mDNS later
-        // resolves the same desktop session.
-        mdnsSessions.forEach { controller.submitSessionDiscovered(it.toFfiSessionAdvertisement()) }
-        bleSessions.forEach { controller.submitSessionDiscovered(it.toFfiSessionAdvertisement()) }
-
-        val desiredSessionIds = mdnsSessionIds + bleSessions.map { it.id }
-        val known = controller.snapshots.value?.discoveredSessions.orEmpty()
-            .map { it.sessionId }
-            .toSet()
-        (known - desiredSessionIds).forEach(controller::submitSessionExpired)
-    }
+    internal fun MainViewModel.refreshDiscoveredSessions() = discovery.reconcile()
