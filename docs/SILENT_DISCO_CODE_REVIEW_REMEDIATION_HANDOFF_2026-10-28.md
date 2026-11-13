@@ -881,3 +881,19 @@ Measured on the isolated test: 6 failures in 40 runs before; 0 in 80 after. Full
 adb drives the phone; a person scans the QR only when the log prints `>>> SCAN THE QR NOW`. Capture `adb logcat` and grep `manual.control` (control receipt) and `manual.audio.summary`.
 
 **Environment notes.** The machine has 7 GiB of RAM; Claude Code stops background jobs under memory pressure, and other projects' dev servers compete. Launch the desktop app with `GDK_BACKEND=x11 NO_COLOR=1 CARGO_TERM_COLOR=never npm run tauri dev` from `desktop/` (X11 so the window can be checked with `xwininfo`; no colour so readiness can be grepped). Never `pkill -f`/`pgrep -f` with a pattern that also matches the calling shell's command line (exit 144).
+
+## 52. 2026-11-13 — The secure-transport switch is saved with the desktop profile
+
+**Owner decision (2026-11-13).** Persist the "Secure transport (v4, experimental)" switch across launches (it used to reset to off every launch, §51 open item 3). Still off by default.
+
+**Change.**
+- Core storage: migration v4 (`LATEST_SCHEMA_VERSION` 4) adds `app_settings.secure_transport INTEGER NOT NULL DEFAULT 0 CHECK (secure_transport IN (0, 1))`, so an upgraded profile keeps hosting v3. `StoredSettings.secure_transport`; the repository reads, writes and validates it (0/1 decoding shared with `allow_shared_address_space`).
+- Desktop: both network switches now go through `app_state/network_policy.rs` (moved out of `host_ops.rs`): apply to the live network control first (so a change while hosting is refused and never saved), then save, and restore the previous in-memory value if saving fails. Profile open seeds the switch from settings (`construct.rs`). Saving tuning carries both switches forward (`storage_effect_runner.rs`).
+- Android: the JNI settings conversion writes `secure_transport: false` (no Android surface; Android picks v4 per invitation).
+- UI: the switch's description now says it is saved with the profile, and no longer says Android listeners cannot join (they can, via the signed invitation QR, §46).
+
+**Tests.** Core: a profile written at schema 3 upgrades with the switch off and keeps its other settings; the switch survives a reopen. Desktop: a real profile restores v4 after close and reopen, and restores off too; saving one switch keeps the other; saving tuning keeps both. Mutations killed: skipping the restore at profile open; dropping the switch when tuning is saved.
+
+**Gates.** `check-rust.sh` passed (core 689); desktop `cargo test --locked --all-features` 415 passed, clippy clean, `npm run check` passed (196 Vitest tests); `./gradlew test lintDebug` BUILD SUCCESSFUL; line-count check passed.
+
+**Still open.** Phase 4 (removing plaintext v3, owner's decision); the two-listener v4 test (deferred); the UI redesign (owner, later).

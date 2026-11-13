@@ -25,6 +25,12 @@ pub struct StoredSettings {
     /// synchronization parameter. Defaults to `false`: shared address space is
     /// not a private LAN, and opting in is an explicit operator decision.
     pub allow_shared_address_space: bool,
+    /// Whether the host binds secure transport (v4 QUIC) instead of v3.
+    ///
+    /// Host transport policy, persisted so the operator's choice survives a
+    /// restart (owner decision 2026-11-13). Defaults to `false`: v4 locks out
+    /// v3 listeners, so turning it on is an explicit operator decision.
+    pub secure_transport: bool,
     pub updated_at_ms: u64,
 }
 
@@ -507,6 +513,7 @@ mod tests {
         let settings = StoredSettings {
             tuning: TuningSettings::default(),
             allow_shared_address_space: false,
+            secure_transport: false,
             updated_at_ms: 1,
         };
         assert_eq!(settings.validate(), Ok(()));

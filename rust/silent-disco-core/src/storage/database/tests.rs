@@ -21,6 +21,7 @@ fn upgraded_profile_defaults_to_refusing_shared_address_space() {
     let settings = StoredSettings {
         tuning: TuningSettings::default(),
         allow_shared_address_space: false,
+        secure_transport: false,
         updated_at_ms: 7,
     };
     connection
@@ -44,6 +45,7 @@ fn shared_address_space_opt_in_survives_reopen() {
     let settings = StoredSettings {
         tuning: TuningSettings::default(),
         allow_shared_address_space: true,
+        secure_transport: false,
         updated_at_ms: 11,
     };
     connection
@@ -63,6 +65,76 @@ fn shared_address_space_opt_in_survives_reopen() {
     let _ = reopened.checkpoint_and_close();
 }
 
+// Migration v4 adds the secure-transport switch. A profile created before it
+// must still host v3 after the upgrade: v4 locks out v3 listeners, so it must
+// never turn itself on.
+#[test]
+fn a_profile_saved_at_schema_3_upgrades_with_secure_transport_off() {
+    let test_path = TestDatabasePath::new("database-v4-upgrade");
+    let config = DatabaseConfig::new(test_path.path()).expect("valid config");
+    let mut connection = DatabaseConnection::open(&config).expect("database opens");
+    connection
+        .save_settings(&StoredSettings {
+            tuning: TuningSettings::default(),
+            allow_shared_address_space: true,
+            secure_transport: false,
+            updated_at_ms: 5,
+        })
+        .expect("settings persist");
+    let _ = connection.checkpoint_and_close();
+
+    // Turn the file back into a schema-3 profile: drop the v4 column and
+    // its migration record, as a database written by the previous release.
+    {
+        let raw = Connection::open(test_path.path()).expect("raw open");
+        raw.execute_batch(
+            "ALTER TABLE app_settings DROP COLUMN secure_transport;
+             PRAGMA user_version = 3;",
+        )
+        .expect("rewind to schema 3");
+        raw.execute("DELETE FROM schema_migrations WHERE version = 4", [])
+            .expect("forget migration 4");
+    }
+
+    let upgraded = DatabaseConnection::open(&config).expect("schema 3 profile upgrades");
+    assert_eq!(upgraded.metadata().schema_version, 4);
+    let loaded = upgraded
+        .load_settings()
+        .expect("settings reload")
+        .expect("settings row exists");
+    assert!(!loaded.secure_transport);
+    assert!(
+        loaded.allow_shared_address_space,
+        "earlier settings survive"
+    );
+    let _ = upgraded.checkpoint_and_close();
+}
+
+#[test]
+fn secure_transport_switch_survives_reopen() {
+    let test_path = TestDatabasePath::new("database-v4-on");
+    let config = DatabaseConfig::new(test_path.path()).expect("valid config");
+    let mut connection = DatabaseConnection::open(&config).expect("database opens");
+    let settings = StoredSettings {
+        tuning: TuningSettings::default(),
+        allow_shared_address_space: false,
+        secure_transport: true,
+        updated_at_ms: 13,
+    };
+    connection
+        .save_settings(&settings)
+        .expect("settings persist");
+    let _ = connection.checkpoint_and_close();
+
+    let reopened = DatabaseConnection::open(&config).expect("database reopens");
+    let loaded = reopened
+        .load_settings()
+        .expect("settings reload")
+        .expect("settings row exists");
+    assert_eq!(loaded, settings);
+    let _ = reopened.checkpoint_and_close();
+}
+
 #[test]
 fn verifies_durable_connection_policy_and_latest_schema() {
     let test_path = TestDatabasePath::new("database-policy");
@@ -75,7 +147,7 @@ fn verifies_durable_connection_policy_and_latest_schema() {
     assert_eq!(u64::from(metadata.busy_timeout_ms), DEFAULT_BUSY_TIMEOUT_MS);
     assert_eq!(metadata.synchronous_policy, SynchronousPolicy::Full);
     assert_eq!(metadata.schema_version, LATEST_SCHEMA_VERSION);
-    assert_eq!(metadata.applied_migrations.len(), 3);
+    assert_eq!(metadata.applied_migrations.len(), 4);
     assert_eq!(metadata.integrity_check, "ok");
     assert!(!metadata.owner_thread_name.is_empty());
     connection
@@ -264,6 +336,7 @@ fn concurrent_writer_produces_busy_not_silent_fallback() {
     let settings = StoredSettings {
         tuning: TuningSettings::default(),
         allow_shared_address_space: false,
+        secure_transport: false,
         updated_at_ms: 5,
     };
     let error = connection

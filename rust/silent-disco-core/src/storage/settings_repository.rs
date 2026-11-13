@@ -18,6 +18,7 @@ struct RawSettings {
     sync_drift_threshold_ms: f64,
     scan_window_ms: i64,
     allow_shared_address_space: i64,
+    secure_transport: i64,
     updated_at_ms: i64,
 }
 
@@ -36,6 +37,7 @@ pub(crate) fn load(
                  sync_drift_threshold_ms,
                  scan_window_ms,
                  allow_shared_address_space,
+                 secure_transport,
                  updated_at_ms
              FROM app_settings
              WHERE id = 1",
@@ -50,7 +52,8 @@ pub(crate) fn load(
                     sync_drift_threshold_ms: row.get(5)?,
                     scan_window_ms: row.get(6)?,
                     allow_shared_address_space: row.get(7)?,
-                    updated_at_ms: row.get(8)?,
+                    secure_transport: row.get(8)?,
+                    updated_at_ms: row.get(9)?,
                 })
             },
         )
@@ -118,8 +121,9 @@ pub(crate) fn save(
                  sync_drift_threshold_ms,
                  scan_window_ms,
                  allow_shared_address_space,
+                 secure_transport,
                  updated_at_ms
-             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(id) DO UPDATE SET
                  sync_sample_window = excluded.sync_sample_window,
                  sync_cadence_ms = excluded.sync_cadence_ms,
@@ -129,6 +133,7 @@ pub(crate) fn save(
                  sync_drift_threshold_ms = excluded.sync_drift_threshold_ms,
                  scan_window_ms = excluded.scan_window_ms,
                  allow_shared_address_space = excluded.allow_shared_address_space,
+                 secure_transport = excluded.secure_transport,
                  updated_at_ms = excluded.updated_at_ms",
             params![
                 i64::from(settings.tuning.sync_sample_window),
@@ -139,6 +144,7 @@ pub(crate) fn save(
                 settings.tuning.sync_drift_threshold_ms,
                 scan_window_ms,
                 i64::from(settings.allow_shared_address_space),
+                i64::from(settings.secure_transport),
                 updated_at_ms,
             ],
         )
@@ -148,6 +154,20 @@ pub(crate) fn save(
     transaction.commit().map_err(|error| {
         map_sqlite_error(StorageOperation::Transaction, Some(schema_version), &error)
     })
+}
+
+/// Stored as 0/1 by the column's CHECK constraint; anything else means the
+/// row was written by something that bypassed it.
+fn decode_flag(value: i64, column: &str, schema_version: u32) -> Result<bool, StorageError> {
+    match value {
+        0 => Ok(false),
+        1 => Ok(true),
+        other => Err(corrupt_row(
+            StorageOperation::Query,
+            schema_version,
+            format!("{column} must be 0 or 1, found {other}"),
+        )),
+    }
 }
 
 fn decode(raw: RawSettings, schema_version: u32) -> Result<StoredSettings, StorageError> {
@@ -191,19 +211,12 @@ fn decode(raw: RawSettings, schema_version: u32) -> Result<StoredSettings, Stora
                 "scan_window_ms",
             )?,
         },
-        // Stored as 0/1 by the column's CHECK constraint; anything else means
-        // the row was written by something that bypassed it.
-        allow_shared_address_space: match raw.allow_shared_address_space {
-            0 => false,
-            1 => true,
-            other => {
-                return Err(corrupt_row(
-                    StorageOperation::Query,
-                    schema_version,
-                    format!("allow_shared_address_space must be 0 or 1, found {other}"),
-                ));
-            }
-        },
+        allow_shared_address_space: decode_flag(
+            raw.allow_shared_address_space,
+            "allow_shared_address_space",
+            schema_version,
+        )?,
+        secure_transport: decode_flag(raw.secure_transport, "secure_transport", schema_version)?,
         updated_at_ms: from_sql_u64(
             raw.updated_at_ms,
             StorageOperation::Query,

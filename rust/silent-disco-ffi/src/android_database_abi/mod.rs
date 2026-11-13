@@ -291,6 +291,9 @@ fn settings_from_jni(fields: JniSettingsFields) -> Result<StoredSettings, Androi
         // to shared address space. If Android host mode ever gains one, this
         // conversion must carry the value instead of resetting it.
         allow_shared_address_space: false,
+        // Same as above: the desktop secure-transport switch has no Android
+        // surface. Android chooses v4 per invitation, not from settings.
+        secure_transport: false,
         updated_at_ms: u64::try_from(fields.updated_at_ms)
             .map_err(|_| AndroidDatabaseStatus::InvalidArgument)?,
     })

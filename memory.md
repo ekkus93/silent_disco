@@ -1719,3 +1719,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-12T18:04:36Z - claude-opus-5-5 - Session pause: handoff §51
 - Owner paused the work. Pick-up notes are in handoff §51 (state at 3c408c3c, open items: phase 4 owner decision, two-listener test deferred, optional switch persistence, UI redesign later; device rerun command; environment notes).
+
+## 2026-11-13T05:43:41Z - claude-opus-5-5 - Secure-transport switch now persisted
+- Owner chose to persist the desktop "Secure transport (v4)" switch. Core schema migration v4 adds `app_settings.secure_transport` (default 0). Desktop setters live in `desktop/src-tauri/src/app_state/network_policy.rs` (apply, save, roll back on failure); restored at profile open; tuning saves carry it forward. Android JNI writes false.
+- Gates: Rust gate, desktop 415 + clippy + npm check, Android test lintDebug all passed. Two mutations killed. Handoff §52.

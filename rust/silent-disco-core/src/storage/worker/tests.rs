@@ -93,6 +93,7 @@ fn typed_repositories_round_trip_domain_records() {
     let settings = StoredSettings {
         tuning: TuningSettings::default(),
         allow_shared_address_space: false,
+        secure_transport: false,
         updated_at_ms: 100,
     };
     client.save_settings(&settings).expect("save settings");
@@ -380,6 +381,7 @@ fn queued_write_order_is_serialized_by_the_worker() {
             ..TuningSettings::default()
         },
         allow_shared_address_space: false,
+        secure_transport: false,
         updated_at_ms: 1,
     };
     let second = StoredSettings {
@@ -388,6 +390,7 @@ fn queued_write_order_is_serialized_by_the_worker() {
             ..TuningSettings::default()
         },
         allow_shared_address_space: false,
+        secure_transport: false,
         updated_at_ms: 2,
     };
     let (first_sender, first_receiver) = sync_channel(1);
@@ -460,6 +463,7 @@ fn shutdown_waits_for_an_accepted_queued_write_then_checkpoints_and_joins() {
             ..TuningSettings::default()
         },
         allow_shared_address_space: false,
+        secure_transport: false,
         updated_at_ms: 77,
     };
     let (write_sender, write_receiver) = sync_channel(1);

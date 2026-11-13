@@ -260,8 +260,8 @@ export function HostNetworkPolicyCard({ available, disabled }: HostNetworkPolicy
                 <span className="font-semibold">Secure transport (v4, experimental)</span>
                 <span className="mt-1 block text-violet-100/65">
                   Encrypts control and audio separately for each listener over QUIC. Only listeners
-                  that support secure transport can join; current Android listeners cannot yet.
-                  Resets to off when the app restarts.
+                  that support secure transport can join; Android listeners join by scanning the
+                  signed invitation QR. Saved with this profile.
                 </span>
               </span>
             </label>

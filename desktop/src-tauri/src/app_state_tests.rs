@@ -513,3 +513,83 @@ fn a_poisoned_notification_state_is_visible_in_diagnostics_not_hidden_as_healthy
         .release()
         .expect("release verification lease");
 }
+
+/// Owner decision 2026-11-13: the secure-transport switch survives a
+/// restart. A fresh profile starts on v3; turning v4 on is saved and the
+/// reopened profile starts on v4; turning it off is saved too.
+#[test]
+fn the_secure_transport_switch_is_restored_when_the_profile_reopens() {
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    let state = DesktopAppState::new();
+    let open = |state: &DesktopAppState| {
+        state
+            .open_profile_sync(
+                &paths,
+                id.clone(),
+                &FixedIdentityProvider([12; 32]),
+                &FixedSigningIdentityProvider(12),
+                Arc::new(DesktopNotificationBuffer::new()),
+            )
+            .expect("open profile");
+    };
+    let secure_after_reopen = |state: &DesktopAppState| {
+        state.close_sync().expect("close");
+        open(state);
+        state
+            .host_network_snapshot()
+            .expect("network snapshot")
+            .secure_transport
+    };
+
+    open(&state);
+    assert!(
+        !state
+            .host_network_snapshot()
+            .expect("snapshot")
+            .secure_transport,
+        "a fresh profile hosts v3"
+    );
+    assert!(
+        state
+            .set_secure_transport(true)
+            .expect("turn on")
+            .secure_transport
+    );
+    assert!(
+        secure_after_reopen(&state),
+        "v4 is restored after a restart"
+    );
+
+    assert!(
+        !state
+            .set_secure_transport(false)
+            .expect("turn off")
+            .secure_transport
+    );
+    assert!(!secure_after_reopen(&state), "off is restored too");
+    state.close_sync().expect("final close");
+}
+
+/// Saving one network switch must not reset the other.
+#[test]
+fn saving_one_network_switch_keeps_the_other() {
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    let state = DesktopAppState::new();
+    state
+        .open_profile_sync(
+            &paths,
+            id,
+            &FixedIdentityProvider([13; 32]),
+            &FixedSigningIdentityProvider(13),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect("open profile");
+    state.set_secure_transport(true).expect("turn on v4");
+    let snapshot = state
+        .set_allow_shared_address_space(true)
+        .expect("opt in to shared address space");
+    assert!(snapshot.secure_transport && snapshot.allow_shared_address_space);
+    state.close_sync().expect("close");
+}

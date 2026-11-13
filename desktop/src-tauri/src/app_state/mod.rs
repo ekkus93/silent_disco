@@ -34,6 +34,7 @@ mod construct;
 mod errors;
 mod host_ops;
 mod lifecycle;
+mod network_policy;
 mod state;
 
 use construct::open_runtime;

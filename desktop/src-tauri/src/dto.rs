@@ -460,6 +460,7 @@ mod tests {
             settings: Some(StoredSettings {
                 tuning: TuningSettings::default(),
                 allow_shared_address_space: false,
+                secure_transport: false,
                 updated_at_ms: u64::MAX,
             }),
             trusted_devices: vec![TrustedDevice {

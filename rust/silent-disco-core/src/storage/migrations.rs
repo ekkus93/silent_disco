@@ -4,7 +4,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use super::error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error};
 
-pub const LATEST_SCHEMA_VERSION: u32 = 3;
+pub const LATEST_SCHEMA_VERSION: u32 = 4;
 
 const MIGRATION_V1_SQL: &str = r"
 CREATE TABLE schema_migrations (
@@ -123,6 +123,15 @@ ALTER TABLE app_settings
     CHECK (allow_shared_address_space IN (0, 1));
 ";
 
+// Host transport policy: whether the operator has turned on secure transport
+// (v4 QUIC), which locks out v3 listeners. Defaults to 0 so an upgraded
+// profile keeps hosting v3, exactly as it did before this column existed.
+const MIGRATION_V4_SQL: &str = r"
+ALTER TABLE app_settings
+    ADD COLUMN secure_transport INTEGER NOT NULL DEFAULT 0
+    CHECK (secure_transport IN (0, 1));
+";
+
 #[derive(Debug, Clone, Copy)]
 struct Migration {
     version: u32,
@@ -147,6 +156,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 3,
         sql: MIGRATION_V3_SQL,
+    },
+    Migration {
+        version: 4,
+        sql: MIGRATION_V4_SQL,
     },
 ];
 
@@ -449,7 +462,7 @@ THIS IS NOT VALID SQL;
         let mut connection = Connection::open(test_path.path()).expect("open temporary database");
         let first = run_migrations(&mut connection).expect("empty database migrates");
         assert_eq!(first.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(first.records.len(), 3);
+        assert_eq!(first.records.len(), 4);
         drop(connection);
 
         let mut reopened = Connection::open(test_path.path()).expect("reopen temporary database");

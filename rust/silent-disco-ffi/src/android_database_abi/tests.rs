@@ -40,6 +40,7 @@ fn registry_opens_imports_loads_and_closes_database() {
         settings: StoredSettings {
             tuning: TuningSettings::default(),
             allow_shared_address_space: false,
+            secure_transport: false,
             updated_at_ms: 10,
         },
         trusted_devices: Vec::new(),

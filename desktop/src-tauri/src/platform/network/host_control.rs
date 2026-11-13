@@ -69,8 +69,9 @@ pub(super) struct NetworkState {
     /// listeners with a visible reason; plaintext listeners are unaffected.
     pub(super) secure_control: Option<Arc<HostTlsIdentity>>,
     /// Operator opt-in to secure transport (v4 QUIC), owner decision
-    /// 2026-11-12. Off by default and not persisted, so every launch starts
-    /// on v3. On, the next host binds QUIC only and v3 listeners cannot join.
+    /// 2026-11-12. Off by default; seeded from persisted settings when the
+    /// profile opens (owner decision 2026-11-13). On, the next host binds
+    /// QUIC only and v3 listeners cannot join.
     pub(super) secure_transport: bool,
     pub(super) active: Option<ActiveBinding>,
 }

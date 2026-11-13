@@ -226,14 +226,23 @@ pub(super) fn open_runtime(
     // toggled it again, which is indistinguishable from not persisting at all.
     // A read failure is not fatal: it leaves the conservative default in
     // place, and the storage failure surfaces through its own diagnostics.
-    if let Ok(Some(settings)) = database.client().load_settings()
-        && settings.allow_shared_address_space
-        && let Err(error) = network.set_allow_shared_address_space(true)
-    {
-        eprintln!(
-            "persisted shared-address-space opt-in could not be applied at profile open: {}",
-            error.code
-        );
+    if let Ok(Some(settings)) = database.client().load_settings() {
+        if settings.allow_shared_address_space
+            && let Err(error) = network.set_allow_shared_address_space(true)
+        {
+            eprintln!(
+                "persisted shared-address-space opt-in could not be applied at profile open: {}",
+                error.code
+            );
+        }
+        if settings.secure_transport
+            && let Err(error) = network.set_secure_transport(true)
+        {
+            eprintln!(
+                "persisted secure-transport switch could not be applied at profile open: {}",
+                error.code
+            );
+        }
     }
 
     let snapshot = CoreSnapshotDto::from(current_snapshot);

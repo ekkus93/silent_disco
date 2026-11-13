@@ -177,15 +177,16 @@ fn persist_settings(
     database: &DatabaseClient,
     settings: silent_disco_core::domain::TuningSettings,
 ) -> Result<StorageCompletion, StorageError> {
-    // `save_settings` writes the whole row, so the network-policy opt-in must
-    // be carried forward explicitly. Without this, saving tuning would
+    // `save_settings` writes the whole row, so the network-policy switches
+    // must be carried forward explicitly. Without this, saving tuning would
     // silently revoke an opt-in the operator made in Settings.
-    let allow_shared_address_space = database
-        .load_settings()?
-        .is_some_and(|existing| existing.allow_shared_address_space);
+    let existing = database.load_settings()?;
     database.save_settings(&StoredSettings {
         tuning: settings,
-        allow_shared_address_space,
+        allow_shared_address_space: existing
+            .as_ref()
+            .is_some_and(|existing| existing.allow_shared_address_space),
+        secure_transport: existing.is_some_and(|existing| existing.secure_transport),
         updated_at_ms: unix_time_ms(),
     })?;
     Ok(StorageCompletion::SettingsSaved)
@@ -244,4 +245,46 @@ fn storage_core_error(error: StorageError, operation_id: OperationId) -> CoreErr
         error.retryable,
         Some(operation_id),
     )
+}
+
+#[cfg(test)]
+mod persist_settings_tests {
+    use super::persist_settings;
+    use silent_disco_core::domain::TuningSettings;
+    use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker, StoredSettings};
+
+    /// Saving tuning rewrites the whole settings row; it must keep both
+    /// network switches the operator turned on.
+    #[test]
+    fn saving_tuning_keeps_the_network_switches() {
+        let directory = tempfile::tempdir().expect("temporary profile directory");
+        let path = directory.path().join("domain.sqlite3");
+        let worker = DatabaseWorker::start(DatabaseConfig::new(path).expect("database config"))
+            .expect("database worker");
+        let database = worker.client();
+        database
+            .save_settings(&StoredSettings {
+                tuning: TuningSettings::default(),
+                allow_shared_address_space: true,
+                secure_transport: true,
+                updated_at_ms: 1,
+            })
+            .expect("seed switches");
+
+        let tuning = TuningSettings {
+            startup_buffer_ms: TuningSettings::default().startup_buffer_ms + 20,
+            ..TuningSettings::default()
+        };
+        persist_settings(&database, tuning.clone()).expect("save tuning");
+
+        let saved = database
+            .load_settings()
+            .expect("reload")
+            .expect("settings row");
+        assert_eq!(saved.tuning, tuning);
+        assert!(saved.allow_shared_address_space);
+        assert!(saved.secure_transport);
+        drop(database);
+        worker.stop_and_join().expect("database worker shutdown");
+    }
 }
