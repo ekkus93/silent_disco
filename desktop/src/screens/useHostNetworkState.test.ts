@@ -31,6 +31,7 @@ function snapshot(
     interfaceChange: null,
     allowSharedAddressSpace: false,
     secureTransport: false,
+    legacyTransportAvailable: true,
     ...overrides,
   };
 }

@@ -95,10 +95,16 @@ export type NetworkInterfaceSnapshotDto = { preference: NetworkBindPreferenceDto
  */
 allowSharedAddressSpace: boolean,
 /**
- * Whether the next host start uses secure transport (v4 QUIC). Off by
- * default and reset on every launch; v3 listeners cannot join a v4 host.
+ * Whether the next host start uses secure transport (v4 QUIC); v3
+ * listeners cannot join a v4 host. Always true when
+ * `legacy_transport_available` is false.
  */
-secureTransport: boolean, };
+secureTransport: boolean,
+/**
+ * Whether this build can host plaintext v3 at all (Lab Mode builds and
+ * tests only). When false the UI shows v4 as fixed, not as a switch.
+ */
+legacyTransportAvailable: boolean, };
 
 export type CommandReceiptDto = { operationId: string, acceptedAtRevision: string, };
 

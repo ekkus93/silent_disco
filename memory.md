@@ -1726,3 +1726,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T05:53:36Z - claude-opus-5-5 - Phase 4 decisions (remove plaintext v3)
 - Owner: QR-only joins (no fingerprint/TOFU); v3 code kept only for Lab Mode and tests, never selectable in release; Android host mode moves to v4. Plan in handoff §53.
+
+## 2026-11-13T06:19:02Z - claude-opus-5-5 - Phase 4 step 1: desktop hosts v4 only in release builds
+- `legacy_v3_available` on the desktop network control (`production()` = lab-mode only). Snapshot field `legacy_transport_available`; UI shows v4 fixed. Flaky rejoin test fixed (stale-revision approval race). CI runs desktop tests only with --all-features, so release-only tests need a default `cargo test` locally. Handoff §53.1.

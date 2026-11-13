@@ -247,31 +247,42 @@ export function HostNetworkPolicyCard({ available, disabled }: HostNetworkPolicy
             </label>
           </div>
 
-          <div className="rounded-xl border border-violet-200/15 bg-black/20 p-3">
-            <label className="flex items-start gap-3 text-sm">
-              <input
-                type="checkbox"
-                checked={snapshot.secureTransport}
-                disabled={controlsDisabled}
-                onChange={(event) => void changeSecureTransport(event.target.checked)}
-                className="mt-1"
-              />
-              <span>
-                <span className="font-semibold">Secure transport (v4, experimental)</span>
-                <span className="mt-1 block text-violet-100/65">
-                  Encrypts control and audio separately for each listener over QUIC. Only listeners
-                  that support secure transport can join; Android listeners join by scanning the
-                  signed invitation QR. Saved with this profile.
+          {snapshot.legacyTransportAvailable ? (
+            <div className="rounded-xl border border-violet-200/15 bg-black/20 p-3">
+              <label className="flex items-start gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={snapshot.secureTransport}
+                  disabled={controlsDisabled}
+                  onChange={(event) => void changeSecureTransport(event.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="font-semibold">Secure transport (v4, experimental)</span>
+                  <span className="mt-1 block text-violet-100/65">
+                    Encrypts control and audio separately for each listener over QUIC. Only
+                    listeners that support secure transport can join; Android listeners join by
+                    scanning the signed invitation QR. Saved with this profile.
+                  </span>
                 </span>
-              </span>
-            </label>
-            {snapshot.secureTransport ? (
-              <p role="status" className="mt-2 text-sm text-amber-200">
-                Secure transport is on: listeners using the older protocol (v3) cannot join this
-                host.
+              </label>
+              {snapshot.secureTransport ? (
+                <p role="status" className="mt-2 text-sm text-amber-200">
+                  Secure transport is on: listeners using the older protocol (v3) cannot join this
+                  host.
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-violet-200/15 bg-black/20 p-3 text-sm">
+              <p className="font-semibold">Secure transport (v4)</p>
+              <p className="mt-1 text-violet-100/65">
+                Control and audio are encrypted separately for each listener over QUIC. Listeners
+                join by scanning the signed invitation QR; listeners using the older protocol (v3)
+                cannot join.
               </p>
-            ) : null}
-          </div>
+            </div>
+          )}
         </div>
       ) : null}
 

@@ -58,6 +58,7 @@ function networkSnapshot(overrides: Partial<NetworkInterfaceSnapshotDto> = {}) {
     interfaceChange: null,
     allowSharedAddressSpace: false,
     secureTransport: false,
+    legacyTransportAvailable: true,
     ...overrides,
   } satisfies NetworkInterfaceSnapshotDto;
 }
@@ -304,5 +305,22 @@ describe("HostNetworkPolicyCard", () => {
     const toggle = await screen.findByLabelText(/Secure transport \(v4, experimental\)/);
     expect(toggle).toBeChecked();
     expect(toggle).toBeDisabled();
+  });
+
+  // Phase 4 (owner decision 2026-11-13): a release build cannot host v3, so
+  // there is no switch to flip, only a statement of what the host uses.
+  it("shows secure transport as fixed, with no switch, when v3 is unavailable", async () => {
+    getHostNetworkState.mockResolvedValue(
+      networkSnapshot({ secureTransport: true, legacyTransportAvailable: false }),
+    );
+
+    render(<HostNetworkPolicyCard available disabled={false} />);
+
+    expect(await screen.findByText("Secure transport (v4)")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/Secure transport \(v4, experimental\)/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/older protocol \(v3\)\s+cannot join/)).toBeInTheDocument();
+    expect(setSecureTransport).not.toHaveBeenCalled();
   });
 });

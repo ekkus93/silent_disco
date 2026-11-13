@@ -906,3 +906,12 @@ adb drives the phone; a person scans the QR only when the log prints `>>> SCAN T
 3. Android host mode: **moves to v4** (QUIC with its existing Keystore TLS key).
 
 **Plan (one commit per step, gates each time).** (1) Desktop: release builds always host v4; the v3 switch exists only in Lab Mode builds. (2) Android listener: discovery and manual joins stop opening v3 and route to the QR; release builds refuse v3 endpoints with a visible reason. (3) Android host mode binds QUIC and advertises v4. (4) A54 device run; docs.
+
+### 53.1 Step 1 done: the desktop hosts v4 only in release builds
+
+- `DesktopHostNetworkControl` has `legacy_v3_available`; `production()` sets it to `cfg!(feature = "lab-mode")`, `with_components` (tests) keeps v3. When v3 is unavailable the host always binds QUIC and advertises version 4, turning v4 off is refused ("plaintext v3 hosting is not available in this build"), and without a host TLS identity it refuses to host instead of falling back.
+- The network snapshot carries `legacy_transport_available`; the policy card shows "Secure transport (v4)" as fixed text instead of the switch when it is false. The persisted switch (§52) now only matters in Lab Mode builds.
+- Tests: release build always hosts v4 and refuses off; release build without TLS identity refuses to host; test/lab builds keep the switch; `production()` offers v3 only in Lab Mode (runs in both feature sets); a release profile opens on v4 and cannot switch to v3 (`cfg(not(feature = "lab-mode"))`); the §52 persistence test is now Lab Mode only; Vitest for the fixed view. Mutation (release `production()` allowing v3) killed by two tests.
+- Fixed a flaky test from §49: `a_v4_listener_that_rejoins_after_disconnecting…` approved the rejoin with a snapshot revision that playback had already advanced, so the actor refused it as stale and the test timed out (1 of 4 full runs). It ran for the first time in full suites because this machine is now on a private LAN (192.168.87.x), not 100.64.x. The test now resubmits the approval with a fresh revision (`approve_pending_join`). Test race only, no product change.
+- CI gap: CI runs desktop Rust tests only with `--all-features` (Lab Mode on), so the two `cfg(not(feature = "lab-mode"))` release checks run only in a default `cargo test`. Adding a default-feature desktop test step to CI is the owner's call.
+- Gates: desktop `cargo test --locked --all-features` 419 and default 316, each passing three times in a row; clippy clean in both feature sets; `npm run check` passed (197 Vitest); line counts passed.

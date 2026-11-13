@@ -81,6 +81,10 @@ pub(crate) struct DesktopHostNetworkControl {
     transport_factory: Arc<dyn TransportFactory>,
     /// Used instead of `transport_factory` while secure transport is on.
     secure_factory: Arc<dyn TransportFactory>,
+    /// Whether this build may host plaintext v3 at all. Phase 4 (owner
+    /// decision 2026-11-13): release builds host v4 only, so v3 stays
+    /// selectable only in Lab Mode builds and tests.
+    legacy_v3_available: bool,
     ports: HostPorts,
     mdns: Arc<dyn MdnsPublisher>,
     pub(in crate::platform) monitor: Arc<DesktopMonitorControl>,
@@ -97,6 +101,22 @@ impl DesktopHostNetworkControl {
         )
         .with_mdns_publisher(Arc::new(MdnsSdPublisher::new()))
         .with_monitor_backend(Arc::new(CpalAudioOutputBackend))
+        .with_legacy_v3(cfg!(feature = "lab-mode"))
+    }
+
+    /// Allows or forbids hosting plaintext v3. [`Self::production`] allows it
+    /// only in Lab Mode builds; [`Self::with_components`] allows it so the
+    /// existing v3 loopback tests keep working.
+    #[must_use]
+    pub(in crate::platform) const fn with_legacy_v3(mut self, available: bool) -> Self {
+        self.legacy_v3_available = available;
+        self
+    }
+
+    /// Whether the next host start uses v4: always when v3 is unavailable,
+    /// otherwise as the operator's switch says.
+    fn hosts_secure_transport(&self, state: &NetworkState) -> bool {
+        !self.legacy_v3_available || state.secure_transport
     }
 
     pub(in crate::platform) fn with_components(
@@ -108,6 +128,7 @@ impl DesktopHostNetworkControl {
             provider,
             transport_factory,
             secure_factory: Arc::new(QuicTransportFactory),
+            legacy_v3_available: true,
             ports,
             mdns: Arc::new(NullMdnsPublisher),
             monitor: DesktopMonitorControl::new(Arc::new(NullAudioOutputBackend)),
@@ -191,7 +212,8 @@ impl DesktopHostNetworkControl {
             &state.preference,
             state.active.as_ref(),
             state.allow_shared_address_space,
-            state.secure_transport,
+            self.hosts_secure_transport(&state),
+            self.legacy_v3_available,
         ))
     }
 
@@ -227,6 +249,12 @@ impl DesktopHostNetworkControl {
             .state
             .lock()
             .map_err(|_| DesktopNetworkError::poisoned().dto())?;
+        if !enabled && !self.legacy_v3_available {
+            return Err(DesktopNetworkError::invalid_state(
+                "plaintext v3 hosting is not available in this build; secure transport (v4) is always on",
+            )
+            .dto());
+        }
         if state.active.is_some() && state.secure_transport != enabled {
             return Err(DesktopNetworkError::invalid_state(
                 "secure transport cannot change while a host endpoint is active",
@@ -267,7 +295,8 @@ impl DesktopHostNetworkControl {
             &state.preference,
             None,
             state.allow_shared_address_space,
-            state.secure_transport,
+            self.hosts_secure_transport(&state),
+            self.legacy_v3_available,
         ))
     }
 
@@ -340,7 +369,8 @@ impl DesktopHostNetworkControl {
         config.secure_control.clone_from(&state.secure_control);
         // v4 is chosen only by the operator's switch, never by the presence
         // of an identity, and never falls back to v3.
-        let factory = if state.secure_transport {
+        let secure = self.hosts_secure_transport(&state);
+        let factory = if secure {
             if state.secure_control.is_none() {
                 return Err(DesktopNetworkError::invalid_state(
                     "secure transport needs the host TLS identity, which is not available",
@@ -354,7 +384,7 @@ impl DesktopHostNetworkControl {
         // manual details, invitation and mDNS record, so a v3-only listener
         // refuses it at once instead of trying v3.
         let mut published = advertisement.clone();
-        if state.secure_transport {
+        if secure {
             published.protocol_version = SECURE_V4_ENDPOINT_VERSION;
         }
         let clock: Arc<dyn TransportClock> = Arc::new(SystemTransportClock::default());

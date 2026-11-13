@@ -516,7 +516,9 @@ fn a_poisoned_notification_state_is_visible_in_diagnostics_not_hidden_as_healthy
 
 /// Owner decision 2026-11-13: the secure-transport switch survives a
 /// restart. A fresh profile starts on v3; turning v4 on is saved and the
-/// reopened profile starts on v4; turning it off is saved too.
+/// reopened profile starts on v4; turning it off is saved too. Only Lab Mode
+/// builds have the switch (phase 4).
+#[cfg(feature = "lab-mode")]
 #[test]
 fn the_secure_transport_switch_is_restored_when_the_profile_reopens() {
     let root = TestDirectory::new();
@@ -591,5 +593,36 @@ fn saving_one_network_switch_keeps_the_other() {
         .set_allow_shared_address_space(true)
         .expect("opt in to shared address space");
     assert!(snapshot.secure_transport && snapshot.allow_shared_address_space);
+    state.close_sync().expect("close");
+}
+
+/// Phase 4 (owner decision 2026-11-13): a release build's real profile hosts
+/// v4 from the first open and refuses to switch to v3.
+#[cfg(not(feature = "lab-mode"))]
+#[test]
+fn a_release_profile_hosts_v4_and_cannot_switch_to_v3() {
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    let state = DesktopAppState::new();
+    state
+        .open_profile_sync(
+            &paths,
+            id,
+            &FixedIdentityProvider([14; 32]),
+            &FixedSigningIdentityProvider(14),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect("open profile");
+    let snapshot = state.host_network_snapshot().expect("snapshot");
+    assert!(snapshot.secure_transport && !snapshot.legacy_transport_available);
+    state
+        .set_secure_transport(false)
+        .expect_err("v3 is not available in a release build");
+    assert!(
+        state
+            .host_network_snapshot()
+            .expect("snapshot")
+            .secure_transport
+    );
     state.close_sync().expect("close");
 }

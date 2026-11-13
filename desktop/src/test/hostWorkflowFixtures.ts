@@ -174,5 +174,6 @@ export function networkSnapshot(): NetworkInterfaceSnapshotDto {
     interfaceChange: null,
     allowSharedAddressSpace: false,
     secureTransport: false,
+    legacyTransportAvailable: true,
   };
 }

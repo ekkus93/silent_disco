@@ -218,3 +218,90 @@ fn a_v4_listener_connects_to_a_real_desktop_v4_host() {
     drop(listener);
     control.stop_host_inner().expect("stop");
 }
+
+/// Phase 4 (owner decision 2026-11-13): a release build cannot host
+/// plaintext v3. With v3 unavailable the host uses QUIC and advertises
+/// version 4 even though the switch was never turned on, the snapshot shows
+/// v4 as fixed, and turning v4 off is refused.
+#[test]
+fn a_release_build_always_hosts_v4_and_refuses_to_turn_it_off() {
+    let Fakes {
+        control,
+        legacy,
+        secure,
+        published,
+    } = fakes();
+    let control = control.with_legacy_v3(false);
+    with_identity(&control);
+
+    let snapshot = control.snapshot().expect("snapshot");
+    assert!(snapshot.secure_transport, "v4 without touching the switch");
+    assert!(!snapshot.legacy_transport_available);
+    let refused = control
+        .set_secure_transport(false)
+        .expect_err("v3 cannot be chosen");
+    assert!(
+        refused.message.contains("not available in this build"),
+        "{}",
+        refused.message
+    );
+
+    control.start_host_inner(&advertisement()).expect("v4 host");
+    assert!(
+        used(&secure) && !used(&legacy),
+        "never binds the v3 transport"
+    );
+    let active = control
+        .active_host_session()
+        .expect("session")
+        .expect("active");
+    assert_eq!(
+        active.advertisement.protocol_version,
+        SECURE_V4_ENDPOINT_VERSION
+    );
+    assert_eq!(
+        *published.lock().expect("published"),
+        vec![SECURE_V4_ENDPOINT_VERSION]
+    );
+    control.stop_host_inner().expect("stop");
+}
+
+/// A release build with no host TLS identity refuses to host rather than
+/// falling back to v3.
+#[test]
+fn a_release_build_without_a_tls_identity_refuses_to_host() {
+    let f = fakes();
+    let control = f.control.with_legacy_v3(false);
+    let error = control
+        .start_host_inner(&advertisement())
+        .expect_err("no identity, no host");
+    assert!(error.message.contains("TLS identity"), "{}", error.message);
+    assert!(!used(&f.legacy) && !used(&f.secure));
+}
+
+/// Test builds keep v3 available, so the switch still reports it.
+#[test]
+fn test_and_lab_builds_still_offer_the_v3_switch() {
+    let f = fakes();
+    assert!(
+        f.control
+            .snapshot()
+            .expect("snapshot")
+            .legacy_transport_available
+    );
+}
+
+/// The real production control offers v3 only in a Lab Mode build. Run
+/// without `--all-features` (as `npm run check` and release builds do), this
+/// proves a release build hosts v4 only.
+#[test]
+fn the_production_control_offers_v3_only_in_lab_mode_builds() {
+    let snapshot = DesktopHostNetworkControl::production()
+        .snapshot()
+        .expect("snapshot");
+    assert_eq!(
+        snapshot.legacy_transport_available,
+        cfg!(feature = "lab-mode")
+    );
+    assert_eq!(snapshot.secure_transport, !cfg!(feature = "lab-mode"));
+}

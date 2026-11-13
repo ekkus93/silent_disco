@@ -132,6 +132,7 @@ const networkSnapshot: NetworkInterfaceSnapshotDto = {
   interfaceChange: null,
   allowSharedAddressSpace: false,
   secureTransport: false,
+  legacyTransportAvailable: true,
 };
 
 const hostSessionSnapshot: HostSessionSnapshotDto = {

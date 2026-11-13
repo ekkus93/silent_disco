@@ -7,7 +7,7 @@
 
 use super::fixtures::stage_long_source;
 use super::harness::{
-    next_transport_effect, real_private_lan_address, start_host_session_configured, submit,
+    TEST_TIMEOUT, real_private_lan_address, start_host_session_configured, submit,
     wait_for_control, wait_snapshot,
 };
 use crate::platform::invitation_identity::tests_support::fixed_identity_for_tests;
@@ -19,6 +19,7 @@ use silent_disco_core::domain::DeviceId;
 use silent_disco_core::protocol::{ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame};
 use silent_disco_core::runtime::{
     CoreActorHandle, CoreCommand, CoreNotification, NetworkEndpoint, SessionAdvertisement,
+    TransportEffect,
 };
 use silent_disco_core::transport::secure_identity::device_id_for_listener_key;
 use silent_disco_core::transport::{
@@ -27,7 +28,7 @@ use silent_disco_core::transport::{
 };
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
@@ -116,23 +117,44 @@ fn join_and_approve_v4(host: &V4Host) -> Box<dyn ListenerTransportNode> {
             audio_port: routes.audio.port(),
         }))
         .expect("join request");
-    let joined = wait_snapshot(&host.handle, |s| !s.pending_join_requests.is_empty());
-    submit(
-        &host.handle,
-        joined.revision.get(),
-        CoreCommand::ApproveJoin {
-            request_id: joined.pending_join_requests[0].request_id.clone(),
-            remember_for_future: false,
-        },
-    );
+    let effect = approve_pending_join(host);
     host.network
-        .dispatch_transport_effect(next_transport_effect(&host.receiver))
+        .dispatch_transport_effect(effect)
         .expect("dispatch approval");
     wait_for_control(&mut *listener, |m| {
         matches!(m, ControlMessage::JoinApproval(_))
     });
     wait_snapshot(&host.handle, |s| s.listeners.len() == 1);
     listener
+}
+
+/// Approves the pending join and returns its transport effect. While
+/// playback runs, the stream keeps advancing the snapshot revision, so an
+/// approval sampled a moment earlier can be refused as stale (the actor's
+/// optimistic revision check); resubmit with a fresh revision until the
+/// approval produces its effect.
+fn approve_pending_join(host: &V4Host) -> TransportEffect {
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    while Instant::now() < deadline {
+        let joined = wait_snapshot(&host.handle, |s| !s.pending_join_requests.is_empty());
+        submit(
+            &host.handle,
+            joined.revision.get(),
+            CoreCommand::ApproveJoin {
+                request_id: joined.pending_join_requests[0].request_id.clone(),
+                remember_for_future: false,
+            },
+        );
+        let attempt = Instant::now() + Duration::from_millis(500);
+        while let Some(left) = attempt.checked_duration_since(Instant::now()) {
+            match host.receiver.recv_timeout(left) {
+                Ok(CoreNotification::TransportEffect(effect)) => return effect,
+                Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => panic!("observer disconnected"),
+            }
+        }
+    }
+    panic!("the join was never approved within {TEST_TIMEOUT:?}");
 }
 
 /// How long the listener takes to report the host's disconnect.

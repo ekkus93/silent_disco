@@ -117,6 +117,7 @@ beforeEach(() => {
     interfaceChange: null,
     allowSharedAddressSpace: false,
     secureTransport: false,
+    legacyTransportAvailable: true,
   });
   vi.mocked(client.approveJoinRequest).mockResolvedValue({
     operationId: "command-1",
