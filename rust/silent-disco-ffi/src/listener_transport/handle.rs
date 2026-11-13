@@ -12,12 +12,13 @@ use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_OPERATION_TIMEOUT, DEFAULT_TRANSPORT_EVENT_CAPACITY,
     DEFAULT_TRANSPORT_QUEUE_CAPACITY, ListenerTransportConfig, ListenerTransportNode,
     ManualHostEndpoint, SecureHostTarget, SystemTransportClock, TransportChannel, TransportClock,
-    TransportEvent, TransportProtocol, transport_factory_for,
+    TransportEvent, transport_factory_for,
 };
 
 use crate::listener_playback::{FfiListenerPlaybackHandle, FfiSyncConfidence};
 use crate::listener_proof::{CallbackSigner, FfiListenerProofSigner};
 
+use super::protocol_policy::{LegacyV3Policy, Requested};
 use super::types::{
     FfiListenerDatagramRoutes, FfiListenerTransportCounters, FfiListenerTransportError,
     FfiListenerTransportEvent, FfiManualHostEndpoint,
@@ -643,7 +644,7 @@ impl FfiListenerTransportHandle {
         requested: Requested,
     ) -> Result<Arc<Self>, FfiListenerTransportError> {
         let endpoint = ManualHostEndpoint::parse(&raw_endpoint, now_wall_clock_ms)?;
-        let protocol = requested.resolve(endpoint.is_secure_v4())?;
+        let protocol = requested.resolve(endpoint.is_secure_v4(), LegacyV3Policy::BUILD)?;
         let device_id = DeviceId::new(local_device_id)
             .map_err(|error| FfiListenerTransportError::InvalidEndpoint(error.to_string()))?;
         let local_address: IpAddr = local_address.parse().map_err(|_| {
@@ -716,37 +717,4 @@ fn secure_target(
         host_spki: host_tls_public_key_der,
         signer: Arc::new(CallbackSigner(proof_signer)),
     })
-}
-
-/// Which protocol a listener constructor asked for, resolved against what the
-/// host advertises before any connection is attempted.
-#[derive(Debug, Clone, Copy)]
-enum Requested {
-    /// Plain v3. A v4 host cannot be joined this way.
-    PlainV3,
-    /// Pinned to the invitation key: QUIC for a v4 host, TLS for a v3 host.
-    PinnedAsAdvertised,
-    /// QUIC only.
-    SecureV4,
-}
-
-impl Requested {
-    fn resolve(self, host_is_v4: bool) -> Result<TransportProtocol, FfiListenerTransportError> {
-        match (self, host_is_v4) {
-            (Self::PlainV3, true) => Err(FfiListenerTransportError::InvalidEndpoint(
-                "this host uses secure transport (v4); join it from the host's signed invitation"
-                    .to_owned(),
-            )),
-            (Self::SecureV4, false) => Err(FfiListenerTransportError::InvalidEndpoint(
-                "this host does not use secure transport (v4)".to_owned(),
-            )),
-            (Self::PlainV3, false) => Ok(TransportProtocol::LegacyV3),
-            (Self::PinnedAsAdvertised, advertised_v4) => Ok(if advertised_v4 {
-                TransportProtocol::SecureV4
-            } else {
-                TransportProtocol::LegacyV3
-            }),
-            (Self::SecureV4, true) => Ok(TransportProtocol::SecureV4),
-        }
-    }
 }

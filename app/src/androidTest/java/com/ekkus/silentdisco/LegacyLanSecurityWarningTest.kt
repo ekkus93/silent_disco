@@ -26,7 +26,7 @@ class LegacyLanSecurityWarningTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test
-    fun listenerJoinDisclosesUnboundPlaintextTransportWithoutEnablingInvalidJoin() {
+    fun listenerJoinSaysTheHostsQrIsRequiredWithoutEnablingInvalidJoin() {
         composeRule.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, 1.8f)) {
@@ -46,15 +46,15 @@ class LegacyLanSecurityWarningTest {
                 }
             }
         }
-        composeRule.onNodeWithTag("legacy-lan-security-warning")
+        composeRule.onNodeWithTag("qr-required-notice")
             .performScrollTo().assertExists()
-        composeRule.onNodeWithText("Local network connection is not secured").assertExists()
+        composeRule.onNodeWithText("Scan the host's QR code to join").assertExists()
         composeRule.onNodeWithTag("session-request-join").assertIsNotEnabled()
         composeRule.onNodeWithTag("session-join-cancel").assertExists()
     }
 
     @Test
-    fun manualConnectionDisclosesPlaintextEvenWhenEndpointIsEmpty() {
+    fun manualConnectionSaysTheHostsQrIsRequiredEvenWhenEndpointIsEmpty() {
         composeRule.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, 1.8f)) {
@@ -72,9 +72,9 @@ class LegacyLanSecurityWarningTest {
                 }
             }
         }
-        composeRule.onNodeWithTag("legacy-lan-security-warning")
+        composeRule.onNodeWithTag("qr-required-notice")
             .performScrollTo().assertExists()
-        composeRule.onNodeWithText("Local network connection is not secured").assertExists()
+        composeRule.onNodeWithText("Scan the host's QR code to join").assertExists()
         composeRule.onNodeWithTag("manual-endpoint-connect")
             .assertIsNotEnabled()
     }
@@ -110,7 +110,7 @@ class LegacyLanSecurityWarningTest {
         composeRule.onNodeWithTag("manual-endpoint-connect")
             .assertIsDisplayed().assertIsNotEnabled()
         composeRule.onNodeWithTag("manual-endpoint-cancel").assertIsDisplayed()
-        composeRule.onNodeWithTag("legacy-lan-security-warning")
+        composeRule.onNodeWithTag("qr-required-notice")
             .performScrollTo().assertExists()
         composeRule.onNodeWithTag("manual-endpoint-cancel").assertIsDisplayed()
     }

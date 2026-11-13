@@ -62,7 +62,7 @@ class ManualEndpointScreenTest {
     }
 
     @Test
-    fun aV3HostShowsThePlaintextWarningAndNoSecureNotice() {
+    fun aV3HostSaysTheQrIsRequiredAndShowsNoSecureNotice() {
         setContent(
             AppUiState(
                 manualEndpointForm = ManualEndpointFormState(
@@ -74,12 +74,12 @@ class ManualEndpointScreenTest {
             ),
         )
 
-        composeRule.onNodeWithTag("legacy-lan-security-warning").assertExists()
+        composeRule.onNodeWithTag("qr-required-notice").assertExists()
         composeRule.onNodeWithTag("secure-transport-notice").assertDoesNotExist()
     }
 
     @Test
-    fun aSecureTransportHostShowsTheSecureNoticeInsteadOfThePlaintextWarning() {
+    fun aSecureTransportHostShowsTheSecureNoticeInsteadOfTheQrRequiredNotice() {
         setContent(
             AppUiState(
                 manualEndpointForm = ManualEndpointFormState(
@@ -94,8 +94,8 @@ class ManualEndpointScreenTest {
 
         composeRule.onNodeWithTag("secure-transport-notice").assertExists()
         composeRule.onNodeWithText("Secure connection (v4, experimental)").assertExists()
-        composeRule.onNodeWithTag("legacy-lan-security-warning").assertDoesNotExist()
-        composeRule.onNodeWithText("Local network connection is not secured").assertDoesNotExist()
+        composeRule.onNodeWithTag("qr-required-notice").assertDoesNotExist()
+        composeRule.onNodeWithText("Scan the host's QR code to join").assertDoesNotExist()
     }
 
     @Test

@@ -1729,3 +1729,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T06:19:02Z - claude-opus-5-5 - Phase 4 step 1: desktop hosts v4 only in release builds
 - `legacy_v3_available` on the desktop network control (`production()` = lab-mode only). Snapshot field `legacy_transport_available`; UI shows v4 fixed. Flaky rejoin test fixed (stale-revision approval race). CI runs desktop tests only with --all-features, so release-only tests need a default `cargo test` locally. Handoff §53.1.
+
+## 2026-11-13T06:36:30Z - claude-opus-5-5 - Phase 4 step 2: Android listeners join v4 only
+- silent-disco-ffi feature `legacy-v3` (off by default; Android builds without it) refuses v3 hosts before connecting; policy in `listener_transport/protocol_policy.rs`. v3 integration suites require the feature. Listener screens show `QrRequiredNotice`. Handoff §53.2.

@@ -53,7 +53,7 @@ class ManualEndpointViewportTest {
         composeRule.onNodeWithTag("manual-endpoint-connect")
             .assertIsDisplayed().assertIsNotEnabled()
         composeRule.onNodeWithTag("manual-endpoint-cancel").assertIsDisplayed()
-        composeRule.onNodeWithTag("legacy-lan-security-warning")
+        composeRule.onNodeWithTag("qr-required-notice")
             .performScrollTo().assertExists()
         composeRule.onNodeWithTag("manual-endpoint-cancel")
             .assertIsDisplayed().performClick()
@@ -89,7 +89,7 @@ class ManualEndpointViewportTest {
         composeRule.onNodeWithTag("manual-endpoint-cancel")
             .assertIsDisplayed().assertTextContains("Cancel")
         restoration.emulateSavedInstanceStateRestore()
-        composeRule.onNodeWithTag("legacy-lan-security-warning").performScrollTo()
+        composeRule.onNodeWithTag("qr-required-notice").performScrollTo()
         composeRule.onNodeWithTag("manual-endpoint-cancel")
             .assertIsDisplayed().performClick()
         composeRule.runOnIdle {

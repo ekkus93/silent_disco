@@ -1,4 +1,5 @@
 mod handle;
+mod protocol_policy;
 mod types;
 
 pub use handle::{FfiListenerTransportHandle, parse_manual_host_endpoint};

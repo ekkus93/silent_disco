@@ -133,6 +133,8 @@ pub(super) fn endpoint_payload(session: &str, control: u16, sync: u16, audio: u1
     )
 }
 
+// A v3 host joined over TLS: only builds with `legacy-v3` may join v3.
+#[cfg(feature = "legacy-v3")]
 #[test]
 fn a_pinned_listener_joins_a_platform_key_host_over_tls_and_is_approved_on_the_same_channel() {
     use super::types::FfiHostTransportEvent;

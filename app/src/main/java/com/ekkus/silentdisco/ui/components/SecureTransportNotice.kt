@@ -16,7 +16,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 /**
- * Shown instead of [LegacyLanSecurityWarning] when the host uses secure
+ * Shown instead of [QrRequiredNotice] when the host uses secure
  * transport (v4). Such a host can only be joined through its signed
  * invitation: the connection is encrypted per listener and the host must hold
  * the invitation's key, and a plain join is refused before connecting. The
