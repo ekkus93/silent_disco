@@ -1759,3 +1759,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T09:36:21Z - claude-opus-5-5 - God-file refactor §4: DiscoveryController extracted
 - DiscoveryController owns discovery radios start/stop, the scan window and reconciliation into the listener core; failure routing and the Wi-Fi Direct snapshot stay in the coordinator (shared radios). Full Android gate passed.
+
+## 2026-11-13T21:47:19Z - claude-opus-5-5 - God-file refactor §4: HostMonitorController extracted
+- `app/controller/HostMonitorController.kt` owns the host's local monitor runtime (start/submit/reanchor/volume/stop); `stop()` keeps the first failure and still runs every cleanup step; `release()` = `stop()` so failures propagate.
+- 4 JVM tests; removing the failed-start cleanup fails them. Full Android gate passed with `--max-workers=2` after the first run was killed by Claude Code for low memory (Chrome/Slack/Discord hold most of the 7 GB RAM).

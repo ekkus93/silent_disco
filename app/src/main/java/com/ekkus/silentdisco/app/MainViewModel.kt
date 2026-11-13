@@ -10,6 +10,7 @@ import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.app.controller.DiagnosticsController
 import com.ekkus.silentdisco.app.controller.DiscoveryController
+import com.ekkus.silentdisco.app.controller.HostMonitorController
 import com.ekkus.silentdisco.app.controller.PersistenceController
 import com.ekkus.silentdisco.app.controller.ViewModelControllers
 import com.ekkus.silentdisco.core.audio.OboeBridge
@@ -142,6 +143,9 @@ class MainViewModel @JvmOverloads constructor(
             listenerCore = { listenerCoreController },
         ),
     )
+    internal val hostMonitor = controllers.add(
+        HostMonitorController(parentScope = viewModelScope, closeOutput = closeHostMonitorOutput),
+    )
 
     /**
      * TLS keys signed into verified invitations, by session id. A listener joining
@@ -196,12 +200,13 @@ class MainViewModel @JvmOverloads constructor(
      * first packet instead of re-acquiring sync and dropping ~0.8 s of audio.
      */
     internal var listenerSyncHandover: SessionSyncHandover? = null
-    private val hostMonitorPlaybackRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
     internal var hostMonitorPlayback: FfiListenerPlaybackHandle?
-        get() = hostMonitorPlaybackRef.get()
-        set(value) = hostMonitorPlaybackRef.set(value)
+        get() = hostMonitor.runtime
+        set(value) {
+            hostMonitor.runtime = value
+        }
     internal fun swapHostMonitorPlayback(value: FfiListenerPlaybackHandle?): FfiListenerPlaybackHandle? =
-        hostMonitorPlaybackRef.getAndSet(value)
+        hostMonitor.swap(value)
     internal var latestDecodedAudio: AudioDecodeResult? = null
     internal var latestPackets: List<AudioPacket> = emptyList()
     internal var hostPlaylistStreamer: HostPlaylistStreamController? = null
@@ -571,7 +576,7 @@ class MainViewModel @JvmOverloads constructor(
     fun setLocalVolume(volume: Float) {
         val normalized = volume.coerceIn(0f, 1f)
         _uiState.value = _uiState.value.copy(localVolume = normalized)
-        runCatching { hostMonitorPlayback?.setVolume(normalized) }
+        runCatching { hostMonitor.setVolume(normalized) }
             .onFailure { error ->
                 if (_uiState.value.hostPlaybackState != PlaybackState.STOPPED) {
                     handleHostPlaybackEngineFailure(error)
