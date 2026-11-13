@@ -1750,3 +1750,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T09:16:07Z - claude-opus-5-5 - 800-line rule relaxed to a guideline in CI too
 - Owner (2026-11-13): 800 lines is a general guideline, not a hard rule; Claude judges God files. scripts/check-source-file-line-counts.sh now lists files at or over 800 for review (GitHub ::warning:: in CI) and always exits 0; workflow names, CLAUDE.md and the God-file spec updated.
+
+## 2026-11-13T09:22:34Z - claude-opus-5-5 - God-file refactor §4: DiagnosticsController extracted
+- DiagnosticsController owns diagnostics store, metrics, bridge counters, refresh and developer capture; MainViewModel keeps thin wrappers and copies snapshots into AppUiState synchronously. onCleared keeps capture teardown at its original point and closes the controller registry last (idempotent). Full Android gate passed.

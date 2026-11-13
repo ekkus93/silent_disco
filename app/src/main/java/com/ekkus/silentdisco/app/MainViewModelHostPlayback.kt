@@ -166,9 +166,9 @@ internal fun MainViewModel.startHostStreamingLoop(
                 val now = hostElapsedRealtimeMs()
                 previousSendElapsedMs?.let { previous ->
                     val sendGap = now - previous
-                    metrics.recordTiming("packet_gap_ms", sendGap.toDouble())
+                    diagnostics.metrics.recordTiming("packet_gap_ms", sendGap.toDouble())
                     if (kotlin.math.abs(sendGap - packetDurationMs) > 8) {
-                        metrics.increment("packet_send_anomaly")
+                        diagnostics.metrics.increment("packet_send_anomaly")
                         logger.w("packet.send.anomaly", "seq=${packet.sequenceNumber} gap=${sendGap}ms")
                     }
                 }
@@ -176,8 +176,8 @@ internal fun MainViewModel.startHostStreamingLoop(
                 if (packetCount % 25L == 1L) {
                     logger.i("stream.packet", "stream=${streamId.value} sent=$packetCount")
                 }
-                metrics.increment("packet_send_total")
-                diagnosticsStore.updateHost {
+                diagnostics.metrics.increment("packet_send_total")
+                diagnostics.updateHost {
                     it.copy(
                         packetSendCount = packetCount,
                         packetSendRatePerSecond = 1_000.0 / packetDurationMs,
@@ -218,7 +218,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                             consecutiveAudioSendFailures = 0
                             val message = "No connected listeners for audio broadcast"
                             _uiState.value = _uiState.value.copy(lastError = message)
-                            diagnosticsStore.updateHost { it.copy(lastError = message, metricsSummary = summarizeMetrics()) }
+                            diagnostics.updateHost { it.copy(lastError = message, metricsSummary = summarizeMetrics()) }
                             refreshHostDiagnostics()
                         }
                         result.failureCount > 0 -> {
@@ -226,12 +226,12 @@ internal fun MainViewModel.startHostStreamingLoop(
                             val message = "Audio packet delivered to ${result.successCount}/${result.peerCount} listeners; ${result.failureCount} failed"
                             logger.w("transport.audio", message)
                             _uiState.value = _uiState.value.copy(lastError = message)
-                            diagnosticsStore.updateHost { it.copy(lastError = message, metricsSummary = summarizeMetrics()) }
+                            diagnostics.updateHost { it.copy(lastError = message, metricsSummary = summarizeMetrics()) }
                             refreshHostDiagnostics()
                         }
                         else -> {
                             consecutiveAudioSendFailures = 0
-                            diagnosticsStore.updateHost { it.copy(lastError = null) }
+                            diagnostics.updateHost { it.copy(lastError = null) }
                         }
                     }
                 }.onFailure { error ->
@@ -239,14 +239,14 @@ internal fun MainViewModel.startHostStreamingLoop(
                     val message = error.message ?: "Failed to send audio packet"
                     logger.w("transport.audio", "Failed to send packet ${timedPacket.sequenceNumber}: $message")
                     _uiState.value = _uiState.value.copy(lastError = message)
-                    diagnosticsStore.updateHost { it.copy(lastError = message, metricsSummary = summarizeMetrics()) }
+                    diagnostics.updateHost { it.copy(lastError = message, metricsSummary = summarizeMetrics()) }
                     refreshHostDiagnostics()
                 }
                 if (consecutiveAudioSendFailures >= 10) {
                     val message = "Audio transport failed repeatedly; stream stopped"
                     _uiState.value = _uiState.value.copy(lastError = message)
                     reportRustHostPlaybackFailure(message)
-                    diagnosticsStore.updateHost {
+                    diagnostics.updateHost {
                         it.copy(streamState = PlaybackState.ERROR, lastError = message, metricsSummary = summarizeMetrics())
                     }
                     refreshHostDiagnostics(streamState = PlaybackState.ERROR)
@@ -269,7 +269,7 @@ internal fun MainViewModel.startHostStreamingLoop(
             }
             stopHostMonitorPlayback()
             logger.i("stream.stop", "Host playlist reached its final track boundary")
-            metrics.increment("stream_eof")
+            diagnostics.metrics.increment("stream_eof")
             _uiState.value = _uiState.value.copy(lastMessage = "Playlist finished")
             runCatching { ensureRustHostCore().playbackStreamEnded(streamId.value) }
                 .onFailure { error -> reportRustHostCommandFailure("finish playlist", error) }
@@ -346,7 +346,7 @@ internal fun MainViewModel.handleHostPlaybackEngineFailure(error: Throwable) {
             }
         }
     }
-    diagnosticsStore.updateHost {
+    diagnostics.updateHost {
         it.copy(streamState = PlaybackState.ERROR, lastError = message, metricsSummary = summarizeMetrics())
     }
     refreshHostDiagnostics(streamState = PlaybackState.ERROR)
@@ -356,7 +356,7 @@ private suspend fun MainViewModel.broadcastHostTrackBoundary(
     streamId: StreamId,
     boundary: FfiPlaylistFrame.TrackBoundary,
 ) {
-    metrics.increment("track_boundary_broadcast")
+    diagnostics.metrics.increment("track_boundary_broadcast")
     // Unlike a best-effort UI notification, this control defines which
     // source listeners are about to hear. Sending subsequent PCM after a
     // failed boundary would make the listener's track identity untruthful.
@@ -387,7 +387,7 @@ internal fun MainViewModel.scheduleHostQueueBoundary(
     elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
     wait: suspend (Long) -> Unit = { delay(min(it, PAUSE_POLL_INTERVAL_MS)) },
 ) {
-    metrics.increment("track_boundary_scheduled")
+    diagnostics.metrics.increment("track_boundary_scheduled")
     val job = viewModelScope.launch(dispatcher) {
         val dueAtMs = start.hostStartTimeMs.toLong() +
             boundary.firstSampleIndex.toLong() * 1_000L / sampleRate
@@ -406,8 +406,8 @@ internal fun MainViewModel.scheduleHostQueueBoundary(
                 currentEntryId = boundary.entryId,
                 currentDisplayName = boundary.displayName,
             )
-            metrics.increment("track_boundary_applied")
-            diagnosticsStore.updateHost { it.copy(metricsSummary = summarizeMetrics()) }
+            diagnostics.metrics.increment("track_boundary_applied")
+            diagnostics.updateHost { it.copy(metricsSummary = summarizeMetrics()) }
             refreshHostDiagnostics()
         }.onFailure { error -> reportRustHostCommandFailure("advance playlist", error) }
     }

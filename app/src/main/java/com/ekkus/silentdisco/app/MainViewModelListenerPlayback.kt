@@ -41,7 +41,7 @@ import kotlinx.coroutines.launch
                 ),
                 lastMessage = "Demo session playing (no audio is produced)",
             )
-            diagnosticsStore.updateListener {
+            diagnostics.updateListener {
                 it.copy(playbackState = PlaybackState.PLAYING, metricsSummary = summarizeMetrics())
             }
             refreshListenerDiagnostics()
@@ -64,7 +64,7 @@ import kotlinx.coroutines.launch
             ),
             lastMessage = message,
         )
-        diagnosticsStore.updateListener {
+        diagnostics.updateListener {
             it.copy(
                 playbackState = playbackState,
                 metricsSummary = summarizeMetrics(),
@@ -92,7 +92,7 @@ import kotlinx.coroutines.launch
                 playing = false,
             ),
         )
-        diagnosticsStore.updateListener {
+        diagnostics.updateListener {
             it.copy(
                 playbackState = PlaybackState.ERROR,
                 lastError = message,

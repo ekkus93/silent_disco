@@ -131,7 +131,7 @@ private fun MainViewModel.surfaceRustHostNotificationFailure(message: String, er
     logger.e("rust.host.notification", message, error)
     _uiState.value = _uiState.value.copy(lastError = message)
     val diagnosticsFailure = runCatching {
-        diagnosticsStore.updateHost {
+        diagnostics.updateHost {
             it.copy(
                 lastError = message,
                 metricsSummary = summarizeMetrics(),

@@ -35,7 +35,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
     if (sessionError != null) {
         _uiState.value = _uiState.value.copy(lastError = sessionError)
         reportRustHostPlaybackState(PlaybackState.ERROR, sessionError)
-        diagnosticsStore.updateHost {
+        diagnostics.updateHost {
             it.copy(
                 streamState = PlaybackState.ERROR,
                 lastError = sessionError,
@@ -49,7 +49,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
 
     launchHostPlaybackCommand("start host playback") {
         afterAuthoritativeHostPlaybackState(FfiPlaybackState.BUFFERING) {
-            diagnosticsStore.updateHost {
+            diagnostics.updateHost {
                 it.copy(
                     streamState = PlaybackState.BUFFERING,
                     lastError = null,
@@ -108,13 +108,13 @@ internal fun MainViewModel.startHostPlaybackImpl() {
                 handleHostPlaybackEngineFailure(error)
                 return@afterAuthoritativeHostPlaybackStart
             }
-            metrics.increment("stream_start")
-            metrics.recordTiming(
+            diagnostics.metrics.increment("stream_start")
+            diagnostics.metrics.recordTiming(
                 "packet_duration_ms",
                 firstPacket.samplesPerPacket * 1_000.0 / firstPacket.sampleRate,
             )
-            metrics.recordTiming("average_packet_bytes", firstPacket.payload.size + 48.0)
-            diagnosticsStore.updateHost {
+            diagnostics.metrics.recordTiming("average_packet_bytes", firstPacket.payload.size + 48.0)
+            diagnostics.updateHost {
                 it.copy(
                     packetSendCount = 0,
                     packetSendRatePerSecond = 0.0,
@@ -157,7 +157,7 @@ private fun MainViewModel.resumeHostPlaybackImpl() {
     launchHostPlaybackCommand("resume host playback") {
         afterAuthoritativeHostPlaybackState(FfiPlaybackState.PLAYING) {
             logger.i("stream.resume", "Resuming host stream")
-            metrics.increment("stream_resume")
+            diagnostics.metrics.increment("stream_resume")
             _uiState.value = _uiState.value.copy(lastMessage = "Host stream resumed", lastError = null)
             refreshHostDiagnostics(streamState = PlaybackState.PLAYING)
         }
@@ -189,7 +189,7 @@ internal fun MainViewModel.pauseHostPlaybackImpl() {
     launchHostPlaybackCommand("pause host playback") {
         afterAuthoritativeHostPlaybackState(FfiPlaybackState.PAUSED) {
             logger.i("stream.pause", "Pausing host stream")
-            metrics.increment("stream_pause")
+            diagnostics.metrics.increment("stream_pause")
             propagateListenerPlaybackState(
                 playbackState = PlaybackState.PAUSED,
                 listenerState = _uiState.value.listenerState,
@@ -206,11 +206,11 @@ internal fun MainViewModel.pauseHostPlaybackImpl() {
                         val warning = hostControlDeliveryMessage("Paused", "broadcast pause", delivery.toSendAllResult())
                         if (warning != null) {
                             _uiState.value = _uiState.value.copy(lastError = warning)
-                            diagnosticsStore.updateHost {
+                            diagnostics.updateHost {
                                 it.copy(lastError = warning, metricsSummary = summarizeMetrics())
                             }
                         } else {
-                            diagnosticsStore.updateHost {
+                            diagnostics.updateHost {
                                 it.copy(lastError = null, metricsSummary = summarizeMetrics())
                             }
                         }
@@ -244,7 +244,7 @@ internal fun MainViewModel.stopHostPlaybackImpl() {
                 handleHostPlaybackEngineFailure(error)
                 return@afterAuthoritativeHostPlaybackState
             }
-            metrics.increment("stream_stop")
+            diagnostics.metrics.increment("stream_stop")
             propagateListenerPlaybackState(
                 playbackState = PlaybackState.STOPPED,
                 listenerState = _uiState.value.listenerState,
@@ -261,11 +261,11 @@ internal fun MainViewModel.stopHostPlaybackImpl() {
                         val warning = hostControlDeliveryMessage("Stopped", "broadcast stop", delivery.toSendAllResult())
                         if (warning != null) {
                             _uiState.value = _uiState.value.copy(lastError = warning)
-                            diagnosticsStore.updateHost {
+                            diagnostics.updateHost {
                                 it.copy(lastError = warning, metricsSummary = summarizeMetrics())
                             }
                         } else {
-                            diagnosticsStore.updateHost {
+                            diagnostics.updateHost {
                                 it.copy(lastError = null, metricsSummary = summarizeMetrics())
                             }
                         }
@@ -344,12 +344,12 @@ private suspend fun MainViewModel.afterAuthoritativeHostPlaybackStart(
 }
 
 private fun MainViewModel.handleHostPlaybackPreparationFailure(error: Throwable) {
-    metrics.increment("stream_start_error")
+    diagnostics.metrics.increment("stream_start_error")
     logger.e("stream.start", "Failed to prepare host playback", error)
     val message = error.message ?: "Failed to decode audio file"
     _uiState.value = _uiState.value.copy(lastError = message)
     reportRustHostPlaybackFailure(message)
-    diagnosticsStore.updateHost {
+    diagnostics.updateHost {
         it.copy(
             lastError = message,
             streamState = PlaybackState.ERROR,
@@ -363,7 +363,7 @@ private fun MainViewModel.reportHostPlaybackCommandFailure(action: String, error
     val message = error.message ?: "Failed to $action"
     logger.e("stream.authority", message, error)
     _uiState.value = _uiState.value.copy(lastError = message)
-    diagnosticsStore.updateHost {
+    diagnostics.updateHost {
         it.copy(lastError = message, metricsSummary = summarizeMetrics())
     }
     refreshHostDiagnostics()

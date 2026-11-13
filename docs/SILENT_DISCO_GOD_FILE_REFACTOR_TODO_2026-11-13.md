@@ -38,7 +38,7 @@ Android gate: `./gradlew assembleDebug assemblePocDebug assembleRelease assemble
 ## 3. Coordinator scaffolding
 
 - [x] Add a small internal controller contract (`app/controller/ViewModelController.kt`: `ViewModelController` with a child supervisor scope and `close()` = cancel then `release()`; `ViewModelControllers` closes in reverse order and continues past failures; `MainViewModel.onCleared` closes it first; 4 tests, supervisor mutation killed). Original wording: a `close()`, an owned scope derived from `viewModelScope`, and `StateFlow` state. No behaviour moves yet.
-- [ ] Make `MainViewModel` combine controller state flows into `AppUiState`. **Deferred into the first extraction (`DiagnosticsController`)**: with no controller state there is nothing to combine, and a mapping layer without a user would be speculative. Original wording: so far with no controllers. This proves the mapping pattern without changing behaviour.
+- [x] Make `MainViewModel` combine controller state flows into `AppUiState`. **Done with `DiagnosticsController`**: the coordinator copies the controller's snapshot into `AppUiState` at refresh time, keeping today's synchronous timing. Previously deferred: with no controller state there is nothing to combine, and a mapping layer without a user would be speculative. Original wording: so far with no controllers. This proves the mapping pattern without changing behaviour.
 
 ## 4. Extract controllers, one per item, lowest coupling first
 
@@ -48,7 +48,7 @@ For each item:
 - point its tests at the controller;
 - run the mutation check from spec §7 on any timing, ordering or recovery rule it carries.
 
-- [ ] `DiagnosticsController`: diagnostics store, metrics, support report, developer callback capture (`MainViewModelDiagnostics.kt`, `MainViewModelCallbackCapture.kt`).
+- [x] `DiagnosticsController` (`app/controller/DiagnosticsController.kt`; 6 unit tests; full Android gate passed). It owns the store, metrics, bridge pressure, refresh and capture; the ~46 store writes go through `diagnostics.updateHost/updateListener`. `MainViewModelDiagnostics.kt` and `MainViewModelCallbackCapture.kt` are now thin wrappers. A refresh still copies into `AppUiState` synchronously (the deferred §3 combine item: the coordinator maps the controller's snapshot). `onCleared` finishes capture at its original point and closes the registry last. Original wording: diagnostics store, metrics, support report, developer callback capture (`MainViewModelDiagnostics.kt`, `MainViewModelCallbackCapture.kt`).
 - [ ] `PersistenceController`: domain store access, persistence retry, persisted audio read grants (`MainViewModelPersistence.kt`).
 - [ ] `DiscoveryController`: BLE, Wi-Fi Direct, mDNS, scan job, discovered sessions (part of `MainViewModelTransport.kt`, discovery reconcile). Tests include `MainViewModelDiscoveryReconcileTest`.
 - [ ] `HostMonitorController`: the host's local monitor (`MainViewModelHostMonitorPlayback.kt`).

@@ -319,7 +319,7 @@ private fun MainViewModel.applyRustHostSnapshot(snapshot: FfiCoreSnapshot) {
         lastError = snapshot.lastError?.message,
         lastMessage = hostState.presentationMessage(_uiState.value.lastMessage),
     )
-    diagnosticsStore.updateHost {
+    diagnostics.updateHost {
         it.copy(
             sessionId = sessionId,
             listenerCount = listeners.size,
@@ -458,7 +458,7 @@ private fun MainViewModel.startAdvertisingForRust(
         lastMessage = "Hosting ${session.name}",
         lastError = null,
     )
-    diagnosticsStore.updateHost {
+    diagnostics.updateHost {
         it.copy(
             sessionId = session.id,
             streamState = PlaybackState.STOPPED,

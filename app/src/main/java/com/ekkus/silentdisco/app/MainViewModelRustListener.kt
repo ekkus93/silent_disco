@@ -349,7 +349,7 @@ internal fun MainViewModel.handleTransportStreamStopped(hostStopTimeMs: ULong) {
             synced = _uiState.value.listenerSyncState.confidence != SyncQualityBadge.UNKNOWN,
         ),
     )
-    diagnosticsStore.updateListener {
+    diagnostics.updateListener {
         it.copy(endOfStreamReached = true, playbackState = PlaybackState.STOPPED)
     }
     refreshListenerDiagnostics()
@@ -360,7 +360,7 @@ private fun MainViewModel.handleTransportTrackBoundary(
 ) {
     if (currentStreamId?.value != event.streamId) return
     val sampleIndex = event.firstSampleIndex.toLong()
-    metrics.increment("track_boundary_received")
+    diagnostics.metrics.increment("track_boundary_received")
     pendingListenerTrackBoundaries[sampleIndex] = PendingListenerTrackBoundary(
         streamId = event.streamId,
         firstSampleIndex = sampleIndex,
@@ -384,7 +384,7 @@ private fun MainViewModel.withdrawListenerTrackBoundariesAfter(hostPauseTimeMs: 
         appliedListenerTrackBoundaries.remove(sampleIndex)
         pendingListenerTrackBoundaries[sampleIndex] = boundary
     }
-    metrics.increment("track_boundary_withdrawn", withdrawn.size.toLong())
+    diagnostics.metrics.increment("track_boundary_withdrawn", withdrawn.size.toLong())
     val trackAtPause = appliedListenerTrackBoundaries.values.lastOrNull()?.displayName
         ?: listenerStreamStartTrackName
     _uiState.value = _uiState.value.copy(listenerCurrentTrackName = trackAtPause)
@@ -414,7 +414,7 @@ private fun MainViewModel.scheduleListenerTrackBoundary(sampleIndex: Long) {
         .coerceAtLeast(0.0)
         .toLong()
     listenerTrackBoundaryJobs.remove(sampleIndex)?.cancel()
-    metrics.increment("track_boundary_scheduled")
+    diagnostics.metrics.increment("track_boundary_scheduled")
     listenerTrackBoundaryJobs[sampleIndex] = viewModelScope.launch {
         delay(waitMs)
         if (currentStreamId?.value != boundary.streamId) return@launch
@@ -426,8 +426,8 @@ private fun MainViewModel.scheduleListenerTrackBoundary(sampleIndex: Long) {
             appliedListenerTrackBoundaries.remove(appliedListenerTrackBoundaries.firstKey())
         }
         _uiState.value = _uiState.value.copy(listenerCurrentTrackName = boundary.displayName)
-        metrics.increment("track_boundary_applied")
-        diagnosticsStore.updateListener { it.copy(metricsSummary = summarizeMetrics()) }
+        diagnostics.metrics.increment("track_boundary_applied")
+        diagnostics.updateListener { it.copy(metricsSummary = summarizeMetrics()) }
         refreshListenerDiagnostics()
     }
 }
@@ -559,7 +559,7 @@ private fun MainViewModel.applyRuntimeSyncOutcome(outcome: FfiSyncSampleOutcome)
         lastError = null,
     )
     rescheduleListenerTrackBoundaries()
-    diagnosticsStore.updateListener {
+    diagnostics.updateListener {
         it.copy(
             hostOffsetMs = syncState.offsetMs,
             rttMs = syncState.rttMs,
@@ -568,8 +568,8 @@ private fun MainViewModel.applyRuntimeSyncOutcome(outcome: FfiSyncSampleOutcome)
             metricsSummary = summarizeMetrics(),
         )
     }
-    metrics.increment("sync_sample")
-    metrics.recordTiming("sync_rtt_ms", syncState.rttMs)
+    diagnostics.metrics.increment("sync_sample")
+    diagnostics.metrics.recordTiming("sync_rtt_ms", syncState.rttMs)
     refreshListenerDiagnostics()
 }
 

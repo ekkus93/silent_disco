@@ -8,14 +8,12 @@ import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioDecodeResult
 import com.ekkus.silentdisco.core.audio.AudioFileDecoder
+import com.ekkus.silentdisco.app.controller.DiagnosticsController
 import com.ekkus.silentdisco.app.controller.ViewModelControllers
 import com.ekkus.silentdisco.core.audio.OboeBridge
-import com.ekkus.silentdisco.core.audio.NativeCallbackWavCapture
 import com.ekkus.silentdisco.core.audio.PlaybackThresholds
-import com.ekkus.silentdisco.core.diagnostics.DiagnosticsStore
 import com.ekkus.silentdisco.core.identity.DeviceIdentityStore
 import com.ekkus.silentdisco.core.logging.AppLogger
-import com.ekkus.silentdisco.core.logging.DiagnosticsMetrics
 import com.ekkus.silentdisco.core.model.AppRole
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
@@ -110,10 +108,16 @@ class MainViewModel @JvmOverloads constructor(
 ) : AndroidViewModel(application) {
     internal val logger = AppLogger()
 
-    /** Controllers split out of this view-model (refactor spec §4); closed first in [onCleared]. */
+    /** Controllers split out of this view-model (refactor spec §4); see [onCleared] for their order. */
     internal val controllers = ViewModelControllers()
-    internal val diagnosticsStore = DiagnosticsStore()
-    internal val metrics = DiagnosticsMetrics()
+    internal val diagnostics = controllers.add(
+        DiagnosticsController(
+            parentScope = viewModelScope,
+            hostBridgeCounters = { hostBridgeQueueCounters() },
+            listenerBridgeCounters = { listenerBridgeQueueCounters() },
+            captureEnabled = BuildConfig.DEBUG,
+        ),
+    )
     internal val decoder = AudioFileDecoder(application.contentResolver)
     internal val hostTimingService = HostTimingService()
     internal val liveQueueSourceUris = ConcurrentHashMap<String, Uri>()
@@ -161,9 +165,7 @@ class MainViewModel @JvmOverloads constructor(
     internal val listenerPlaybackControlExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "silent-disco-listener-playback-control").apply { isDaemon = true }
     }
-    internal var listenerCallbackCapture: NativeCallbackWavCapture? = null
-    internal val _callbackCaptureStatus = MutableStateFlow("Capture off")
-    val callbackCaptureStatus: StateFlow<String> = _callbackCaptureStatus.asStateFlow()
+    val callbackCaptureStatus: StateFlow<String> get() = diagnostics.captureStatus
     private val listenerPlaybackRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
     internal var listenerPlayback: FfiListenerPlaybackHandle?
         get() = listenerPlaybackRef.get()
@@ -487,7 +489,7 @@ class MainViewModel @JvmOverloads constructor(
         if (!_uiState.value.canSelectSession(session)) {
             val message = "Finish or cancel the current join before joining another session."
             _uiState.value = _uiState.value.copy(lastError = message)
-            diagnosticsStore.updateListener { it.copy(lastError = message) }
+            diagnostics.updateListener { it.copy(lastError = message) }
             refreshListenerDiagnostics()
             return
         }
@@ -546,7 +548,7 @@ class MainViewModel @JvmOverloads constructor(
         logger.i("listener.retry", "Retrying listener connection")
         resetListenerSyncAcquisition()
         wifiDirectService.retry()
-        diagnosticsStore.updateListener {
+        diagnostics.updateListener {
             it.copy(
                 reconnectCount = it.reconnectCount + 1,
                 metricsSummary = summarizeMetrics(),
@@ -615,7 +617,7 @@ class MainViewModel @JvmOverloads constructor(
         logger.i("listener.disconnect", "Listener left session")
         _uiState.value = _uiState.value.copy(listenerPlaybackState = PlaybackState.STOPPED)
         listenerCoreController?.cancelJoin()
-        diagnosticsStore.updateListener { ListenerDiagnosticsSnapshot() }
+        diagnostics.updateListener { ListenerDiagnosticsSnapshot() }
         refreshListenerDiagnostics()
     }
 
@@ -623,7 +625,7 @@ class MainViewModel @JvmOverloads constructor(
         if (!_uiState.value.canManualResync()) {
             val message = "Join a session before requesting manual resync"
             _uiState.value = _uiState.value.copy(lastError = message)
-            diagnosticsStore.updateListener { it.copy(lastError = message) }
+            diagnostics.updateListener { it.copy(lastError = message) }
             refreshListenerDiagnostics()
             return
         }
@@ -690,8 +692,8 @@ class MainViewModel @JvmOverloads constructor(
     )
 
     override fun onCleared() {
-        runCatching { controllers.closeAll() }
-            .onFailure { error -> logger.e("viewmodel.controllers", "Controller cleanup failed", error) }
+        // Each controller's teardown runs at its original point below; the
+        // registry closes them all again at the end, which is idempotent.
         hostPlaybackCommandJob?.cancel()
         // The runtime holds a pump thread, a ring registration and the native
         // output; none of them are reclaimed by the ViewModel going away.
@@ -702,10 +704,7 @@ class MainViewModel @JvmOverloads constructor(
             listenerSyncHandover?.handover?.close()
             listenerSyncHandover = null
         }
-        listenerCallbackCapture?.let { capture ->
-            listenerCallbackCapture = null
-            runBlocking(Dispatchers.IO) { runCatching { capture.stopAndReport() } }
-        }
+        diagnostics.finishCaptureForTeardown()
         listenerPlaybackControlExecutor.shutdown()
         closeListenerSyncEstimator()
         bleService.stop()
@@ -723,6 +722,8 @@ class MainViewModel @JvmOverloads constructor(
                 .onFailure { error -> logger.e("playback.host.stop", "Host monitor cleanup failed", error) }
             domainStore.close()
         }
+        runCatching { controllers.closeAll() }
+            .onFailure { error -> logger.e("viewmodel.controllers", "Controller cleanup failed", error) }
         super.onCleared()
     }
 }

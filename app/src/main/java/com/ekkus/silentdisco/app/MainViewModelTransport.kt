@@ -63,7 +63,7 @@ import kotlinx.coroutines.launch
             mdnsService.failures.collect { message ->
                 logger.w("mdns.discovery", message)
                 _uiState.value = _uiState.value.copy(lastError = message)
-                diagnosticsStore.updateListener { it.copy(lastError = message) }
+                diagnostics.updateListener { it.copy(lastError = message) }
                 refreshListenerDiagnostics()
             }
         }
@@ -72,7 +72,7 @@ import kotlinx.coroutines.launch
     internal fun MainViewModel.handleBleScanFailure(message: String) {
         clearScanState()
         listenerCoreController?.transportFailed(message, retryable = true)
-        diagnosticsStore.updateListener { it.copy(lastError = message) }
+        diagnostics.updateListener { it.copy(lastError = message) }
         refreshListenerDiagnostics()
     }
 
@@ -98,7 +98,7 @@ import kotlinx.coroutines.launch
         val message = report.message ?: "$action delivery issue"
         logger.w("transport.control", message)
         _uiState.value = _uiState.value.copy(lastError = message)
-        diagnosticsStore.updateHost {
+        diagnostics.updateHost {
             it.copy(lastError = message, metricsSummary = summarizeMetrics())
         }
         refreshHostDiagnostics()
@@ -122,7 +122,7 @@ import kotlinx.coroutines.launch
         val message = "Failed to broadcast $action to listeners: ${error.message}"
         logger.w("transport.control", message)
         _uiState.value = _uiState.value.copy(lastError = message)
-        diagnosticsStore.updateHost {
+        diagnostics.updateHost {
             it.copy(lastError = message, metricsSummary = summarizeMetrics())
         }
         refreshHostDiagnostics()
@@ -143,7 +143,7 @@ import kotlinx.coroutines.launch
         // leaked all of those on every disconnect and connection failure.
         stopListenerPlayback()
         resetListenerSyncAcquisition()
-        diagnosticsStore.updateListener {
+        diagnostics.updateListener {
             it.copy(
                 playbackState = PlaybackState.ERROR,
                 lastError = message,

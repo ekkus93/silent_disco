@@ -27,7 +27,7 @@ internal fun MainViewModel.requestJoinImpl() {
     }
     if (_uiState.value.discoveredSessions.none { it.id == session.id }) {
         _uiState.value = _uiState.value.copy(lastError = "Selected session disappeared before join")
-        diagnosticsStore.updateListener { it.copy(lastError = "Selected session disappeared before join") }
+        diagnostics.updateListener { it.copy(lastError = "Selected session disappeared before join") }
         refreshListenerDiagnostics()
         return
     }

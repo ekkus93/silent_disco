@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
                     listenerState = ListenerLifecycleState.ERROR,
                     lastError = "Host rejected join. Check the invite code and try again.",
                 )
-                diagnosticsStore.updateListener {
+                diagnostics.updateListener {
                     it.copy(sessionId = sessionId, lastError = "Join rejected by host")
                 }
                 refreshListenerDiagnostics()

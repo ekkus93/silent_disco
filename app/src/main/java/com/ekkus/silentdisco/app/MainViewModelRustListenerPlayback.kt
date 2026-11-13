@@ -196,12 +196,12 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
                 return@launch
             }
             if (listenerPlayback !== runtime) return@launch
-            val diagnostics = runtime.diagnostics()
+            val playback = runtime.diagnostics()
             // A stream that cannot play must never read as playing. Without a
             // real clock offset the pump releases nothing at all, and
             // reporting PLAYING there turns a hard failure into an invisible
             // one -- which is how this path shipped silent.
-            if (!diagnostics.syncLocked &&
+            if (!playback.syncLocked &&
                 android.os.SystemClock.elapsedRealtime() - openedAtMs > LISTENER_SYNC_LOCK_TIMEOUT_MS &&
                 !reportedSyncStall
             ) {
@@ -212,9 +212,9 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
                     listenerState = ListenerLifecycleState.DESYNCED,
                     lastError = message,
                 )
-                diagnosticsStore.updateListener { it.copy(lastError = message) }
+                diagnostics.updateListener { it.copy(lastError = message) }
             }
-            if (!diagnostics.syncLocked && diagnostics.droppedBeforeSync > lastDroppedBeforeSync) {
+            if (!playback.syncLocked && playback.droppedBeforeSync > lastDroppedBeforeSync) {
                 val message = "Getting your connection ready…"
                 logger.w("sync.pre_sync_drop", message)
                 _uiState.value = _uiState.value.copy(
@@ -222,8 +222,8 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
                     lastMessage = message,
                 )
             }
-            lastDroppedBeforeSync = diagnostics.droppedBeforeSync
-            if (shouldReportListenerPlaying(diagnostics.phase, _uiState.value.listenerPlaybackState)) {
+            lastDroppedBeforeSync = playback.droppedBeforeSync
+            if (shouldReportListenerPlaying(playback.phase, _uiState.value.listenerPlaybackState)) {
                 _uiState.value = _uiState.value.copy(
                     listenerState = ListenerLifecycleState.PLAYING,
                     listenerPlaybackState = PlaybackState.PLAYING,
@@ -237,18 +237,18 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
                     ),
                 )
             }
-            if (diagnostics.ringUnderruns > lastUnderruns) {
-                logger.w("playback.underrun", "Render ring underruns=${diagnostics.ringUnderruns}")
-                lastUnderruns = diagnostics.ringUnderruns
+            if (playback.ringUnderruns > lastUnderruns) {
+                logger.w("playback.underrun", "Render ring underruns=${playback.ringUnderruns}")
+                lastUnderruns = playback.ringUnderruns
             }
-            diagnosticsStore.updateListener {
+            diagnostics.updateListener {
                 it.copy(
-                    playbackState = diagnostics.toPlaybackState(),
-                    bufferDepthMs = diagnostics.bufferedSpanMs.toLong(),
-                    packetLossCount = diagnostics.sequencesSkipped.toInt(),
-                    lateDropCount = diagnostics.lateRejections.toInt(),
-                    underrunCount = diagnostics.ringUnderruns.toInt(),
-                    concealedPacketCount = diagnostics.concealedPackets.toInt(),
+                    playbackState = playback.toPlaybackState(),
+                    bufferDepthMs = playback.bufferedSpanMs.toLong(),
+                    packetLossCount = playback.sequencesSkipped.toInt(),
+                    lateDropCount = playback.lateRejections.toInt(),
+                    underrunCount = playback.ringUnderruns.toInt(),
+                    concealedPacketCount = playback.concealedPackets.toInt(),
                     metricsSummary = summarizeMetrics(),
                 )
             }

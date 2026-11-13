@@ -43,7 +43,7 @@ internal fun shouldResyncForOffset(
         if (session == null) {
             val message = "Join a session before checking the connection timing."
             _uiState.value = _uiState.value.copy(lastError = message)
-            diagnosticsStore.updateListener { it.copy(lastError = message) }
+            diagnostics.updateListener { it.copy(lastError = message) }
             refreshListenerDiagnostics()
             return
         }
@@ -116,7 +116,7 @@ internal fun shouldResyncForOffset(
 
         val message = "Connect to a host before checking the connection timing."
         _uiState.value = _uiState.value.copy(lastError = message)
-        diagnosticsStore.updateListener { it.copy(lastError = message) }
+        diagnostics.updateListener { it.copy(lastError = message) }
         refreshListenerDiagnostics()
     }
 
@@ -220,7 +220,7 @@ internal fun shouldResyncForOffset(
                 lastMessage = message,
                 lastError = null,
             )
-            diagnosticsStore.updateListener { it.copy(lastError = null) }
+            diagnostics.updateListener { it.copy(lastError = null) }
             refreshListenerDiagnostics()
             return
         }
@@ -262,7 +262,7 @@ internal fun shouldResyncForOffset(
                 _uiState.value.lastMessage
             },
         )
-        diagnosticsStore.updateListener {
+        diagnostics.updateListener {
             it.copy(
                 hostOffsetMs = syncState.offsetMs,
                 rttMs = syncState.rttMs,
@@ -272,10 +272,10 @@ internal fun shouldResyncForOffset(
                 lastError = if (shouldResync) "Connection timing changed" else null,
             )
         }
-        metrics.increment("sync_sample")
-        metrics.recordTiming("sync_rtt_ms", syncState.rttMs)
+        diagnostics.metrics.increment("sync_sample")
+        diagnostics.metrics.recordTiming("sync_rtt_ms", syncState.rttMs)
         if (shouldResync) {
-            metrics.increment("playback_desync")
+            diagnostics.metrics.increment("playback_desync")
             logger.w("playback.desync", "Resync threshold exceeded")
         }
         refreshListenerDiagnostics()
@@ -285,7 +285,7 @@ internal fun shouldResyncForOffset(
     internal fun MainViewModel.handleSyncFailure(message: String) {
         logger.w("sync.error", message)
         val userMessage = "Couldn't establish a steady connection. Try reconnecting closer to the host."
-        metrics.increment("sync_establish_failure")
+        diagnostics.metrics.increment("sync_establish_failure")
         resyncJob?.cancel()
         stopListenerPlayback()
         resetListenerSyncAcquisition()
@@ -300,7 +300,7 @@ internal fun shouldResyncForOffset(
                 playing = false,
             ),
         )
-        diagnosticsStore.updateListener {
+        diagnostics.updateListener {
             it.copy(
                 playbackState = PlaybackState.ERROR,
                 lastError = message,
