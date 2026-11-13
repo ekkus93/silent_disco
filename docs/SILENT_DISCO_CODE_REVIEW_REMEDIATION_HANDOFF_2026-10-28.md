@@ -933,3 +933,10 @@ adb drives the phone; a person scans the QR only when the log prints `>>> SCAN T
 - Open: a peer whose control stream stops being read could stall the host's command loop (`handle_command` awaits the per-peer queue); no test tool yet. Android host still refuses durable trust ("remember") — F1 scope.
 - Incident: two `connectedDebugAndroidTest` runs without `leaveApksInstalledAfterRun=true` uninstalled the app on the A54 (data erased); reinstalled.
 - Gates: `check-rust.sh` passed; `./gradlew assembleDebug assembleDebugAndroidTest test lintDebug` passed before the final androidTest-only and core edits; the final connected run built and passed. Rerun the full Android gate before relying on it.
+
+### 53.4 Step 4: A54 device run on the phase 4 builds
+
+- The full Android gate (`./gradlew assembleDebug assembleDebugAndroidTest test lintDebug`) passed on `fe6d7dd4`.
+- Run 13 failed in the environment, not the transport: the phone's Wi-Fi radio was off (`wifi_on=0`, "Wi-Fi Direct is disabled"), so after the scan it tried to reach the desktop over cellular and no join arrived. Wi-Fi turned back on with `adb shell svc wifi enable`; cause of it being off not established.
+- Run 14 (passed): desktop v4 host at 192.168.87.161 (private LAN, no shared-address opt-in), the A54 on the v4-only debug build (new Keystore key after the reinstall, ID `v4-17dc809d…`). Late join: 3003 frames fully delivered, sync Excellent, RTT 14 ms. 12 s Wi-Fi drop: host showed 0 listeners (3 frames undelivered at the drop). Rejoin under the same key-bound ID: 4006 fully delivered in 20 s, RTT 11.6 ms. Stop then immediate shutdown: the phone logged `Stopped` at 00:26:16.928 and the graceful close 28 ms later; 4002 accepted, 4002 emitted, 0 concealed, 0 late, 0 skipped.
+- Phase 4 is complete for production builds: the desktop hosts v4 only, Android hosts and joins v4 only (joins through the QR), and v3 remains only behind Lab Mode (desktop) and the `legacy-v3` feature (FFI tests). Android host mode on v4 has loopback and on-device instrumented evidence only; a phone-to-phone run needs a second device.

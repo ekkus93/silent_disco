@@ -1735,3 +1735,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T07:52:47Z - claude-opus-5-5 - Phase 4 step 3: Android host on v4, two QUIC worker fixes
 - Android host binds QUIC; FFI refuses v3 binds without legacy-v3. QUIC host worker: no await on full event queue in main loop; FIFO lossless forwarder. Instrumented tests ported (V4TestListeners). Handoff §53.3. Next: full Android gate rerun, step 4 A54 device run.
+
+## 2026-11-13T08:26:37Z - claude-opus-5-5 - Phase 4 step 4: A54 run 14 passed on v4-only builds
+- Full Android gate passed. Run 13 failed only because the phone's Wi-Fi radio was off (fixed with `svc wifi enable`). Run 14: late join, Wi-Fi drop, rejoin, Stop before close, 0 concealed. Phase 4 done for production builds; Android host on v4 lacks a phone-to-phone run (one device). Handoff §53.4.
