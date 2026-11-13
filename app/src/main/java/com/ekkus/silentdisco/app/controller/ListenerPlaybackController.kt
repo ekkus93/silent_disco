@@ -13,7 +13,11 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 private const val LISTENER_REBUFFER_TARGET_MS: ULong = 400uL
 private const val LISTENER_RING_CAPACITY_FRAMES: UInt = 48_000u
@@ -67,8 +71,9 @@ internal sealed interface ListenerStreamStartResult {
 /**
  * The listener's Rust playback runtime and its clock (God-file refactor spec
  * §4): opening and stopping the runtime on its own single control thread, the
- * native output, the same-session sync handover between streams, and the
- * pre-runtime sync estimator with its probe ids.
+ * native output, the same-session sync handover between streams, the
+ * pre-runtime sync estimator with its probe ids, the status-poll and
+ * periodic-resync jobs, and the stream's track boundaries.
  *
  * Everything between an arriving packet and the render ring belongs to the
  * runtime. This class only opens it, points the native output at its ring
@@ -131,6 +136,39 @@ internal class ListenerPlaybackController(
 
     /** Monotonic probe ids, shared by the pre-runtime and runtime-owned paths. */
     private var nextSyncCorrelationId: Long = 1
+
+    /** Track boundaries of the stream being played; their timers run on this controller's scope. */
+    val boundaries = ListenerTrackBoundaries(scope)
+
+    /** Mirrors the runtime's own accounting into the UI while a stream plays. */
+    private var statusPoll: Job? = null
+
+    /** Periodic clock-sync probes while the listener follows a session. */
+    private var resync: Job? = null
+
+    val resyncActive: Boolean get() = resync?.isActive == true
+
+    /** Runs [block] as the status poll, replacing any running one. */
+    fun launchStatusPoll(context: CoroutineContext = EmptyCoroutineContext, block: suspend CoroutineScope.() -> Unit) {
+        statusPoll?.cancel()
+        statusPoll = scope.launch(context, block = block)
+    }
+
+    fun cancelStatusPoll() {
+        statusPoll?.cancel()
+        statusPoll = null
+    }
+
+    /** Runs [block] as the periodic resync, replacing any running one. */
+    fun launchResync(block: suspend CoroutineScope.() -> Unit) {
+        resync?.cancel()
+        resync = scope.launch(block = block)
+    }
+
+    fun cancelResync() {
+        resync?.cancel()
+        resync = null
+    }
 
     fun execute(block: () -> Unit) = executor.execute(block)
 

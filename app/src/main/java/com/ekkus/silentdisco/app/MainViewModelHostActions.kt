@@ -233,8 +233,8 @@ internal fun MainViewModel.stopHostPlaybackImpl() {
         afterAuthoritativeHostPlaybackState(FfiPlaybackState.STOPPED) {
             logger.i("stream.stop", "Stopping host stream")
             hostStreamJob?.cancel()
-            playbackJob?.cancel()
-            resyncJob?.cancel()
+            listenerPlaybackController.cancelStatusPoll()
+            listenerPlaybackController.cancelResync()
             try {
                 withContext(Dispatchers.IO) {
                     clearHostPlaylistStream()

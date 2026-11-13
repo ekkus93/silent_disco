@@ -99,8 +99,8 @@ private fun MainViewModel.rollbackFailedRustHostStart(): List<String> {
 
 private fun MainViewModel.finishFailedRustHostStopCleanup(): List<String> {
     hostStreamJob?.cancel()
-    playbackJob?.cancel()
-    resyncJob?.cancel()
+    listenerPlaybackController.cancelStatusPoll()
+    listenerPlaybackController.cancelResync()
     pendingStartAdvertisingOperationId = null
     pendingListenerDatagramPorts.clear()
     currentSessionId = null

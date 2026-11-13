@@ -61,8 +61,8 @@ class MainViewModelListenerResyncTest {
         runCurrent()
 
         assertThat(harness.listenerCoreController.transportFailedCalls).isEmpty()
-        assertThat(harness.viewModel.resyncJob?.isActive).isTrue()
-        harness.viewModel.resyncJob?.cancel()
+        assertThat(harness.viewModel.listenerPlaybackController.resyncActive).isTrue()
+        harness.viewModel.listenerPlaybackController.cancelResync()
     }
 
     @Test
@@ -104,7 +104,7 @@ class MainViewModelListenerResyncTest {
         assertThat(harness.listenerTransport.syncRequestCalls).hasSize(1)
         assertThat(harness.viewModel._uiState.value.listenerState)
             .isEqualTo(ListenerLifecycleState.SYNCING_CLOCK)
-        harness.viewModel.resyncJob?.cancel()
+        harness.viewModel.listenerPlaybackController.cancelResync()
     }
 
     @Test
@@ -124,7 +124,7 @@ class MainViewModelListenerResyncTest {
         assertThat(harness.listenerTransport.syncRequestCalls).hasSize(1)
         assertThat(harness.viewModel._uiState.value.listenerPlaybackState)
             .isEqualTo(PlaybackState.PAUSED)
-        harness.viewModel.resyncJob?.cancel()
+        harness.viewModel.listenerPlaybackController.cancelResync()
     }
 
     @Test
@@ -132,7 +132,7 @@ class MainViewModelListenerResyncTest {
         val harness = newTestMainViewModelHarness()
         val viewModel = harness.viewModel
         viewModel.currentStreamId = StreamId("stream-1")
-        viewModel.listenerStreamHostStartTimeMs = SystemClock.elapsedRealtime() + 1_000L
+        viewModel.listenerPlaybackController.boundaries.streamHostStartTimeMs = SystemClock.elapsedRealtime() + 1_000L
         viewModel._uiState.value = viewModel._uiState.value.copy(
             listenerState = ListenerLifecycleState.PLAYING,
             listenerPlaybackState = PlaybackState.PAUSED,
@@ -151,7 +151,7 @@ class MainViewModelListenerResyncTest {
         )
         runCurrent()
         assertThat(viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("First track")
-        assertThat(viewModel.pendingListenerTrackBoundaries).containsKey(0L)
+        assertThat(viewModel.listenerPlaybackController.boundaries.pending).containsKey(0L)
 
         viewModel._uiState.value = viewModel._uiState.value.copy(listenerPlaybackState = PlaybackState.PLAYING)
         viewModel.rescheduleListenerTrackBoundaries()
@@ -162,7 +162,7 @@ class MainViewModelListenerResyncTest {
         advanceTimeBy(1)
         runCurrent()
         assertThat(viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
-        assertThat(viewModel.pendingListenerTrackBoundaries).doesNotContainKey(0L)
+        assertThat(viewModel.listenerPlaybackController.boundaries.pending).doesNotContainKey(0L)
     }
 
     @Test
@@ -200,7 +200,7 @@ class MainViewModelListenerResyncTest {
         )
         harness.viewModel.startPeriodicListenerResync()
         runCurrent()
-        assertThat(harness.viewModel.resyncJob?.isActive).isTrue()
+        assertThat(harness.viewModel.listenerPlaybackController.resyncActive).isTrue()
 
         harness.viewModel.handleTransportStreamStopped(hostStopTimeMs = 10_000uL)
         runCurrent()
@@ -211,7 +211,7 @@ class MainViewModelListenerResyncTest {
             .isEqualTo(PlaybackState.STOPPED)
         assertThat(harness.viewModel._uiState.value.connectionProgress.currentState)
             .isEqualTo(ListenerLifecycleState.APPROVED)
-        assertThat(harness.viewModel.resyncJob).isNull()
+        assertThat(harness.viewModel.listenerPlaybackController.resyncActive).isFalse()
         assertThat(listenerPlaybackStatus(harness.viewModel._uiState.value))
             .isEqualTo("Playback stopped")
     }

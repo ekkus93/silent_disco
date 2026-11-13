@@ -1768,3 +1768,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `app/controller/ListenerPlaybackController.kt` owns the listener playback runtime, its single control thread, the same-session clock-lock handover, the pre-runtime sync estimator and probe ids. `startNow`/`stopNow` return results; the coordinator still writes all UI state and reports each stop failure as before.
 - 7 JVM tests; dropping the same-session handover reuse fails them. Full Android gate passed (`--max-workers=2`); 581 JVM tests pass.
 - Part 2 left: `playbackJob`/`resyncJob` and the listener track boundaries.
+
+## 2026-11-13T22:54:58Z - claude-opus-5-5 - God-file refactor §4: ListenerPlaybackController part 2 (item done)
+- `ListenerPlaybackController` now also owns the status-poll and periodic-resync jobs (`playbackJob`/`resyncJob` removed from `MainViewModel`) and the listener track boundaries via `app/controller/ListenerTrackBoundaries.kt` (timers read UI state through a `ListenerBoundaryContext`).
+- 5 new boundary tests; removing the fire-time pause gate fails them. 586 JVM tests and the full Android gate (`--max-workers=2`, 9m39s) passed.
+- `currentStreamId` stays shared on `MainViewModel` until the host extraction splits it.

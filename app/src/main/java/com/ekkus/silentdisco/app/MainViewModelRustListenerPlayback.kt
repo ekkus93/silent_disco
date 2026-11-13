@@ -1,6 +1,5 @@
 package com.ekkus.silentdisco.app
 
-import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.app.controller.ListenerStreamStart
 import com.ekkus.silentdisco.app.controller.ListenerStreamStartResult
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
@@ -14,7 +13,6 @@ import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackPhase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /** How long a stream may sit without a clock lock before it is reported. */
 private const val LISTENER_SYNC_LOCK_TIMEOUT_MS = 5_000L
@@ -109,8 +107,7 @@ internal fun shouldReportListenerPlaying(phase: FfiPlaybackPhase, reported: Play
  * from what actually happened.
  */
 private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerPlaybackHandle) {
-    playbackJob?.cancel()
-    playbackJob = viewModelScope.launch(Dispatchers.IO) {
+    listenerPlaybackController.launchStatusPoll(Dispatchers.IO) {
         var reportedSyncStall = false
         var lastUnderruns = 0UL
         var lastDroppedBeforeSync = 0UL
@@ -120,9 +117,9 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
                 wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
             ) {
                 handleListenerDisconnect("Transport disconnected during playback")
-                return@launch
+                return@launchStatusPoll
             }
-            if (listenerPlayback !== runtime) return@launch
+            if (listenerPlayback !== runtime) return@launchStatusPoll
             val playback = runtime.diagnostics()
             // A stream that cannot play must never read as playing. Without a
             // real clock offset the pump releases nothing at all, and
@@ -191,8 +188,7 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
  * dropped instead of played out (see `FfiListenerPlaybackHandle.stopAt`).
  */
 internal fun MainViewModel.stopListenerPlayback(cutAtHostMs: ULong? = null) {
-    playbackJob?.cancel()
-    playbackJob = null
+    listenerPlaybackController.cancelStatusPoll()
     listenerPlaybackController.execute {
         listenerPlaybackController.stopNow(cutAtHostMs)?.let(::reportListenerPlaybackStopFailure)
     }

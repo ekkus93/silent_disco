@@ -1,7 +1,6 @@
 package com.ekkus.silentdisco.app
 
 import android.os.SystemClock
-import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
@@ -12,7 +11,6 @@ import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
     /**
      * Walks the demo session through its listener progress states.
@@ -25,8 +23,7 @@ import kotlinx.coroutines.launch
      */
     internal fun MainViewModel.startListenerPlaybackSimulation(sessionId: String) {
         logger.i("listener.demo", "Simulating listener progress for demo session $sessionId")
-        playbackJob?.cancel()
-        playbackJob = viewModelScope.launch {
+        listenerPlaybackController.launchStatusPoll {
             delay(300)
             _uiState.value = _uiState.value.copy(
                 listenerState = ListenerLifecycleState.PLAYING,
@@ -81,7 +78,7 @@ import kotlinx.coroutines.launch
     internal fun MainViewModel.handleListenerPlaybackEngineFailure(error: Throwable) {
         val message = error.message ?: "Playback engine failed"
         logger.e("playback.listener", message, error)
-        playbackJob?.cancel()
+        listenerPlaybackController.cancelStatusPoll()
         // Reported into Rust (rather than written locally) so a later Rust
         // snapshot cannot silently revert this back to an earlier state.
         listenerCoreController?.transportFailed(message, retryable = true)

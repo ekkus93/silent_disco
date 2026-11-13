@@ -61,7 +61,7 @@ class ListenerReconnectReplayTest {
         fixture.deliver(FfiListenerTransportEvent.Paused(STREAM_ID, hostPauseTimeMs = 1_500uL))
 
         assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
-        assertThat(fixture.viewModel.pendingListenerTrackBoundaries.keys).containsExactly(FUTURE_SAMPLE)
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending.keys).containsExactly(FUTURE_SAMPLE)
         assertThat(fixture.viewModel._uiState.value.listenerPlaybackState).isEqualTo(PlaybackState.PAUSED)
     }
 
@@ -87,7 +87,7 @@ class ListenerReconnectReplayTest {
         advanceTimeBy(1L)
         runCurrent()
         assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Third track")
-        assertThat(fixture.viewModel.pendingListenerTrackBoundaries).isEmpty()
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending).isEmpty()
     }
 
     @Test
@@ -101,7 +101,7 @@ class ListenerReconnectReplayTest {
         fixture.deliver(boundary(LATER_SAMPLE, "Third track"))
 
         assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
-        assertThat(fixture.viewModel.pendingListenerTrackBoundaries.keys).containsExactly(LATER_SAMPLE)
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending.keys).containsExactly(LATER_SAMPLE)
 
         // Host 9 000 + 5 000 = 14 000 maps to local 4 000.
         advanceTimeBy(4_000L)
@@ -120,8 +120,8 @@ class ListenerReconnectReplayTest {
         fixture.deliver(boundary(LATER_SAMPLE, "Third track"))
 
         assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
-        assertThat(fixture.viewModel.pendingListenerTrackBoundaries.keys).containsExactly(LATER_SAMPLE)
-        assertThat(fixture.viewModel.listenerTrackBoundaryJobs.keys).containsExactly(LATER_SAMPLE)
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending.keys).containsExactly(LATER_SAMPLE)
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.timers.keys).containsExactly(LATER_SAMPLE)
 
         advanceTimeBy(3_999L)
         runCurrent()
@@ -129,7 +129,7 @@ class ListenerReconnectReplayTest {
         advanceTimeBy(1L)
         runCurrent()
         assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Third track")
-        assertThat(fixture.viewModel.pendingListenerTrackBoundaries).isEmpty()
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending).isEmpty()
     }
 
     @Test
@@ -176,8 +176,9 @@ class ListenerReconnectReplayTest {
             listenerCurrentTrackName = "First track",
         )
         pendingBeforeDisconnect?.let { pending ->
-            viewModel.pendingListenerTrackBoundaries[pending.firstSampleIndex.toLong()] =
-                PendingListenerTrackBoundary(pending.streamId, pending.firstSampleIndex.toLong(), pending.displayName)
+            viewModel.listenerPlaybackController.boundaries.add(
+                PendingListenerTrackBoundary(pending.streamId, pending.firstSampleIndex.toLong(), pending.displayName),
+            )
         }
         runCurrent()
         return ReplayFixture(this, harness, runtime)

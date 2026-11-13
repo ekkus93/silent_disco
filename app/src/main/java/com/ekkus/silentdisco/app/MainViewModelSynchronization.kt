@@ -283,7 +283,7 @@ internal fun shouldResyncForOffset(
         logger.w("sync.error", message)
         val userMessage = "Couldn't establish a steady connection. Try reconnecting closer to the host."
         diagnostics.metrics.increment("sync_establish_failure")
-        resyncJob?.cancel()
+        listenerPlaybackController.cancelResync()
         stopListenerPlayback()
         resetListenerSyncAcquisition()
         // Reported into Rust (rather than written locally) so a later Rust
@@ -330,8 +330,7 @@ internal fun shouldResyncForOffset(
 private const val SYNC_ACQUIRE_CADENCE_MS = 250L
 
     internal fun MainViewModel.startPeriodicListenerResync() {
-        resyncJob?.cancel()
-        resyncJob = viewModelScope.launch {
+        listenerPlaybackController.launchResync {
             while (shouldKeepResyncing()) {
                 // Until the clock locks, playback produces nothing at all and
                 // the estimator discards any sample whose round trip is too
@@ -359,7 +358,7 @@ private const val SYNC_ACQUIRE_CADENCE_MS = 250L
                         wifiDirectService.snapshot.value.state == TransportConnectionState.FAILED
                     ) {
                         handleListenerDisconnect("Transport disconnected during playback")
-                        return@launch
+                        return@launchResync
                     }
                 }
             }

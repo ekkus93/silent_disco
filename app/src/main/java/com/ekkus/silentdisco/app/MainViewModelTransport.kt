@@ -128,7 +128,7 @@ import kotlinx.coroutines.launch
     private fun MainViewModel.stopListenerPlaybackForFailure(message: String) {
         clearScanState()
         logger.w("transport.error", message)
-        resyncJob?.cancel()
+        listenerPlaybackController.cancelResync()
         // Stops the Rust runtime, its pump thread, its ring registration and
         // the native output together. Cancelling the diagnostics job alone
         // leaked all of those on every disconnect and connection failure.

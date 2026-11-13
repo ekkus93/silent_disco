@@ -11,10 +11,12 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -151,14 +153,15 @@ class MainViewModelRefactorSafetyNetTest {
             listenerCoreSnapshot(discoveryActive = false, known = emptyList(), selected = null)
         viewModel.ensureRustHostCore()
         val stream = Job()
-        val playback = Job()
-        val resync = Job()
         viewModel.hostStreamJob = stream
-        viewModel.playbackJob = playback
-        viewModel.resyncJob = resync
+        var playback: Job? = null
+        var resync: Job? = null
+        viewModel.listenerPlaybackController.launchStatusPoll { playback = coroutineContext[Job]; awaitCancellation() }
+        viewModel.listenerPlaybackController.launchResync { resync = coroutineContext[Job]; awaitCancellation() }
+        runCurrent()
 
         viewModel.stopHostPlayback()
-        awaitCondition { stream.isCancelled && playback.isCancelled && resync.isCancelled }
+        awaitCondition { stream.isCancelled && playback!!.isCancelled && resync!!.isCancelled }
 
         assertThat(harness.hostCoreController.transitionPlaybackStateCalls)
             .containsExactly(FfiPlaybackState.STOPPED)
