@@ -12,6 +12,7 @@ use super::FfiHostTransportHandle;
 use super::types::FfiHostTransportError;
 use crate::host_control::FfiBridgeError;
 use crate::listener_proof::{FfiListenerProofSigner, FfiProofHostListener, listener_prove_to_host};
+#[cfg(feature = "legacy-v3")]
 use crate::listener_transport::FfiListenerTransportError;
 
 /// A platform signer that holds a key, or fails on request.
@@ -45,6 +46,7 @@ pub(super) fn signer(fail_spki: bool) -> Arc<dyn FfiListenerProofSigner> {
     })
 }
 
+#[cfg(feature = "legacy-v3")] // binds a plaintext v3 host
 #[test]
 fn a_secure_host_binds_when_the_platform_key_is_available() {
     let handle = FfiHostTransportHandle::bind_secure_with_host_clock(
@@ -102,6 +104,7 @@ fn a_host_whose_key_stays_on_the_platform_is_verified_by_a_pinned_listener_over_
 /// Three loopback ports that are free for both TCP (control) and UDP (sync and
 /// audio). The host binds all three, so probing only TCP could collide with a
 /// UDP port another test is using.
+#[cfg(feature = "legacy-v3")]
 fn free_ports() -> (u16, u16, u16) {
     loop {
         let control = std::net::TcpListener::bind("127.0.0.1:0")
@@ -207,6 +210,7 @@ fn a_pinned_listener_joins_a_platform_key_host_over_tls_and_is_approved_on_the_s
     host.shutdown().expect("host shutdown");
 }
 
+#[cfg(feature = "legacy-v3")] // binds a plaintext v3 host
 #[test]
 fn a_listener_pinned_to_another_key_never_connects_to_a_platform_key_host() {
     use crate::listener_transport::FfiListenerTransportHandle;
@@ -241,6 +245,7 @@ fn a_listener_pinned_to_another_key_never_connects_to_a_platform_key_host() {
     host.shutdown().expect("host shutdown");
 }
 
+#[cfg(feature = "legacy-v3")] // binds a plaintext v3 host
 #[test]
 fn a_pinned_listener_never_downgrades_to_plaintext_against_a_host_without_tls() {
     use crate::listener_transport::FfiListenerTransportHandle;
@@ -278,6 +283,7 @@ fn a_pinned_listener_never_downgrades_to_plaintext_against_a_host_without_tls() 
     host.shutdown().expect("host shutdown");
 }
 
+#[cfg(feature = "legacy-v3")] // binds a plaintext v3 host
 #[test]
 fn a_malformed_pin_is_refused_before_any_connection() {
     use crate::listener_transport::FfiListenerTransportHandle;
@@ -308,6 +314,7 @@ fn a_malformed_pin_is_refused_before_any_connection() {
     host.shutdown().expect("host shutdown");
 }
 
+#[cfg(feature = "legacy-v3")] // binds a plaintext v3 host
 #[test]
 fn a_pinned_listener_for_another_session_is_never_approved_by_the_host() {
     use super::types::FfiHostTransportEvent;
@@ -377,6 +384,7 @@ pub(super) fn listener_id() -> String {
         .to_owned()
 }
 
+#[cfg(feature = "legacy-v3")] // binds a plaintext v3 host
 #[test]
 fn a_pinned_listener_cannot_claim_a_device_id_its_key_is_not_bound_to() {
     use crate::listener_transport::FfiListenerTransportHandle;

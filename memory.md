@@ -1732,3 +1732,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T06:36:30Z - claude-opus-5-5 - Phase 4 step 2: Android listeners join v4 only
 - silent-disco-ffi feature `legacy-v3` (off by default; Android builds without it) refuses v3 hosts before connecting; policy in `listener_transport/protocol_policy.rs`. v3 integration suites require the feature. Listener screens show `QrRequiredNotice`. Handoff §53.2.
+
+## 2026-11-13T07:52:47Z - claude-opus-5-5 - Phase 4 step 3: Android host on v4, two QUIC worker fixes
+- Android host binds QUIC; FFI refuses v3 binds without legacy-v3. QUIC host worker: no await on full event queue in main loop; FIFO lossless forwarder. Instrumented tests ported (V4TestListeners). Handoff §53.3. Next: full Android gate rerun, step 4 A54 device run.

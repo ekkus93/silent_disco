@@ -23,6 +23,7 @@ use super::types::{
     FfiHostTransportCounters, FfiHostTransportDelivery, FfiHostTransportError,
     FfiHostTransportEvent,
 };
+use crate::legacy_v3::LegacyV3Policy;
 use crate::listener_proof::{CallbackSigner, FfiListenerProofSigner};
 
 /// Opaque, bounded handle around the shared Rust `SocketHostTransport`.
@@ -735,6 +736,7 @@ impl FfiHostTransportHandle {
         secure_control: Option<Arc<HostTlsIdentity>>,
         protocol: TransportProtocol,
     ) -> Result<Arc<Self>, FfiHostTransportError> {
+        super::protocol_policy::check_host_protocol(protocol, LegacyV3Policy::BUILD)?;
         let bind_address: IpAddr = local_address.parse().map_err(|_| {
             FfiHostTransportError::InvalidConfiguration(
                 "local bind address is malformed".to_owned(),

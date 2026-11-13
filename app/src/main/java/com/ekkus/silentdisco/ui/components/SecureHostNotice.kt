@@ -16,16 +16,17 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 /**
- * Protocol-v3 TCP control and UDP PCM are plaintext and are not bound to a
- * signed QR or verified peer handshake. Keep this notice visible on BOTH
- * sides of the production workflow until secure transport actually ships.
+ * Shown on the Android host screens. Since phase 4 (owner decision
+ * 2026-11-13) this phone hosts secure transport v4 only: listeners join by
+ * scanning its signed QR invitation, and each listener's connection is
+ * encrypted. The text says only that, so it stays true before anyone joins.
  */
 @Composable
-fun LegacyLanSecurityWarning(modifier: Modifier = Modifier) {
+fun SecureHostNotice(modifier: Modifier = Modifier) {
     Card(
-        modifier = modifier.fillMaxWidth().testTag("legacy-lan-security-warning"),
+        modifier = modifier.fillMaxWidth().testTag("secure-host-notice"),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
         ),
     ) {
         Column(
@@ -33,18 +34,17 @@ fun LegacyLanSecurityWarning(modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "Local network connection is not secured",
+                text = "Secure connection (v4)",
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.semantics { heading() },
             )
             Text(
-                text = "This version does not encrypt or authenticate live session traffic. " +
-                    "Others on the same Wi-Fi may read or alter invite codes, controls, and audio. " +
-                    "A signed QR or approved-device name does not protect the connection. " +
-                    "Only use a private network you trust.",
+                text = "Listeners join this phone by scanning its QR invitation. Controls, " +
+                    "clock and audio are encrypted separately for each listener, and phones " +
+                    "using the older unencrypted protocol (v3) cannot join.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onErrorContainer,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
             )
         }
     }

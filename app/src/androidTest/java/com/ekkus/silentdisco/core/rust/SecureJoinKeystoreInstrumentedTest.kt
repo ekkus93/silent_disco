@@ -1,6 +1,6 @@
 package com.ekkus.silentdisco.core.rust
 
-import com.ekkus.silentdisco.app.LISTENER_DISCOVERY_PROTOCOL_VERSION
+import com.ekkus.silentdisco.app.SECURE_TRANSPORT_ENDPOINT_VERSION
 import com.ekkus.silentdisco.core.identity.HostTlsIdentityManager
 import com.ekkus.silentdisco.core.identity.KeystoreHostTlsSigner
 import com.ekkus.silentdisco.core.identity.KeystoreListenerProofSigner
@@ -21,12 +21,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * A complete TLS join on one device: a host whose TLS key stays in Keystore
- * accepts a listener pinned to that key, the listener's Keystore proof is
- * verified, its join reaches the host, and the approval returns on the same
- * channel. A listener pinned to any other key never connects.
+ * A complete secure-transport (v4 QUIC) join on one device: a host whose TLS
+ * key stays in Keystore accepts a listener pinned to that key, the listener's
+ * Keystore proof is verified, its join reaches the host, and the approval
+ * returns on the same connection. A listener pinned to any other key never
+ * connects. Phase 4: this is the only transport Android hosts and joins.
  */
-class TlsJoinKeystoreInstrumentedTest {
+class SecureJoinKeystoreInstrumentedTest {
     private val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private val hostAlias = "silent-disco-tls-join-host-${UUID.randomUUID()}"
     private val listenerAlias = "silent-disco-tls-join-listener-${UUID.randomUUID()}"
@@ -44,27 +45,26 @@ class TlsJoinKeystoreInstrumentedTest {
 
     private fun endpointPayload(ports: IntArray): String =
         """{"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},""" +
-            """"audioPort":${ports[2]},"sessionId":"$session","protocolVersion":$LISTENER_DISCOVERY_PROTOCOL_VERSION,""" +
+            """"audioPort":${ports[2]},"sessionId":"$session","protocolVersion":$SECURE_TRANSPORT_ENDPOINT_VERSION,""" +
             """"inviteCodeRequired":false,"expiresAtMs":null}"""
 
     @Test
-    fun aPinnedListenerJoinsAKeystoreHostOverTlsAndIsApproved() {
+    fun aPinnedListenerJoinsAKeystoreHostOverQuicAndIsApproved() {
         val ports = freePorts()
-        val host = FfiHostTransportHandle.bindSecureWithHostClock(
-            "127.0.0.1", ports[0].toUShort(), ports[1].toUShort(), ports[2].toUShort(),
-            session, 0UL,
+        val host = FfiHostTransportHandle.bindQuicWithHostClock(
+            "127.0.0.1", ports[0].toUShort(), session, 0UL,
             KeystoreHostTlsSigner(HostTlsIdentityManager(hostAlias)),
         )
         val pin = HostTlsIdentityManager(hostAlias).publicKeyDer()
-        val listener = FfiListenerTransportHandle.connectSecure(
+        val listener = FfiListenerTransportHandle.connectQuic(
             endpointPayload(ports), 0UL, deviceId(), "127.0.0.1", pin,
             KeystoreListenerProofSigner(ListenerIdentityManager(listenerAlias)),
         )
         try {
             listener.sendJoinRequest("Pinned listener", null)
-            assertTrue("the host must receive the TLS join", awaitHostJoin(host))
+            assertTrue("the host must receive the v4 join", awaitHostJoin(host))
             host.sendJoinApproval(deviceId(), false)
-            assertTrue("the approval must return over the same TLS channel", awaitApproval(listener))
+            assertTrue("the approval must return over the same connection", awaitApproval(listener))
         } finally {
             listener.shutdown()
             host.shutdown()
@@ -74,15 +74,14 @@ class TlsJoinKeystoreInstrumentedTest {
     @Test
     fun aListenerPinnedToAnotherKeyNeverConnectsToTheKeystoreHost() {
         val ports = freePorts()
-        val host = FfiHostTransportHandle.bindSecureWithHostClock(
-            "127.0.0.1", ports[0].toUShort(), ports[1].toUShort(), ports[2].toUShort(),
-            session, 0UL,
+        val host = FfiHostTransportHandle.bindQuicWithHostClock(
+            "127.0.0.1", ports[0].toUShort(), session, 0UL,
             KeystoreHostTlsSigner(HostTlsIdentityManager(hostAlias)),
         )
         val wrongPin = ListenerIdentityManager(listenerAlias).publicKeyDer()
         try {
             assertThrows(FfiListenerTransportException::class.java) {
-                FfiListenerTransportHandle.connectSecure(
+                FfiListenerTransportHandle.connectQuic(
                     endpointPayload(ports), 0UL, deviceId(), "127.0.0.1", wrongPin,
                     KeystoreListenerProofSigner(ListenerIdentityManager(listenerAlias)),
                 )

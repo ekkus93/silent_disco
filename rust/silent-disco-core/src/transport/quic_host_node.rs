@@ -640,8 +640,10 @@ impl HostTransportNode for QuicHostTransport {
             .counters
             .lock()
             .map_or_else(|_| TransportCounters::default(), |c| *c);
-        // Inbound datagrams the worker dropped on a full event queue.
-        counters.best_effort_event_drops += self.worker.dropped_datagrams();
+        // Inbound datagrams and peer-limit refusals the worker could not
+        // report on a full event queue.
+        counters.best_effort_event_drops +=
+            self.worker.dropped_datagrams() + self.worker.dropped_refusals();
         counters
     }
 

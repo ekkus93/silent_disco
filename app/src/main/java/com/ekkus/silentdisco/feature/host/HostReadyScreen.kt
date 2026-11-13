@@ -20,7 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import com.ekkus.silentdisco.ui.components.LegacyLanSecurityWarning
+import com.ekkus.silentdisco.ui.components.SecureHostNotice
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -122,7 +122,7 @@ fun HostReadyScreen(
             verticalArrangement = Arrangement.spacedBy(WorkflowSpacing.large),
         ) {
             Text("Check your session details before you start.", style = MaterialTheme.typography.bodyLarge)
-            LegacyLanSecurityWarning()
+            SecureHostNotice()
             SummaryCard("Session", form.sessionName.ifBlank { "Add a session name" })
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(

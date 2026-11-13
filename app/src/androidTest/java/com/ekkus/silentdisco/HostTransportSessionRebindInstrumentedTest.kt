@@ -29,6 +29,7 @@ class HostTransportSessionRebindInstrumentedTest {
         val host = HostTransportController()
         val listeners = mutableListOf<FfiListenerTransportHandle>()
         val heartbeats = mutableListOf<Job>()
+        val v4 = V4TestListeners()
         try {
             suspend fun bindSession(sessionId: String): String {
                 val reserved = List(3) { ServerSocket(0) }
@@ -44,18 +45,13 @@ class HostTransportSessionRebindInstrumentedTest {
                 )
                 return """
                     {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
-                    "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                    "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":4,
                     "inviteCodeRequired":false,"expiresAtMs":null}
                 """.trimIndent().replace("\n", "")
             }
 
             fun join(endpoint: String, device: String) {
-                val listener = FfiListenerTransportHandle.connect(
-                    endpoint,
-                    System.currentTimeMillis().toULong(),
-                    device,
-                    "127.0.0.1",
-                )
+                val listener = v4.connect(endpoint, device)
                 listeners += listener
                 listener.sendJoinRequest(device, null)
             }
@@ -90,7 +86,7 @@ class HostTransportSessionRebindInstrumentedTest {
             val first = withTimeout(10_000) {
                 host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
             } as FfiHostTransportEvent.JoinRequestReceived
-            assertThat(first.deviceId).isEqualTo("old-first")
+            assertThat(first.deviceId).isEqualTo(v4.id("old-first"))
 
             join(oldEndpoint, "old-queued-1")
             join(oldEndpoint, "old-queued-2")
@@ -120,7 +116,7 @@ class HostTransportSessionRebindInstrumentedTest {
             }
             assertThat(delivered).isInstanceOf(FfiHostTransportEvent.JoinRequestReceived::class.java)
             assertThat((delivered as FfiHostTransportEvent.JoinRequestReceived).deviceId)
-                .isEqualTo("old-first")
+                .isEqualTo(v4.id("old-first"))
 
             val newListener = listeners.last()
             assertThat(host.sendJoinApproval(delivered.deviceId, false)?.successfulPeers)
@@ -206,7 +202,7 @@ class HostTransportSessionRebindInstrumentedTest {
             val lateRequest = withTimeout(10_000) {
                 host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
             } as FfiHostTransportEvent.JoinRequestReceived
-            assertThat(lateRequest.deviceId).isEqualTo("new-late")
+            assertThat(lateRequest.deviceId).isEqualTo(v4.id("new-late"))
             val lateListener = listeners.last()
             assertThat(host.sendJoinApproval(lateRequest.deviceId, false)?.successfulPeers)
                 .isEqualTo(1u)
@@ -313,6 +309,7 @@ class HostTransportSessionRebindInstrumentedTest {
             heartbeats.forEach { it.cancelAndJoin() }
             listeners.forEach { runCatching { it.shutdown() } }
             host.close()
+            v4.close()
         }
     }
 }

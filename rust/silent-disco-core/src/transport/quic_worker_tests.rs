@@ -305,3 +305,83 @@ fn an_oversized_control_frame_is_refused_without_breaking_the_connection() {
         other => panic!("expected the next frame, got {other:?}"),
     }
 }
+
+/// Android run on the A54 (phase 4): with the host's event collector stalled,
+/// a full event queue must never freeze the worker. A refusal at the peer
+/// limit used to wait in the worker's main loop for room in the queue, so no
+/// command (a Stop broadcast included) was handled again. Here nothing reads
+/// host events: the one admission fills the queue, a second listener is
+/// refused at the peer limit, and a command must still be answered.
+#[test]
+fn a_full_event_queue_never_stops_the_host_handling_commands() {
+    let identity = identity(9);
+    let host = QuicHostWorker::start(
+        QuicHostConfig {
+            bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            session: session(),
+            generation: GENERATION,
+            max_peers: 1,
+            event_capacity: 1,
+        },
+        &identity,
+    )
+    .expect("host starts");
+    let _first = listener(&host, &identity.spki, 31).expect("first listener admitted");
+    // Its admission event now fills the queue; nothing reads it.
+    assert!(
+        listener(&host, &identity.spki, 32).is_err(),
+        "a listener beyond the peer limit was admitted"
+    );
+
+    // A detached thread owns the host, so a frozen worker fails this test
+    // instead of hanging it; it hands the host back once answered.
+    let (done, answered) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let reply = host.send_control(u64::MAX, b"probe".to_vec());
+        let _ = done.send((reply, host));
+    });
+    let (reply, host) = answered
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the host stopped handling commands while its event queue was full");
+    assert_eq!(reply, Err(QuicHostError::UnknownPeer(u64::MAX)));
+    assert_eq!(
+        host.dropped_refusals(),
+        1,
+        "the unreported refusal is counted"
+    );
+}
+
+/// Joins reported while the host's consumer was stalled still come out in
+/// the order they arrived (A54 saturation run, phase 4).
+#[test]
+fn admissions_queued_behind_a_stalled_consumer_keep_their_arrival_order() {
+    let identity = identity(9);
+    let host = QuicHostWorker::start(
+        QuicHostConfig {
+            bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            session: session(),
+            generation: GENERATION,
+            max_peers: 64,
+            event_capacity: 1,
+        },
+        &identity,
+    )
+    .expect("host starts");
+    // Nothing reads host events while these join one after another.
+    let listeners: Vec<_> = (0..24_u8)
+        .map(|seed| listener(&host, &identity.spki, 40 + seed).expect("listener admitted"))
+        .collect();
+
+    let mut order = Vec::new();
+    while order.len() < listeners.len() {
+        if let QuicHostEvent::Admitted { peer, .. } = next_host_event(&host) {
+            order.push(peer);
+        }
+    }
+    let mut sorted = order.clone();
+    sorted.sort_unstable();
+    assert_eq!(
+        order, sorted,
+        "admissions were reported out of arrival order"
+    );
+}

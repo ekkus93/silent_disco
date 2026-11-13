@@ -90,26 +90,37 @@ class MdnsDiscoveryServiceTest {
         assertThat(advertisement).isNull()
     }
 
+    private fun advertisementWithVersion(version: String) = parseMdnsAdvertisement(
+        MdnsResolvedRecord(
+            serviceName = "session-3",
+            address = "192.168.1.50",
+            servicePort = 41_100,
+            attributes = attrs(
+                "sessionId" to "session-3",
+                "hostDeviceId" to "host-3",
+                "sessionName" to "Future Mix",
+                "approvalMode" to "manual",
+                "protocolVersion" to version,
+                "syncPort" to "41101",
+                "audioPort" to "41102",
+            ),
+        ),
+    )
+
     @Test
     fun parserRejectsUnsupportedProtocolVersions() {
-        val advertisement = parseMdnsAdvertisement(
-            MdnsResolvedRecord(
-                serviceName = "session-3",
-                address = "192.168.1.50",
-                servicePort = 41_100,
-                attributes = attrs(
-                    "sessionId" to "session-3",
-                    "hostDeviceId" to "host-3",
-                    "sessionName" to "Future Mix",
-                    "approvalMode" to "manual",
-                    "protocolVersion" to "4",
-                    "syncPort" to "41101",
-                    "audioPort" to "41102",
-                ),
-            ),
-        )
+        assertThat(advertisementWithVersion("5")).isNull()
+        assertThat(advertisementWithVersion("2")).isNull()
+    }
 
-        assertThat(advertisement).isNull()
+    /**
+     * Phase 4: v4 hosts are listed (joined through their QR), and v3 hosts
+     * stay listed so joining one shows why it is refused.
+     */
+    @Test
+    fun parserListsSecureV4HostsAndKeepsV3HostsVisible() {
+        assertThat(advertisementWithVersion("4")?.protocolVersion).isEqualTo(4)
+        assertThat(advertisementWithVersion("3")?.protocolVersion).isEqualTo(3)
     }
 
     @Test

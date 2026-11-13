@@ -23,6 +23,7 @@ mod encoded_playlist_pcm_tests;
 mod host_control;
 mod host_playlist;
 mod host_transport;
+mod legacy_v3;
 mod listener_playback;
 mod listener_proof;
 mod listener_transport;

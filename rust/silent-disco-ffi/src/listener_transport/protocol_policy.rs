@@ -5,26 +5,7 @@
 use silent_disco_core::transport::TransportProtocol;
 
 use super::types::FfiListenerTransportError;
-
-/// Whether this build may join a plaintext v3 host.
-///
-/// Phase 4 (owner decision 2026-11-13): production builds (Android, which
-/// builds this crate without features) join v4 only, through the host's
-/// signed QR. The `legacy-v3` feature keeps v3 for tests and lab tooling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LegacyV3Policy {
-    Allowed,
-    Forbidden,
-}
-
-impl LegacyV3Policy {
-    /// The policy this build was compiled with.
-    pub(crate) const BUILD: Self = if cfg!(feature = "legacy-v3") {
-        Self::Allowed
-    } else {
-        Self::Forbidden
-    };
-}
+pub(crate) use crate::legacy_v3::LegacyV3Policy;
 
 /// Which protocol a listener constructor asked for.
 #[derive(Debug, Clone, Copy)]

@@ -31,6 +31,7 @@ class HostTransportRebindStressInstrumentedTest {
     fun repeatedRebindNeverCrossesSessionsAndAlwaysCompletesWithinBounds() = runBlocking<Unit> {
         val host = HostTransportController()
         val listeners = mutableListOf<FfiListenerTransportHandle>()
+        val v4 = V4TestListeners()
         try {
             repeat(CYCLES) { cycle ->
                 val device = "stress-device-$cycle"
@@ -53,15 +54,13 @@ class HostTransportRebindStressInstrumentedTest {
                 }
                 val endpoint = """
                     {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
-                    "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                    "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":4,
                     "inviteCodeRequired":false,"expiresAtMs":null}
                 """.trimIndent().replace("\n", "")
 
                 val listener = step(cycle, "listener.connect") {
                     withContext(Dispatchers.IO) {
-                        FfiListenerTransportHandle.connect(
-                            endpoint, System.currentTimeMillis().toULong(), device, "127.0.0.1",
-                        )
+                        v4.connect(endpoint, device)
                     }
                 }
                 listeners += listener
@@ -72,19 +71,19 @@ class HostTransportRebindStressInstrumentedTest {
                 val join = step(cycle, "host JoinRequestReceived") {
                     host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
                 } as FfiHostTransportEvent.JoinRequestReceived
-                assertThat(join.deviceId).isEqualTo(device)
+                assertThat(join.deviceId).isEqualTo(v4.id(device))
 
                 if (cycle > 0) {
                     // The previous session's peer does not exist on this host.
                     val stale = try {
-                        host.sendJoinApproval("stress-device-${cycle - 1}", false)?.successfulPeers ?: 0u
+                        host.sendJoinApproval(v4.id("stress-device-${cycle - 1}"), false)?.successfulPeers ?: 0u
                     } catch (_: FfiHostTransportException) {
                         0u
                     }
                     assertThat(stale).isEqualTo(0u)
                 }
 
-                assertThat(host.sendJoinApproval(device, false)?.successfulPeers).isEqualTo(1u)
+                assertThat(host.sendJoinApproval(v4.id(device), false)?.successfulPeers).isEqualTo(1u)
                 host.authorizeListener(join.deviceId, join.syncPort, join.audioPort)
                 step(cycle, "listener JoinApproved") {
                     awaitListenerEvent(listener) { it is FfiListenerTransportEvent.JoinApproved }
@@ -94,9 +93,8 @@ class HostTransportRebindStressInstrumentedTest {
                 // The next rebind must discard it: if it leaked, the next
                 // cycle's first join would be this ghost, not its own device.
                 val ghost = withContext(Dispatchers.IO) {
-                    FfiListenerTransportHandle.connect(
-                        endpoint, System.currentTimeMillis().toULong(), "ghost-$cycle", "127.0.0.1",
-                    ).also { it.sendJoinRequest("ghost-$cycle", null) }
+                    v4.connect(endpoint, "ghost-$cycle")
+                        .also { it.sendJoinRequest("ghost-$cycle", null) }
                 }
                 listeners += ghost
                 delay(150)
@@ -111,6 +109,7 @@ class HostTransportRebindStressInstrumentedTest {
                 runCatching { it.shutdown() }
                 runCatching { it.close() }
             }
+            v4.close()
         }
     }
 

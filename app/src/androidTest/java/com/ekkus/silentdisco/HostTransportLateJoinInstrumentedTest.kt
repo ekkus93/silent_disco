@@ -17,9 +17,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.After
 import org.junit.Test
 
 class HostTransportLateJoinInstrumentedTest {
+    private val v4 = V4TestListeners()
+
+    @After
+    fun deleteListenerKeys() = v4.close()
+
     @Test
     fun approvedListenerReceivesTargetedCurrentTrackAndPendingBoundary() = runBlocking<Unit> {
         val portSockets = List(3) { ServerSocket(0) }
@@ -59,15 +65,10 @@ class HostTransportLateJoinInstrumentedTest {
             )
             val endpoint = """
                 {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
-                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":4,
                 "inviteCodeRequired":false,"expiresAtMs":null}
             """.trimIndent().replace("\n", "")
-            listener = FfiListenerTransportHandle.connect(
-                endpoint,
-                System.currentTimeMillis().toULong(),
-                "android-late-listener",
-                "127.0.0.1",
-            )
+            listener = v4.connect(endpoint, "android-late-listener")
             listener.sendJoinRequest("Late Listener", null)
             val join = withTimeout(5_000) {
                 host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
@@ -174,15 +175,10 @@ class HostTransportLateJoinInstrumentedTest {
 
             val endpoint = """
                 {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
-                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":4,
                 "inviteCodeRequired":false,"expiresAtMs":null}
             """.trimIndent().replace("\n", "")
-            listener = FfiListenerTransportHandle.connect(
-                endpoint,
-                System.currentTimeMillis().toULong(),
-                "android-past-boundary-listener",
-                "127.0.0.1",
-            )
+            listener = v4.connect(endpoint, "android-past-boundary-listener")
             listener.sendJoinRequest("Late Listener", null)
             val join = withTimeout(5_000) {
                 host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
@@ -236,13 +232,10 @@ class HostTransportLateJoinInstrumentedTest {
             host.broadcastTrackBoundary("active-stream", 480, "third", "Third track")
             val endpoint = """
                 {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
-                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":4,
                 "inviteCodeRequired":false,"expiresAtMs":null}
             """.trimIndent().replace("\n", "")
-            listener = FfiListenerTransportHandle.connect(
-                endpoint, System.currentTimeMillis().toULong(),
-                "android-past-all-boundaries-listener", "127.0.0.1",
-            )
+            listener = v4.connect(endpoint, "android-past-all-boundaries-listener")
             listener.sendJoinRequest("Late Listener", null)
             val join = withTimeout(5_000) {
                 host.events.first { it is FfiHostTransportEvent.JoinRequestReceived }
@@ -312,7 +305,7 @@ class HostTransportLateJoinInstrumentedTest {
 
             val endpoint = """
                 {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
-                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":4,
                 "inviteCodeRequired":false,"expiresAtMs":null}
             """.trimIndent().replace("\n", "")
             // Bind disconnect observations to the original TCP generation,
@@ -320,9 +313,7 @@ class HostTransportLateJoinInstrumentedTest {
             val admittedControlAddresses = mutableMapOf<String, String>()
 
             suspend fun join(id: String): FfiListenerTransportHandle {
-                val listener = FfiListenerTransportHandle.connect(
-                    endpoint, System.currentTimeMillis().toULong(), id, "127.0.0.1",
-                )
+                val listener = v4.connect(endpoint, id)
                 listeners += listener
                 listener.sendJoinRequest(id, null)
                 val request = withTimeout(5_000) {
@@ -373,7 +364,7 @@ class HostTransportLateJoinInstrumentedTest {
             withTimeout(5_000) {
                 host.events.first {
                     it is FfiHostTransportEvent.PeerDisconnectedAt &&
-                        it.listenerId == "paused-listener" &&
+                        it.listenerId == v4.id("paused-listener") &&
                         it.controlAddress == admittedControlAddresses["paused-listener"]
                 }
             }

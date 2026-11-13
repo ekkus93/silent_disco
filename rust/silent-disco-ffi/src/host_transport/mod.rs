@@ -1,5 +1,7 @@
 mod handle;
-#[cfg(test)]
+mod protocol_policy;
+// Every test here drives a plaintext v3 host handle.
+#[cfg(all(test, feature = "legacy-v3"))]
 mod handle_tests;
 #[cfg(test)]
 mod quic_bind_tests;

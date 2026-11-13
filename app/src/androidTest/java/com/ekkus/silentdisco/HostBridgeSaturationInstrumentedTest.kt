@@ -30,6 +30,8 @@ import org.junit.Test
  * every join it accepted in order with no gaps.
  */
 class HostBridgeSaturationInstrumentedTest {
+    private val v4 = V4TestListeners()
+
     @Test
     fun stalledCollectorRefusesJoinsVisiblyKeepsStopFlowingAndLosesNoAcceptedJoin() = runBlocking<Unit> {
         val host = HostTransportController()
@@ -43,7 +45,7 @@ class HostBridgeSaturationInstrumentedTest {
             host.bind(this, "127.0.0.1", ports[0], ports[1], ports[2], sessionId)
             val endpoint = """
                 {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
-                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":4,
                 "inviteCodeRequired":false,"expiresAtMs":null}
             """.trimIndent().replace("\n", "")
 
@@ -98,13 +100,14 @@ class HostBridgeSaturationInstrumentedTest {
 
             // Resume collection: every accepted join arrives, in order, no gaps,
             // and no refused cycle appears as an accepted join.
+            // v4 device IDs are key-bound, so map each back to its cycle; the
+            // refused cycle is mapped too, so a leaked refusal would show up.
+            val cycleById = (0..accepted).associateBy { v4.id("sat-$it") }
             val joined = mutableListOf<Int>()
             withTimeoutOrNull(DRAIN_MS) {
                 host.events.collect { event ->
-                    if (event is FfiHostTransportEvent.JoinRequestReceived &&
-                        event.deviceId.startsWith("sat-")
-                    ) {
-                        joined += event.deviceId.removePrefix("sat-").toInt()
+                    if (event is FfiHostTransportEvent.JoinRequestReceived) {
+                        cycleById[event.deviceId]?.let { joined += it }
                     }
                 }
             }
@@ -119,6 +122,7 @@ class HostBridgeSaturationInstrumentedTest {
                 runCatching { it.shutdown() }
                 runCatching { it.close() }
             }
+            v4.close()
         }
     }
 
@@ -127,9 +131,7 @@ class HostBridgeSaturationInstrumentedTest {
     private suspend fun connect(endpoint: String, device: String): FfiListenerTransportHandle =
         withTimeout(BOUND_MS) {
             io {
-                FfiListenerTransportHandle.connect(
-                    endpoint, System.currentTimeMillis().toULong(), device, "127.0.0.1",
-                )
+                v4.connect(endpoint, device)
             }
         }
 

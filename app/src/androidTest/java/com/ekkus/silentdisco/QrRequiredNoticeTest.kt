@@ -22,7 +22,7 @@ import org.junit.Rule
 import org.junit.Test
 
 /** Real Android Compose screens: security disclosures survive compact, large-text layouts. */
-class LegacyLanSecurityWarningTest {
+class QrRequiredNoticeTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test

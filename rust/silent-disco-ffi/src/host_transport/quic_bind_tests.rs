@@ -217,6 +217,7 @@ fn a_quic_only_connect_refuses_an_endpoint_that_is_not_v4() {
     ));
 }
 
+#[cfg(feature = "legacy-v3")] // binds a plaintext v3 host
 #[test]
 fn a_v4_listener_never_falls_back_to_a_v3_host() {
     let session = "ffi-quic-no-fallback";

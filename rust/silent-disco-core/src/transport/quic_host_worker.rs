@@ -142,6 +142,9 @@ struct Shared {
     pending: AtomicU64,
     next_peer: AtomicU64,
     dropped_datagrams: AtomicU64,
+    /// Refusals at the peer limit that could not be reported because the
+    /// event queue was full.
+    dropped_refusals: AtomicU64,
 }
 
 impl Shared {
@@ -259,6 +262,13 @@ impl QuicHostWorker {
         self.shared.dropped_datagrams.load(Ordering::Relaxed)
     }
 
+    /// Peer-limit refusals not reported because the event queue was full.
+    /// The connection is refused either way.
+    #[must_use]
+    pub fn dropped_refusals(&self) -> u64 {
+        self.shared.dropped_refusals.load(Ordering::Relaxed)
+    }
+
     /// Waits up to `timeout` for the next event; `None` on timeout.
     ///
     /// # Errors
@@ -372,6 +382,7 @@ async fn run_host(
     events: SyncSender<QuicHostEvent>,
     mut commands: mpsc::Receiver<Command>,
 ) {
+    let events = Events::start(events);
     loop {
         tokio::select! {
             incoming = endpoint.accept() => {
@@ -381,11 +392,18 @@ async fn run_host(
                     + usize::try_from(shared.pending.load(Ordering::Acquire)).unwrap_or(usize::MAX);
                 if in_use >= config.max_peers {
                     incoming.refuse();
-                    send_event_lossless(&events, QuicHostEvent::Refused {
+                    // Never wait here: this loop also handles commands (a
+                    // Stop broadcast included), and a stalled event consumer
+                    // would freeze them all. The connection is refused
+                    // either way; an unreported refusal is counted.
+                    let refused = QuicHostEvent::Refused {
                         remote,
                         reason: "host is at its peer limit".to_owned(),
                         at_capacity: true,
-                    }).await;
+                    };
+                    if events.lossy.try_send(refused).is_err() {
+                        shared.dropped_refusals.fetch_add(1, Ordering::Relaxed);
+                    }
                     continue;
                 }
                 shared.pending.fetch_add(1, Ordering::AcqRel);
@@ -522,7 +540,7 @@ async fn admit_peer(
     generation: u64,
     host_spki: Vec<u8>,
     shared: Arc<Shared>,
-    events: SyncSender<QuicHostEvent>,
+    events: Events,
 ) {
     let remote = incoming.remote_address();
     let admitted = async {
@@ -540,15 +558,13 @@ async fn admit_peer(
     let (connection, listener, stream) = match admitted {
         Ok(admitted) => admitted,
         Err(reason) => {
-            send_event_lossless(
-                &events,
-                QuicHostEvent::Refused {
+            events
+                .lossless(QuicHostEvent::Refused {
                     remote,
                     reason,
                     at_capacity: false,
-                },
-            )
-            .await;
+                })
+                .await;
             return;
         }
     };
@@ -562,26 +578,26 @@ async fn admit_peer(
             control: control_tx,
         },
     );
-    send_event_lossless(
-        &events,
-        QuicHostEvent::Admitted {
+    events
+        .lossless(QuicHostEvent::Admitted {
             peer,
             remote,
             listener,
-        },
-    )
-    .await;
+        })
+        .await;
     tokio::spawn(write_control(send, connection.clone(), control_rx));
     tokio::spawn(read_datagrams(
         peer,
         connection.clone(),
         Arc::clone(&shared),
-        events.clone(),
+        events.lossy.clone(),
     ));
     let reason = read_control(peer, recv, &events).await;
     connection.close(0_u32.into(), b"control stream ended");
     shared.peers().remove(&peer);
-    send_event_lossless(&events, QuicHostEvent::Closed { peer, reason }).await;
+    events
+        .lossless(QuicHostEvent::Closed { peer, reason })
+        .await;
 }
 
 async fn write_control(
@@ -613,14 +629,14 @@ async fn write_control(
     let _ = send.finish();
 }
 
-async fn read_control(
-    peer: u64,
-    mut recv: quinn::RecvStream,
-    events: &SyncSender<QuicHostEvent>,
-) -> String {
+async fn read_control(peer: u64, mut recv: quinn::RecvStream, events: &Events) -> String {
     loop {
         match read_frame(&mut recv).await {
-            Ok(frame) => send_event_lossless(events, QuicHostEvent::Control { peer, frame }).await,
+            Ok(frame) => {
+                events
+                    .lossless(QuicHostEvent::Control { peer, frame })
+                    .await;
+            }
             Err(error) => return error.to_string(),
         }
     }
@@ -640,6 +656,44 @@ async fn read_datagrams(
         if events.try_send(event).is_err() {
             shared.dropped_datagrams.fetch_add(1, Ordering::Relaxed);
         }
+    }
+}
+
+/// How worker tasks hand events to the host side.
+///
+/// Events that must not be lost go through one bounded tokio queue whose
+/// waiting senders are served first in, first out, and a single forwarder
+/// moves them into the host's queue in that order. So when the host's
+/// consumer stalls, connections waiting to report a join are still reported
+/// in the order they arrived (A54 run, phase 4: per-task retries used to
+/// shuffle them). Lossy events (datagrams, refusals at the peer limit) skip
+/// the queue and are counted when dropped; the main loop never waits on
+/// either lane.
+#[derive(Clone)]
+struct Events {
+    lossless: mpsc::Sender<QuicHostEvent>,
+    lossy: SyncSender<QuicHostEvent>,
+}
+
+impl Events {
+    fn start(host: SyncSender<QuicHostEvent>) -> Self {
+        let (lossless, mut ordered) = mpsc::channel(QUEUE_CAPACITY);
+        let forward_to = host.clone();
+        tokio::spawn(async move {
+            while let Some(event) = ordered.recv().await {
+                send_event_lossless(&forward_to, event).await;
+            }
+        });
+        Self {
+            lossless,
+            lossy: host,
+        }
+    }
+
+    /// Waits for room in the ordered queue. Gives up only when the
+    /// forwarder has ended (the worker is shutting down).
+    async fn lossless(&self, event: QuicHostEvent) {
+        let _ = self.lossless.send(event).await;
     }
 }
 

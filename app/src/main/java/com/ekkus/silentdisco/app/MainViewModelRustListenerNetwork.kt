@@ -18,6 +18,14 @@ private const val LISTENER_DISPLAY_NAME = "This Android Listener"
 /** Protocol version advertised by this app's BLE and desktop-mDNS discovery layers. */
 internal const val LISTENER_DISCOVERY_PROTOCOL_VERSION: Int = 3
 
+/**
+ * Endpoint version this app joins (phase 4, owner decision 2026-11-13):
+ * secure transport v4 only. Used where the host's version is not advertised
+ * (an Android host found over Wi-Fi Direct), since every host this app can
+ * join is v4. The Rust transport refuses anything else before connecting.
+ */
+internal const val SECURE_TRANSPORT_ENDPOINT_VERSION: Int = 4
+
 @Serializable
 private data class ManualHostEndpointPayload(
     val hostAddress: String,
@@ -126,7 +134,7 @@ internal fun MainViewModel.establishRustListenerNetwork(
             protocolVersion = mdnsService.discoveredSessions.value
                 .firstOrNull { it.sessionId == effect.sessionId }
                 ?.protocolVersion
-                ?: LISTENER_DISCOVERY_PROTOCOL_VERSION,
+                ?: SECURE_TRANSPORT_ENDPOINT_VERSION,
         )
         return
     }
@@ -187,7 +195,7 @@ private fun MainViewModel.connectRustListenerEndpoint(
     controlPort: UShort,
     syncPort: UShort,
     audioPort: UShort,
-    protocolVersion: Int = LISTENER_DISCOVERY_PROTOCOL_VERSION,
+    protocolVersion: Int = SECURE_TRANSPORT_ENDPOINT_VERSION,
 ) {
     logger.i(
         "listener.endpoint_connect",

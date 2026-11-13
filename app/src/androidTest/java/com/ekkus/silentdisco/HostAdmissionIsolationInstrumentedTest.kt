@@ -19,7 +19,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Test
 
 /**
- * Real TCP/UDP admission regression: a rejected listener must never receive
+ * Real secure-transport (v4 QUIC) admission regression: a rejected listener must never receive
  * cached playback state or audio, while a subsequent approved listener joins
  * the same running host at the authoritative track and sample timeline.
  */
@@ -32,6 +32,7 @@ class HostAdmissionIsolationInstrumentedTest {
         val sessionId = "android-admission-${System.nanoTime()}"
         val host = HostTransportController()
         val listeners = mutableListOf<FfiListenerTransportHandle>()
+        val v4 = V4TestListeners()
         var heartbeat: Job? = null
         try {
             host.bind(this, "127.0.0.1", ports[0], ports[1], ports[2], sessionId)
@@ -44,19 +45,17 @@ class HostAdmissionIsolationInstrumentedTest {
             )
             val endpoint = """
                 {"hostAddress":"127.0.0.1","controlPort":${ports[0]},"syncPort":${ports[1]},
-                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":3,
+                "audioPort":${ports[2]},"sessionId":"$sessionId","protocolVersion":4,
                 "inviteCodeRequired":false,"expiresAtMs":null}
             """.trimIndent().replace("\n", "")
 
-            val denied = FfiListenerTransportHandle.connect(
-                endpoint, System.currentTimeMillis().toULong(), "denied-device", "127.0.0.1",
-            )
+            val denied = v4.connect(endpoint, "denied-device")
             listeners += denied
             denied.sendJoinRequest("Denied Listener", null)
             val deniedRequest = withTimeout(10_000) {
                 host.events.first {
                     it is FfiHostTransportEvent.JoinRequestReceived &&
-                        it.deviceId == "denied-device"
+                        it.deviceId == v4.id("denied-device")
                 }
             } as FfiHostTransportEvent.JoinRequestReceived
             val rejection = host.sendJoinRejection(deniedRequest.deviceId, "Host declined")
@@ -66,7 +65,7 @@ class HostAdmissionIsolationInstrumentedTest {
             } as FfiListenerTransportEvent.JoinRejected
             assertThat(deniedEvent.reason).isEqualTo("Host declined")
 
-            // Rejecting a TCP join must not accidentally authorize its UDP
+            // Rejecting a join must not accidentally authorize its audio
             // route, even though the host has an active cached stream.
             val noRoute = host.broadcastAudio(
                 "admission-stream", 100, 48_000, 2, 240, 24_000, startMs + 500L,
@@ -74,15 +73,13 @@ class HostAdmissionIsolationInstrumentedTest {
             )
             assertThat(noRoute?.intendedPeers).isEqualTo(0u)
 
-            val approved = FfiListenerTransportHandle.connect(
-                endpoint, System.currentTimeMillis().toULong(), "approved-device", "127.0.0.1",
-            )
+            val approved = v4.connect(endpoint, "approved-device")
             listeners += approved
             approved.sendJoinRequest("Approved Listener", null)
             val approvedRequest = withTimeout(10_000) {
                 host.events.first {
                     it is FfiHostTransportEvent.JoinRequestReceived &&
-                        it.deviceId == "approved-device"
+                        it.deviceId == v4.id("approved-device")
                 }
             } as FfiHostTransportEvent.JoinRequestReceived
             host.sendJoinApproval(approvedRequest.deviceId, false)
@@ -136,7 +133,7 @@ class HostAdmissionIsolationInstrumentedTest {
             // Revoking the approved listener must retire its audio route too.
             heartbeat?.cancelAndJoin()
             heartbeat = null
-            assertThat(host.disconnectPeer("approved-device", "Session access revoked")?.successfulPeers)
+            assertThat(host.disconnectPeer(v4.id("approved-device"), "Session access revoked")?.successfulPeers)
                 .isEqualTo(1u)
             assertThat(awaitAdmissionEvent(approved) {
                 it is FfiListenerTransportEvent.HostDisconnected
@@ -148,6 +145,7 @@ class HostAdmissionIsolationInstrumentedTest {
             heartbeat?.cancelAndJoin()
             listeners.forEach { runCatching { it.shutdown() } }
             host.close()
+            v4.close()
         }
     }
 }

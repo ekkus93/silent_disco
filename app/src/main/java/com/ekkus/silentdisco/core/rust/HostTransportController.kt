@@ -48,11 +48,16 @@ class HostTransportController(
      * with TLS silently absent.
      */
     private val hostTlsSigner: FfiListenerProofSigner = KeystoreHostTlsSigner(HostTlsIdentityManager()),
-    /** Opens the native host transport; replaced only by JVM tests that record broadcasts. */
+    /**
+     * Opens the native host transport; replaced only by JVM tests that record
+     * broadcasts. Secure transport v4 only (phase 4, owner decision
+     * 2026-11-13): one QUIC endpoint on the control port carries control,
+     * clock probes and audio, so the sync and audio ports are unused.
+     */
     private val bindHandle: (String, UShort, UShort, UShort, String) -> FfiHostTransportHandle =
-        { localAddress, controlPort, syncPort, audioPort, sessionId ->
-            FfiHostTransportHandle.bindSecureWithHostClock(
-                localAddress, controlPort, syncPort, audioPort, sessionId,
+        { localAddress, controlPort, _, _, sessionId ->
+            FfiHostTransportHandle.bindQuicWithHostClock(
+                localAddress, controlPort, sessionId,
                 SystemClock.elapsedRealtime().toULong(),
                 hostTlsSigner,
             )

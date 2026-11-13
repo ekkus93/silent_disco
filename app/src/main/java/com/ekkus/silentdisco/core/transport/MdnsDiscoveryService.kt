@@ -15,7 +15,12 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 private const val SILENT_DISCO_SERVICE_TYPE = "_silentdisco._tcp."
-private const val SILENT_DISCO_PROTOCOL_VERSION = 3
+/**
+ * Endpoint versions listed in discovery. v4 hosts are joined through their
+ * QR; v3 hosts are still listed so that joining one shows why it is refused
+ * (phase 4) instead of the host silently missing from the list.
+ */
+private val LISTED_PROTOCOL_VERSIONS = setOf(3, 4)
 
 /** One fully-resolved Silent Disco desktop mDNS advertisement. */
 data class MdnsSessionAdvertisement(
@@ -67,7 +72,7 @@ internal fun parseMdnsAdvertisement(record: MdnsResolvedRecord): MdnsSessionAdve
     val hostDeviceId = attribute("hostDeviceId") ?: return null
     val sessionName = attribute("sessionName") ?: return null
     val protocolVersion = attribute("protocolVersion")?.toIntOrNull() ?: return null
-    if (protocolVersion != SILENT_DISCO_PROTOCOL_VERSION) return null
+    if (protocolVersion !in LISTED_PROTOCOL_VERSIONS) return null
     val syncPort = attribute("syncPort")?.toIntOrNull()?.takeIf(::validPort) ?: return null
     val audioPort = attribute("audioPort")?.toIntOrNull()?.takeIf(::validPort) ?: return null
     if (!validPort(record.servicePort)) return null

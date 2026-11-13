@@ -22,7 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
-import com.ekkus.silentdisco.ui.components.LegacyLanSecurityWarning
+import com.ekkus.silentdisco.ui.components.SecureHostNotice
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -137,7 +137,7 @@ fun HostAccessSetupScreen(
                 text = "Who can join this session?",
                 style = MaterialTheme.typography.headlineSmall,
             )
-            LegacyLanSecurityWarning()
+            SecureHostNotice()
 
             accessOptions.forEach { option ->
                 val selected = uiState.hostForm.approvalMode == option.mode
