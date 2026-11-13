@@ -1,37 +1,26 @@
 package com.ekkus.silentdisco.app
 
 import androidx.lifecycle.viewModelScope
-import com.ekkus.silentdisco.core.audio.OboeBridge
+import com.ekkus.silentdisco.app.controller.ListenerStreamStart
+import com.ekkus.silentdisco.app.controller.ListenerStreamStartResult
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.uniffi.FfiAudioPacket
-import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackConfig
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
-import com.ekkus.silentdisco.core.uniffi.FfiListenerSyncHandover
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackPhase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private const val LISTENER_REBUFFER_TARGET_MS: ULong = 400uL
-
-private const val LISTENER_RING_CAPACITY_FRAMES: UInt = 48_000u
-private const val LISTENER_RING_TARGET_FILL_FRAMES: UInt = 19_200u
-private const val LISTENER_RING_WRITE_LEAD_MS: ULong = 400uL
-private const val LISTENER_MAX_RING_PREFILL_MS: ULong = 800uL
-
 /** How long a stream may sit without a clock lock before it is reported. */
 private const val LISTENER_SYNC_LOCK_TIMEOUT_MS = 5_000L
 
 /** How often the runtime's own accounting is mirrored into the UI. */
 private const val LISTENER_DIAGNOSTICS_POLL_MS = 100L
-
-/** `nativeOboeOpen` success status. */
-private const val LISTENER_OBOE_STATUS_OK = 0
 
 internal fun MainViewModel.handleTransportAudioReceived(event: FfiListenerTransportEvent.AudioReceived) {
     val session = _uiState.value.selectedSession ?: return
@@ -70,100 +59,38 @@ internal fun MainViewModel.startListenerPlaybackFromTransport(
     event: FfiListenerTransportEvent.StreamStarted,
     resumeInPlace: Boolean,
 ) {
-    listenerPlaybackControlExecutor.execute {
-        startListenerPlaybackFromTransportNow(sessionId, streamId, event, resumeInPlace)
-    }
-}
-
-/** A stream's clock lock, tagged with the session it belongs to. */
-internal class SessionSyncHandover(val sessionId: SessionId, val handover: FfiListenerSyncHandover)
-
-/**
- * The carried value to open [session]'s next stream from: only a handover
- * from that same session. Another session's host has an unrelated clock, so
- * its offset would place packets on the wrong timeline.
- */
-internal fun <T> handoverForSession(storedSession: SessionId?, stored: T?, session: SessionId): T? =
-    stored?.takeIf { storedSession == session }
-
-private fun MainViewModel.startListenerPlaybackFromTransportNow(
-    sessionId: SessionId,
-    streamId: StreamId,
-    event: FfiListenerTransportEvent.StreamStarted,
-    resumeInPlace: Boolean,
-) {
-    val runningPlayback = listenerPlayback
-    if (
-        runningPlayback != null &&
-        shouldReanchorListenerPlayback(resumeInPlace, runtimeAvailable = true)
-    ) {
-        runCatching { runningPlayback.reanchorPresentationTime(event.hostStartTimeMs) }
-            .onFailure(::handleListenerPlaybackEngineFailure)
-        return
-    }
-    // The old stream ends where this one begins on the host timeline.
-    stopListenerPlaybackNow(cutAtHostMs = event.hostStartTimeMs)
-    // A later stream of the same session continues on the previous stream's
-    // clock and sync estimate, so it plays from its first packet.
-    val stored = listenerSyncHandover
-    listenerSyncHandover = null
-    val handover = handoverForSession(stored?.sessionId, stored?.handover, sessionId)
-    val runtime = runCatching {
-        val config =
-            FfiListenerPlaybackConfig(
-                sessionId = sessionId.value,
-                streamId = streamId.value,
-                sampleRate = event.sampleRate,
-                hostStartTimeMs = event.hostStartTimeMs,
-                samplesPerPacket = event.samplesPerPacket,
-                channels = event.channels,
-                startupBufferTargetMs = currentPlaybackThresholds().startupBufferMs.toULong(),
-                // Clamped by the scheduler to the startup target above, so a tuning
-                // profile with a shallower startup buffer keeps its fast recovery.
-                rebufferTargetMs = LISTENER_REBUFFER_TARGET_MS,
-                ringCapacityFrames = LISTENER_RING_CAPACITY_FRAMES,
-                ringTargetFillFrames = LISTENER_RING_TARGET_FILL_FRAMES,
-                writeLeadMs = LISTENER_RING_WRITE_LEAD_MS,
-                maxPrefillMs = LISTENER_MAX_RING_PREFILL_MS,
-                volume = 1.0f,
-            )
-        if (handover != null) {
-            FfiListenerPlaybackHandle.openContinuing(config, handover)
-        } else {
-            FfiListenerPlaybackHandle.open(config)
-        }
-    }.also { stored?.handover?.close() }.getOrElse { error ->
-        handleListenerPlaybackEngineFailure(error)
-        return
-    }
-    listenerPlayback = runtime
-    listenerPlaybackSessionId = sessionId
-
-    val oboeStatus = OboeBridge.nativeOboeOpen(runtime.engineToken())
-    if (oboeStatus != LISTENER_OBOE_STATUS_OK) {
-        stopListenerPlaybackNow()
-        handleListenerPlaybackEngineFailure(
-            IllegalStateException("Oboe stream failed to open (status=$oboeStatus)"),
-        )
-        return
-    }
-    try {
-        listenerTransportController.attachPlayback(runtime)
-    } catch (error: Throwable) {
-        stopListenerPlaybackNow()
-        handleListenerPlaybackEngineFailure(error)
-        return
-    }
-    _uiState.value = _uiState.value.copy(
-        listenerState = ListenerLifecycleState.BUFFERING,
-        listenerPlaybackState = PlaybackState.BUFFERING,
+    val start = ListenerStreamStart(
+        sessionId = sessionId,
+        streamId = streamId,
+        sampleRate = event.sampleRate,
+        hostStartTimeMs = event.hostStartTimeMs,
+        samplesPerPacket = event.samplesPerPacket,
+        channels = event.channels,
+        startupBufferMs = currentPlaybackThresholds().startupBufferMs,
     )
-    startListenerPlaybackDiagnostics(runtime)
-    // The runtime gates playback on an accepted clock-sync sample, so it
-    // needs probes from the moment it exists. This path never started any:
-    // every packet was dropped "before lock", and the host rightly evicted a
-    // listener that never probed (Block 52.6).
-    startPeriodicListenerResync()
+    listenerPlaybackController.execute {
+        val result = listenerPlaybackController.startNow(
+            start,
+            reanchorRunning = shouldReanchorListenerPlayback(resumeInPlace, runtimeAvailable = true),
+        )
+        result.stopFailures.forEach(::reportListenerPlaybackStopFailure)
+        when (result) {
+            is ListenerStreamStartResult.Reanchored -> result.failure?.let(::handleListenerPlaybackEngineFailure)
+            is ListenerStreamStartResult.Failed -> handleListenerPlaybackEngineFailure(result.error)
+            is ListenerStreamStartResult.Started -> {
+                _uiState.value = _uiState.value.copy(
+                    listenerState = ListenerLifecycleState.BUFFERING,
+                    listenerPlaybackState = PlaybackState.BUFFERING,
+                )
+                startListenerPlaybackDiagnostics(result.runtime)
+                // The runtime gates playback on an accepted clock-sync sample, so it
+                // needs probes from the moment it exists. This path never started any:
+                // every packet was dropped "before lock", and the host rightly evicted a
+                // listener that never probed (Block 52.6).
+                startPeriodicListenerResync()
+            }
+        }
+    }
 }
 
 /**
@@ -266,42 +193,15 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
 internal fun MainViewModel.stopListenerPlayback(cutAtHostMs: ULong? = null) {
     playbackJob?.cancel()
     playbackJob = null
-    listenerPlaybackControlExecutor.execute { stopListenerPlaybackNow(cutAtHostMs) }
+    listenerPlaybackController.execute {
+        listenerPlaybackController.stopNow(cutAtHostMs)?.let(::reportListenerPlaybackStopFailure)
+    }
 }
 
-private fun MainViewModel.stopListenerPlaybackNow(cutAtHostMs: ULong? = null) {
-    val runtime = listenerPlayback ?: return
-    listenerPlayback = null
-    var firstFailure: Throwable? = null
-    fun capture(block: () -> Unit) {
-        try {
-            block()
-        } catch (error: Throwable) {
-            val first = firstFailure
-            if (first == null) firstFailure = error else first.addSuppressed(error)
-        }
-    }
-    capture { listenerTransportController.detachPlayback() }
-    capture { if (cutAtHostMs != null) runtime.stopAt(cutAtHostMs) else runtime.stop() }
-    capture { OboeBridge.nativeOboeClose() }
-    // Keep this stream's clock lock for the session's next stream. It is
-    // only ever reused by a stream of the same session (see
-    // [handoverForSession]), so a disconnect cannot leak it elsewhere.
-    val session = listenerPlaybackSessionId
-    listenerPlaybackSessionId = null
-    if (session != null) {
-        capture {
-            val next = SessionSyncHandover(session, runtime.syncHandover())
-            listenerSyncHandover?.handover?.close()
-            listenerSyncHandover = next
-        }
-    }
-    capture { runtime.close() }
-    firstFailure?.let { error ->
-        logger.w("playback.stop_failed", error.message ?: "playback failed to stop cleanly")
-        _uiState.value = _uiState.value.copy(
-            listenerPlaybackState = PlaybackState.ERROR,
-            lastError = error.message ?: "playback failed to stop cleanly",
-        )
-    }
+private fun MainViewModel.reportListenerPlaybackStopFailure(error: Throwable) {
+    logger.w("playback.stop_failed", error.message ?: "playback failed to stop cleanly")
+    _uiState.value = _uiState.value.copy(
+        listenerPlaybackState = PlaybackState.ERROR,
+        lastError = error.message ?: "playback failed to stop cleanly",
+    )
 }

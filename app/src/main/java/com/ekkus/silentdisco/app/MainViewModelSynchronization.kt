@@ -12,7 +12,6 @@ import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.SyncRequestPacket
 import com.ekkus.silentdisco.core.protocol.SyncResponsePacket
-import com.ekkus.silentdisco.core.rust.RustCoreBridge
 import com.ekkus.silentdisco.core.rust.RustSyncConfidence
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -66,7 +65,7 @@ internal fun shouldResyncForOffset(
         // internally tracks its own private probe bookkeeping), so there is
         // nothing for Kotlin to hand off here.
         val request = newListenerSyncProbeRequest(SessionId(session.id))
-        pendingSyncCorrelationId = request.correlationId
+        listenerPlaybackController.pendingSyncCorrelationId = request.correlationId
         logger.i("sync.probe.requested", "Checking connection timing ($source)")
 
         if (listenerTransportConnected ||
@@ -125,7 +124,7 @@ internal fun shouldResyncForOffset(
      * same timestamp the runtime recorded.
      */
     private fun MainViewModel.sendRuntimeSyncProbe(runtime: FfiListenerPlaybackHandle, source: String) {
-        val correlationId = nextSyncCorrelationId++
+        val correlationId = listenerPlaybackController.nextProbeId()
         val sendTimeMs = runtime.nowMs()
         runCatching { runtime.beginSyncProbe(correlationId.toULong(), sendTimeMs) }
             .onFailure { error ->
@@ -153,7 +152,7 @@ internal fun shouldResyncForOffset(
      * this id.
      */
     private fun MainViewModel.newListenerSyncProbeRequest(sessionId: SessionId): SyncRequestPacket {
-        val correlationId = nextSyncCorrelationId++
+        val correlationId = listenerPlaybackController.nextProbeId()
         val sendTimeMs = SystemClock.elapsedRealtime()
         return SyncRequestPacket(
             version = LISTENER_SYNC_REQUEST_VERSION,
@@ -165,7 +164,7 @@ internal fun shouldResyncForOffset(
 
     /**
      * Feeds one completed four-timestamp exchange to the Rust-owned
-     * standalone estimator ([RustCoreBridge.openSyncEstimator]) and maps its
+     * standalone estimator (`RustCoreBridge.openSyncEstimator`) and maps its
      * result onto the same [SyncState]/diagnostics fields the pre-Rust local
      * estimator used to populate -- this is the pre-runtime sibling of
      * [MainViewModelRustListener.applyRuntimeSyncOutcome], which does the
@@ -174,20 +173,18 @@ internal fun shouldResyncForOffset(
      */
     internal fun MainViewModel.applySyncResponse(response: SyncResponsePacket) {
         if (_uiState.value.selectedSession?.id != response.sessionId.value) return
-        val expectedCorrelationId = pendingSyncCorrelationId
+        val expectedCorrelationId = listenerPlaybackController.pendingSyncCorrelationId
         if (expectedCorrelationId != null && response.correlationId != expectedCorrelationId) return
-        pendingSyncCorrelationId = null
+        listenerPlaybackController.pendingSyncCorrelationId = null
 
         val localReceiveTimeMs = SystemClock.elapsedRealtime()
         val observation = runCatching {
-            val estimator = listenerSyncEstimator ?: RustCoreBridge.openSyncEstimator(
-                maxSamples = _uiState.value.tuningSettings.syncSampleWindow,
-            ).also { listenerSyncEstimator = it }
-            estimator.observe(
+            listenerPlaybackController.observeSync(
                 t1LocalSendMs = response.t1ListenerSendElapsedMs,
                 t2HostReceiveMs = response.t2HostReceiveElapsedMs,
                 t3HostSendMs = response.t3HostSendElapsedMs,
                 t4LocalReceiveMs = localReceiveTimeMs,
+                maxSamples = _uiState.value.tuningSettings.syncSampleWindow,
             )
         }.getOrElse { error ->
             // Unlike a merely-rejected sample (too-high RTT, reported as
@@ -318,7 +315,7 @@ internal fun shouldResyncForOffset(
      */
     internal fun MainViewModel.resetListenerSyncAcquisition() {
         closeListenerSyncEstimator()
-        pendingSyncCorrelationId = null
+        listenerPlaybackController.pendingSyncCorrelationId = null
         _uiState.value = _uiState.value.copy(
             listenerSyncState = SyncState(resyncCount = _uiState.value.listenerSyncState.resyncCount),
             connectionProgress = _uiState.value.connectionProgress.copy(
@@ -378,9 +375,7 @@ private const val SYNC_ACQUIRE_CADENCE_MS = 250L
      * must release it explicitly rather than just dropping the reference.
      */
     internal fun MainViewModel.closeListenerSyncEstimator() {
-        val estimator = listenerSyncEstimator ?: return
-        listenerSyncEstimator = null
-        runCatching { estimator.close() }.onFailure { error ->
+        listenerPlaybackController.closeEstimator()?.let { error ->
             logger.w("sync.estimator_close_failed", error.message ?: "sync estimator failed to close cleanly")
         }
     }

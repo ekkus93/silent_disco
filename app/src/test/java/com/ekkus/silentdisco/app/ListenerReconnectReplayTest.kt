@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.app
 
+import com.ekkus.silentdisco.app.controller.handoverForSession
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
@@ -192,7 +193,7 @@ class ListenerReconnectReplayTest {
         /** Handles one event the way the transport collector does, then lets its immediate work run. */
         fun deliver(event: FfiListenerTransportEvent) {
             viewModel.handleListenerTransportEvent(harness.listenerCoreController, event)
-            viewModel.listenerPlaybackControlExecutor.submit {}.get()
+            viewModel.listenerPlaybackController.executor.submit {}.get()
             scope.runCurrent()
         }
     }

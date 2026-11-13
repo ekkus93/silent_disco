@@ -1763,3 +1763,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-13T21:47:19Z - claude-opus-5-5 - God-file refactor §4: HostMonitorController extracted
 - `app/controller/HostMonitorController.kt` owns the host's local monitor runtime (start/submit/reanchor/volume/stop); `stop()` keeps the first failure and still runs every cleanup step; `release()` = `stop()` so failures propagate.
 - 4 JVM tests; removing the failed-start cleanup fails them. Full Android gate passed with `--max-workers=2` after the first run was killed by Claude Code for low memory (Chrome/Slack/Discord hold most of the 7 GB RAM).
+
+## 2026-11-13T21:57:37Z - claude-opus-5-5 - God-file refactor §4: ListenerPlaybackController part 1
+- `app/controller/ListenerPlaybackController.kt` owns the listener playback runtime, its single control thread, the same-session clock-lock handover, the pre-runtime sync estimator and probe ids. `startNow`/`stopNow` return results; the coordinator still writes all UI state and reports each stop failure as before.
+- 7 JVM tests; dropping the same-session handover reuse fails them. Full Android gate passed (`--max-workers=2`); 581 JVM tests pass.
+- Part 2 left: `playbackJob`/`resyncJob` and the listener track boundaries.

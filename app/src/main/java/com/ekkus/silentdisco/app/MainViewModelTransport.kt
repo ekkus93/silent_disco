@@ -151,7 +151,7 @@ import kotlinx.coroutines.launch
 
     internal fun MainViewModel.handleListenerDisconnect(message: String) {
         stopListenerPlaybackForFailure(message)
-        pendingSyncCorrelationId = null
+        listenerPlaybackController.pendingSyncCorrelationId = null
         // No dedicated Rust event exists yet for a graceful host-initiated
         // disconnect (only Failed); approximating with transportFailed means
         // this surfaces as Error rather than Disconnected in the UI for now.

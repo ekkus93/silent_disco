@@ -220,7 +220,7 @@ class MainViewModelListenerResyncTest {
     fun syncAcquisitionFailureClearsTheOldClockMappingBeforeRetry() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.viewModel.ensureRustListenerCore()
-        harness.viewModel.pendingSyncCorrelationId = 47L
+        harness.viewModel.listenerPlaybackController.pendingSyncCorrelationId = 47L
         harness.viewModel._uiState.value = harness.viewModel._uiState.value.copy(
             listenerSyncState = SyncState(
                 offsetMs = -15_100_405.5,
@@ -233,8 +233,8 @@ class MainViewModelListenerResyncTest {
 
         harness.viewModel.handleSyncFailure("Unable to establish a stable sync estimate")
 
-        assertThat(harness.viewModel.pendingSyncCorrelationId).isNull()
-        assertThat(harness.viewModel.listenerSyncEstimator).isNull()
+        assertThat(harness.viewModel.listenerPlaybackController.pendingSyncCorrelationId).isNull()
+        assertThat(harness.viewModel.listenerPlaybackController.syncEstimator).isNull()
         assertThat(harness.viewModel._uiState.value.listenerSyncState.offsetMs).isEqualTo(0.0)
         assertThat(harness.viewModel._uiState.value.listenerSyncState.confidence)
             .isEqualTo(SyncQualityBadge.UNKNOWN)

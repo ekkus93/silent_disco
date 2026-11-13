@@ -80,7 +80,7 @@ class MainViewModelRefactorSafetyNetTest {
         assertThat(harness.hostCoreController.closeCallCount).isEqualTo(1)
         assertThat(harness.listenerTransport.closeCallCount).isEqualTo(1)
         assertThat(harness.domainStore.closeCallCount).isEqualTo(1)
-        assertThat(viewModel.listenerPlaybackControlExecutor.isShutdown).isTrue()
+        assertThat(viewModel.listenerPlaybackController.executor.isShutdown).isTrue()
     }
 
     @Test

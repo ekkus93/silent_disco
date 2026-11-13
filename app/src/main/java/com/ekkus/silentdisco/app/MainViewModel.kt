@@ -11,6 +11,7 @@ import com.ekkus.silentdisco.core.audio.AudioFileDecoder
 import com.ekkus.silentdisco.app.controller.DiagnosticsController
 import com.ekkus.silentdisco.app.controller.DiscoveryController
 import com.ekkus.silentdisco.app.controller.HostMonitorController
+import com.ekkus.silentdisco.app.controller.ListenerPlaybackController
 import com.ekkus.silentdisco.app.controller.PersistenceController
 import com.ekkus.silentdisco.app.controller.ViewModelControllers
 import com.ekkus.silentdisco.core.audio.OboeBridge
@@ -45,9 +46,7 @@ import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.rust.HostPlaylistStreamController
-import com.ekkus.silentdisco.core.rust.RustCoreBridge
 import com.ekkus.silentdisco.core.rust.RustDomainStore
-import com.ekkus.silentdisco.core.rust.RustSyncEstimator
 import com.ekkus.silentdisco.core.sync.HostTimingService
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
 import com.ekkus.silentdisco.core.transport.BleTransport
@@ -56,8 +55,6 @@ import com.ekkus.silentdisco.core.transport.MdnsTransport
 import com.ekkus.silentdisco.core.transport.SessionTransport
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
 import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicReference
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineDispatcher
@@ -146,6 +143,13 @@ class MainViewModel @JvmOverloads constructor(
     internal val hostMonitor = controllers.add(
         HostMonitorController(parentScope = viewModelScope, closeOutput = closeHostMonitorOutput),
     )
+    internal val listenerPlaybackController = controllers.add(
+        ListenerPlaybackController(
+            parentScope = viewModelScope,
+            attachOutput = listenerTransportController::attachPlayback,
+            detachOutput = listenerTransportController::detachPlayback,
+        ),
+    )
 
     /**
      * TLS keys signed into verified invitations, by session id. A listener joining
@@ -177,29 +181,12 @@ class MainViewModel @JvmOverloads constructor(
     internal val appliedListenerTrackBoundaries = sortedMapOf<Long, PendingListenerTrackBoundary>()
     internal var listenerStreamStartTrackName: String? = null
     internal val listenerTrackBoundaryJobs = mutableMapOf<Long, Job>()
-    /**
-     * Rust-owned pre-runtime clock-sync estimator (`RustCoreBridge.openSyncEstimator()`).
-     * Holds a real native handle -- every teardown path that used to just drop
-     * `listenerSyncController` now calls `closeListenerSyncEstimator()` instead.
-     */
-    internal var listenerSyncEstimator: RustSyncEstimator? = null
-    internal val listenerPlaybackControlExecutor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "silent-disco-listener-playback-control").apply { isDaemon = true }
-    }
     val callbackCaptureStatus: StateFlow<String> get() = diagnostics.captureStatus
-    private val listenerPlaybackRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
     internal var listenerPlayback: FfiListenerPlaybackHandle?
-        get() = listenerPlaybackRef.get()
-        set(value) = listenerPlaybackRef.set(value)
-    /** Session of [listenerPlayback], so its clock lock is only reused within that session. */
-    internal var listenerPlaybackSessionId: SessionId? = null
-
-    /**
-     * The last ended stream's clock and sync estimate, keyed by its session.
-     * The next stream of the same session opens from it, so it plays from its
-     * first packet instead of re-acquiring sync and dropping ~0.8 s of audio.
-     */
-    internal var listenerSyncHandover: SessionSyncHandover? = null
+        get() = listenerPlaybackController.runtime
+        set(value) {
+            listenerPlaybackController.runtime = value
+        }
     internal var hostMonitorPlayback: FfiListenerPlaybackHandle?
         get() = hostMonitor.runtime
         set(value) {
@@ -220,9 +207,6 @@ class MainViewModel @JvmOverloads constructor(
     internal var hostPlaybackCommandJob: Job? = null
     internal var playbackJob: Job? = null
     internal var resyncJob: Job? = null
-    internal var pendingSyncCorrelationId: Long? = null
-    /** Monotonic probe ids for the runtime-owned estimator. */
-    internal var nextSyncCorrelationId: Long = 1
     @Volatile internal var hostCoreController: HostCoreController? = null
     internal var listenerCoreController: ListenerCoreController? = null
     internal var pendingEstablishNetworkOperationId: String? = null
@@ -599,9 +583,7 @@ class MainViewModel @JvmOverloads constructor(
                 closeListenerSyncEstimator()
                 _uiState.value.selectedSession?.let {
                     runCatching {
-                        RustCoreBridge.openSyncEstimator(maxSamples = updated.syncSampleWindow)
-                    }.onSuccess { estimator ->
-                        listenerSyncEstimator = estimator
+                        listenerPlaybackController.reopenEstimator(updated.syncSampleWindow)
                     }.onFailure { error ->
                         handleSyncFailure(error.message ?: "Failed to rebuild sync estimator for updated tuning")
                     }
@@ -714,15 +696,11 @@ class MainViewModel @JvmOverloads constructor(
         // The runtime holds a pump thread, a ring registration and the native
         // output; none of them are reclaimed by the ViewModel going away.
         stopListenerPlayback()
-        // Queued after the stop above on the same single-thread executor, so it
-        // also releases the handover that stop just captured.
-        listenerPlaybackControlExecutor.execute {
-            listenerSyncHandover?.handover?.close()
-            listenerSyncHandover = null
-        }
         diagnostics.finishCaptureForTeardown()
-        listenerPlaybackControlExecutor.shutdown()
         closeListenerSyncEstimator()
+        // Releases the handover the stop above captures, after it on the same
+        // control thread, then stops that thread.
+        listenerPlaybackController.close()
         bleService.stop()
         wifiDirectService.stop()
         mdnsService.stopDiscovery()
