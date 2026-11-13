@@ -1,0 +1,84 @@
+# Silent Disco — God-file refactor TODO
+
+Spec: [SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md](SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md). Created 2026-11-13 at `487b35aa`.
+
+Rules for every item, from spec §3 and §7:
+- Behaviour is unchanged.
+- Rust stays authoritative.
+- One owner per piece of state.
+- Each item is committed and pushed on its own, with all gates passing.
+- Run the touched instrumented classes on the A54, always with `-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true`.
+- Use Conventional Commits, with no `Co-Authored-By` line.
+- Record results in `memory.md` and the newest handoff.
+- Mark only work that is done and verified.
+
+Android gate: `./gradlew assembleDebug assemblePocDebug assembleRelease assembleDebugAndroidTest test lintDebug`. When Rust changes, also run `bash scripts/check-rust.sh` and `cd desktop && npm run check`. Every item also runs `bash scripts/check-source-file-line-counts.sh`.
+
+## 0. Owner decisions (spec §10)
+
+- [ ] Spec approved.
+- [ ] Order against the UI redesign chosen: (a), (b) or (c).
+- [ ] Decision on moving Kotlin timing state (track boundaries, pre-runtime sync) to Rust within this refactor or later.
+- [ ] Decision on splitting `runtime/types.rs` now or when it next grows.
+
+## 1. Inventory (no code changes)
+
+- [ ] List all 103 `MainViewModel` properties. For each one record its type, mutability, the threads and dispatchers that touch it, which of the 23 `MainViewModel*.kt` files read or write it, and its owner from spec §4. Commit the table as an appendix to the spec.
+- [ ] List all 55 public functions of `MainViewModel.kt`, plus the extension-file functions, each with its owning controller.
+- [ ] Record every cross-group read and write: state of one owner read or written by another group's code. Each one becomes a narrow interface method or an explicit one-way dependency.
+- [ ] Classify the Kotlin timing and domain candidates as either presentation-only or domain/timing that belongs in Rust, citing the Rust owner where one exists: listener boundaries (`pendingListenerTrackBoundaries`, `appliedListenerTrackBoundaries`, `listenerTrackBoundaryJobs`), host boundaries (`hostPendingTrackBoundaries`, `hostBoundaryJobs`), `MainViewModelSynchronization.kt`, and `latestDecodedAudio` / `latestPackets`.
+- [ ] Map existing tests to owners: the 48 JVM test files in `app/src/test/.../app/`, the instrumented classes and the UI tests. List gaps.
+
+## 2. Safety net
+
+- [ ] Write characterization tests for every gap from §1, against the current `MainViewModel`. Each must pass before any move. Cover especially the cross-group sequences: approve, then authorize, then stream start; stop, rebind, then the stale join discarded; leave, then playback torn down; role switch, then jobs cancelled.
+- [ ] Add a test that `onCleared` cancels every job and closes every executor and native handle `MainViewModel` holds today. The same test will later check each controller's `close()`.
+- [ ] Baseline run of the full instrumented suite on the A54. Record the result; the known failures (handoff §53.3) are 3 in `AdaptiveLayoutRemainingCoverageTest` and 1 in `SessionJoinPinnedStatusTest`.
+
+## 3. Coordinator scaffolding
+
+- [ ] Add a small internal controller contract: a `close()`, an owned scope derived from `viewModelScope`, and `StateFlow` state. No behaviour moves yet.
+- [ ] Make `MainViewModel` combine controller state flows into `AppUiState`, so far with no controllers. This proves the mapping pattern without changing behaviour.
+
+## 4. Extract controllers, one per item, lowest coupling first
+
+For each item:
+- move its state and code out of `MainViewModel` and its extension files;
+- delete the emptied extension files;
+- point its tests at the controller;
+- run the mutation check from spec §7 on any timing, ordering or recovery rule it carries.
+
+- [ ] `DiagnosticsController`: diagnostics store, metrics, support report, developer callback capture (`MainViewModelDiagnostics.kt`, `MainViewModelCallbackCapture.kt`).
+- [ ] `PersistenceController`: domain store access, persistence retry, persisted audio read grants (`MainViewModelPersistence.kt`).
+- [ ] `DiscoveryController`: BLE, Wi-Fi Direct, mDNS, scan job, discovered sessions (part of `MainViewModelTransport.kt`, discovery reconcile). Tests include `MainViewModelDiscoveryReconcileTest`.
+- [ ] `HostMonitorController`: the host's local monitor (`MainViewModelHostMonitorPlayback.kt`).
+- [ ] `ListenerPlaybackController`: playback runtime, sync estimator and handover, listener boundaries, volume, manual resync (`MainViewModelListenerPlayback.kt`, `MainViewModelRustListenerPlayback.kt`, the listener part of `MainViewModelSynchronization.kt`). Tests include `MainViewModelListenerResyncTest`.
+- [ ] `ListenerSessionController`: listener core, discovery and manual and QR joins, network establishment, leave and retry (`MainViewModelRustListener.kt`, `MainViewModelRustListenerNetwork.kt`, `MainViewModelManualEndpoint.kt`, `MainViewModelListenerActions.kt`). Tests include `MainViewModelRustListenerTest` and `MainViewModelRustListenerEffectTest`.
+- [ ] `HostPlaybackController`: staging, decoding, streaming, live-queue edits, host boundaries, host timing (`MainViewModelHostStaging.kt`, `MainViewModelHostPlayback.kt`, the playback part of `MainViewModelHostActions.kt`). Tests include `MainViewModelHostQueueTest`.
+- [ ] `HostSessionController`: host core lifecycle, advertising and bind, approvals, recovery, resync, events (`MainViewModelRustHost*.kt`, the session part of `MainViewModelHostActions.kt`). Tests include `MainViewModelRustHostEffectTest`, `MainViewModelHostRebindRaceTest`, `MainViewModelRustHostNotificationRecoveryTest` and `MainViewModelStaleApprovalTest`.
+- [ ] Coordinator clean-up. `MainViewModel` keeps only role, permissions, demo sessions (debug only), controller creation and `AppUiState` mapping. Every `MainViewModel*.kt` extension file is gone. No property of `MainViewModel` is a mutable domain, transport or playback field.
+
+## 5. Kotlin timing state (only if the owner chose to move it now, decision 0.3)
+
+- [ ] For each item classified in §1 as domain or timing logic: implement it in Rust with Rust tests, expose it through UniFFI, make the controller call it, and delete the Kotlin version. Run a device check on the A54 for anything on the playback or sync path.
+- [ ] Otherwise, log each one with its classification in the newest handoff for a later block.
+
+## 6. `SilentDiscoApp` (order per decision 0.2)
+
+- [ ] Characterization: confirm the existing UI tests cover each of the 16 destinations' main callbacks, and add any that are missing.
+- [ ] Feature navigation-graph builders `hostNavGraph`, `listenerNavGraph` and `settingsNavGraph`. `SilentDiscoApp` keeps only the `NavHost`, top-level state and the snackbar.
+- [ ] Launcher helpers per feature (audio picker, QR scanner, camera permission, runtime permissions).
+- [ ] Flow state holders `QrJoinFlowState` and `SessionConfirmationState`, keeping `rememberSaveable` behaviour across rotation and process death, with a `StateRestorationTester` test for each.
+- [ ] Move each `LaunchedEffect` / `DisposableEffect` to its feature, keeping its keys unchanged.
+
+## 7. Rust (per decision 0.4)
+
+- [ ] Split `runtime/types.rs` into `runtime/types/{revision,host_draft,tuning,network,listeners,diagnostics}.rs`, keeping `pub use` re-exports. `cargo test --workspace --all-features`, UniFFI generation and desktop `bindings:check` must show no API change.
+- [ ] Record the near-limit watchlist in the handoff: `packetizer_worker.rs`, `ffi/src/audio_abi.rs`, `ffi/src/host_transport/handle.rs`, `audio/scheduler/engine.rs`, `ffi/src/host_control/handle.rs`, `ffi/src/audio_output.rs` and `runtime/actor_runtime/mod.rs`, with the rule that the next change to any of them splits it by responsibility.
+
+## 8. Close-out
+
+- [ ] Full instrumented suite on the A54 with no new failures against the §2 baseline.
+- [ ] A54 device run: `manual_real_android_listener_late_joins_and_reconnects_over_secure_transport`, which needs one QR scan from the owner.
+- [ ] Final survey: no type holds mutable state for more than one responsibility, and no file mixes responsibilities. Update the CLAUDE.md "Authoritative migration documents" list if the owner wants this spec referenced there.
+- [ ] Handoff section and `memory.md` entry with the gates actually run.

@@ -1738,3 +1738,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-13T08:26:37Z - claude-opus-5-5 - Phase 4 step 4: A54 run 14 passed on v4-only builds
 - Full Android gate passed. Run 13 failed only because the phone's Wi-Fi radio was off (fixed with `svc wifi enable`). Run 14: late join, Wi-Fi drop, rejoin, Stop before close, 0 concealed. Phase 4 done for production builds; Android host on v4 lacks a phone-to-phone run (one device). Handoff §53.4.
+
+## 2026-11-13T08:31:11Z - claude-opus-5-5 - God-file refactor spec and TODO
+- Owner asked for a spec and TODO to fix the God files: docs/SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md and docs/SILENT_DISCO_GOD_FILE_REFACTOR_TODO_2026-11-13.md. Targets: MainViewModel (23 files, ~5,600 lines, 103 properties shared across extension files) split into eight controllers plus a thin coordinator; SilentDiscoApp (one ~700-line composable) split into feature nav graphs; runtime/types.rs optional split. Four owner decisions open (spec §10), including order against the UI redesign.
