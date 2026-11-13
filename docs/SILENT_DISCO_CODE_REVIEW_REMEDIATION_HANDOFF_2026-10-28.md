@@ -897,3 +897,12 @@ adb drives the phone; a person scans the QR only when the log prints `>>> SCAN T
 **Gates.** `check-rust.sh` passed (core 689); desktop `cargo test --locked --all-features` 415 passed, clippy clean, `npm run check` passed (196 Vitest tests); `./gradlew test lintDebug` BUILD SUCCESSFUL; line-count check passed.
 
 **Still open.** Phase 4 (removing plaintext v3, owner's decision); the two-listener v4 test (deferred); the UI redesign (owner, later).
+
+## 53. 2026-11-13 — Phase 4 (remove plaintext v3 from production): owner decisions and plan
+
+**Owner decisions (2026-11-13).**
+1. Joins without a QR: **QR only.** v4 needs the host's key, which only the signed invitation carries. Nearby discovery may still list hosts, but joining asks for that host's QR; a typed address alone is refused.
+2. v3 code: **out of production, not deleted** (the ADR's "remove the plaintext UDP path from production configurations"). Release builds cannot select v3; the socket transport stays for Lab Mode and the existing loopback tests.
+3. Android host mode: **moves to v4** (QUIC with its existing Keystore TLS key).
+
+**Plan (one commit per step, gates each time).** (1) Desktop: release builds always host v4; the v3 switch exists only in Lab Mode builds. (2) Android listener: discovery and manual joins stop opening v3 and route to the QR; release builds refuse v3 endpoints with a visible reason. (3) Android host mode binds QUIC and advertises v4. (4) A54 device run; docs.
