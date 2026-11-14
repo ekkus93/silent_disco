@@ -1892,3 +1892,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-14T15:36:02Z - claude-opus-5-5 - Remediation §1 encrypted integration closed
 - Owner accepted the measured v4 CPU cost (~1.6x v3, ~9% of one desktop core for host+listener). Item checked off; per-listener cost on a phone host remains unmeasured (noted in the TODO).
+
+## 2026-11-14T15:40:56Z - claude-opus-5-5 - F1 owner decisions: enrollment UX
+- Owner decisions 2026-11-14: (1) Approved-devices-only mode rejects a never-approved device visibly (listener told the host admits approved devices only; host told one was turned away); enrollment = host once in Manual mode and choose Always allow. (2) Always allow lasts until revoked; a changed listener key is a new unknown device.
+- Remediation F1 item 1 closed: the core policy (`classify_join_request`, `verify_and_classify_join`) already makes Manual/Invite pending and approved-only auto-approve only host-verified Trusted, rejecting unknown/revoked/unverified with `DeviceNotApproved`; six tests cited.
+- Next F1 work: SQLite trust-record storage (owner decision 2026-11-09), Android and desktop host wiring, Always allow / revoke UI.

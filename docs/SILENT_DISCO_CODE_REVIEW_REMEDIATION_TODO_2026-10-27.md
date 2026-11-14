@@ -41,7 +41,16 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 
 ## 2. F1 — Repair approved-devices-only admission (P0; requires verified identity)
 
-- [ ] Make Rust admission policy explicit for Manual, Invite code and Approved devices only; unknown/revoked/unverified identities must not auto-approve in approved-only mode. Decide/document separate enrollment UX; no automatic fallback to pending without truthful UI.
+- [x] Make Rust admission policy explicit for Manual, Invite code and Approved devices only; unknown/revoked/unverified identities must not auto-approve in approved-only mode. Decide/document separate enrollment UX; no automatic fallback to pending without truthful UI. **Closed 2026-11-14 (policy already built; local gates).**
+- **Policy:** `runtime/host_admission.rs` `classify_join_request` sends Manual and valid invite-code joins to a pending manual decision. A wrong invite code is rejected (`IncorrectInviteCode`). In Approved devices only mode, only a host-verified `Trusted` input is approved automatically; anything else is rejected with `DeviceNotApproved`, with no fallback to pending.
+- **Unknown, revoked and unverified listeners:** `runtime/secure_host_admission.rs` `verify_and_classify_join` makes them session-only. It ignores claimed trust and refuses a revoked key in every mode.
+- **Tests:** `trusted_device_mode_auto_approves_only_durably_trusted_listener`, `manual_and_valid_invite_modes_still_require_explicit_approval`, `approved_only_uses_verified_host_records_not_claimed_trust`, `revocation_blocks_all_modes_and_wrong_key_cannot_replay`, `forged_claimed_device_id_cannot_collide_with_another_verified_listener`, `manual_and_invite_policy_still_require_explicit_approval`.
+- **Enrollment UX (owner decisions 2026-11-14):**
+  1. In Approved devices only mode, a device the host has never approved is rejected visibly. The listener is told the host admits approved devices only, and the host is told an unapproved device was turned away. A new device is enrolled by hosting once in Manual mode and choosing "Always allow".
+  2. "Always allow" lasts until the host revokes it in Approved devices.
+  3. A listener whose key changes (reinstall, lost key) is a new, unknown device and must be approved again.
+
+  The truthful-UI wiring is the "Always allow / Approve once / revoke" item below.
 - [ ] Implement durable host-side trusted public-key records (versioned storage, migration, revocation and key rotation) with OS-backed private keys and no silent elevation of legacy claimed device IDs. **Decision (owner, 2026-11-09): trust records are stored in Rust-owned SQLite, not the credential store.**
 - [ ] Validate cryptographic proof of listener identity before projecting Trusted/Untrusted. Update Rust FFI admission inputs and Android MainViewModelRustHost join mapping; never hard-code TRUSTED.
 - [ ] Update desktop host_join_projection to resolve verified host-owned trust records instead of unconditional SessionOnly; ensure Android/desktop policy parity.
