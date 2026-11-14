@@ -34,10 +34,7 @@ internal suspend fun MainViewModel.stageHostPlaylistSources(): List<FfiPlaylistS
 /** Retargets the running Rust packetizer from an authoritative actor snapshot. */
 internal fun MainViewModel.retargetActiveHostPlaylist(snapshot: FfiCoreSnapshot) = hostPlayback.retarget(snapshot)
 
-internal fun MainViewModel.clearHostPlaylistStream() {
-    hostPendingTrackBoundaries.clear()
-    hostPlayback.clearStream()
-}
+internal fun MainViewModel.clearHostPlaylistStream() = hostPlayback.clearStream()
 
 internal fun MainViewModel.releaseStagedHostSources() {
     clearHostPlaylistStream()

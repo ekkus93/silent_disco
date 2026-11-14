@@ -476,7 +476,7 @@ private suspend fun MainViewModel.stopAdvertisingForRust(
 ) {
     // Invalidate queued native binds before any suspending teardown work.
     pendingStartAdvertisingOperationId = null
-    hostStreamJob?.cancel()
+    hostPlayback.cancelStream()
     listenerPlaybackController.cancelStatusPoll()
     listenerPlaybackController.cancelResync()
     stopHostMonitorPlayback()

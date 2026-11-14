@@ -1783,3 +1783,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - New `app/controller/HostSourceStaging.kt` (staged files, live-queue URIs, bounded copy, Rust validation, discard, orphan cleanup; provider/storage/validator seams injectable) and `HostPlaybackController.kt` (streamer, stream start, format, latest packets, retarget, clear). `MainViewModelHostStaging.kt` is now thin wrappers; the copy helpers moved to the controller package.
 - Removed dead `latestDecodedAudio` (never read). 5 new tests; dropping the failed-staging delete fails them. 596 JVM tests and the full Android gate (`--max-workers=2`, 6m16s) passed.
 - Left for part 2+: host boundary jobs/pending boundaries, stream and command jobs, the stream loop and play/pause/stop, `currentStreamId` split.
+
+## 2026-11-14T00:03:54Z - claude-opus-5-5 - God-file refactor §4: HostPlaybackController part 2
+- `HostPlaybackController` now owns the stream job, the single playback-command job (busy guard kept: a second non-cancelling command is refused and the coordinator shows "Another host playback command is already pending"), the boundary timers and pending boundaries. Four `MainViewModel` fields removed; `MainViewModel.kt` is 769 lines.
+- 4 new tests; removing the busy guard fails them. 600 JVM tests and the full Android gate (`--max-workers=2`, 5m25s) passed.
+- Left: the stream-loop body, play/pause/stop, and the `currentStreamId` split.

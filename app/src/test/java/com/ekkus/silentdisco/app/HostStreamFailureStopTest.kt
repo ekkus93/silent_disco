@@ -136,7 +136,7 @@ class HostStreamFailureStopTest {
             // not at 420 ms where its deadline ties with the tail's end.
             advanceTimeBy(20L)
             runCurrent()
-            assertThat(fixture.viewModel.hostBoundaryJobs).isEmpty()
+            assertThat(fixture.viewModel.hostPlayback.boundaryJobs).isEmpty()
             assertThat(fixture.transport.stops).isEmpty()
 
             advanceTimeBy(980L)
@@ -147,7 +147,7 @@ class HostStreamFailureStopTest {
             assertThat(fixture.transport.stops)
                 .containsExactly(StopCall(STREAM_ID, hostStopTimeMs = 420uL, sentAtMs = 420L))
             assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
-            assertThat(fixture.viewModel.hostBoundaryJobs).isEmpty()
+            assertThat(fixture.viewModel.hostPlayback.boundaryJobs).isEmpty()
         } finally {
             fixture.viewModel.hostTransportController.close()
         }
@@ -260,7 +260,7 @@ class HostStreamFailureStopTest {
             fixture.setPlaybackState(PlaybackState.STOPPED)
             advanceTimeBy(500L)
             runCurrent()
-            assertThat(fixture.viewModel.hostBoundaryJobs).isEmpty()
+            assertThat(fixture.viewModel.hostPlayback.boundaryJobs).isEmpty()
             assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
             assertThat(fixture.viewModel.hostPlayback.streamer).isNull()
         } finally {

@@ -56,10 +56,8 @@ import com.ekkus.silentdisco.core.transport.SessionTransport
 import com.ekkus.silentdisco.core.transport.WifiDirectTransportService
 import com.ekkus.silentdisco.platform.persistence.AndroidRustDomainStore
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -199,10 +197,6 @@ class MainViewModel @JvmOverloads constructor(
     internal fun swapHostMonitorPlayback(value: FfiListenerPlaybackHandle?): FfiListenerPlaybackHandle? =
         hostMonitor.swap(value)
     /** Scheduled host queue advances, keyed by the boundary's first sample index. */
-    internal val hostBoundaryJobs = ConcurrentHashMap<Long, Job>()
-    internal val hostPendingTrackBoundaries = ConcurrentHashMap<Long, PendingHostTrackBoundary>()
-    internal var hostStreamJob: Job? = null
-    internal var hostPlaybackCommandJob: Job? = null
     @Volatile internal var hostCoreController: HostCoreController? = null
     internal var listenerCoreController: ListenerCoreController?
         get() = listenerSession.core
@@ -587,7 +581,7 @@ class MainViewModel @JvmOverloads constructor(
 
     fun leaveSession() {
         clearScanState()
-        hostStreamJob?.cancel()
+        hostPlayback.cancelStream()
         stopListenerPlayback()
         stopCallbackPcmCapture()
         listenerPlaybackController.cancelResync()
@@ -673,7 +667,7 @@ class MainViewModel @JvmOverloads constructor(
     override fun onCleared() {
         // Each controller's teardown runs at its original point below; the
         // registry closes them all again at the end, which is idempotent.
-        hostPlaybackCommandJob?.cancel()
+        hostPlayback.cancelCommand()
         // The runtime holds a pump thread, a ring registration and the native
         // output; none of them are reclaimed by the ViewModel going away.
         stopListenerPlayback()

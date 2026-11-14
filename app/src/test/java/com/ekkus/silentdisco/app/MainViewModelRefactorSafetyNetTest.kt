@@ -152,8 +152,11 @@ class MainViewModelRefactorSafetyNetTest {
         harness.hostCoreController.transitionSnapshot =
             listenerCoreSnapshot(discoveryActive = false, known = emptyList(), selected = null)
         viewModel.ensureRustHostCore()
-        val stream = Job()
-        viewModel.hostStreamJob = stream
+        var stream: Job? = null
+        viewModel.hostPlayback.launchStream(kotlin.coroutines.EmptyCoroutineContext) {
+            stream = coroutineContext[Job]
+            awaitCancellation()
+        }
         var playback: Job? = null
         var resync: Job? = null
         viewModel.listenerPlaybackController.launchStatusPoll { playback = coroutineContext[Job]; awaitCancellation() }
@@ -161,7 +164,7 @@ class MainViewModelRefactorSafetyNetTest {
         runCurrent()
 
         viewModel.stopHostPlayback()
-        awaitCondition { stream.isCancelled && playback!!.isCancelled && resync!!.isCancelled }
+        awaitCondition { stream!!.isCancelled && playback!!.isCancelled && resync!!.isCancelled }
 
         assertThat(harness.hostCoreController.transitionPlaybackStateCalls)
             .containsExactly(FfiPlaybackState.STOPPED)

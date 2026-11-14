@@ -34,8 +34,7 @@ internal fun MainViewModel.startHostStreamingLoop(
     firstPacket: AudioPacket,
     format: AudioFormatSpec,
 ) {
-    hostStreamJob?.cancel()
-    hostStreamJob = viewModelScope.launch(hostStreamDispatcher) {
+    hostPlayback.launchStream(hostStreamDispatcher) {
         var packet = firstPacket
         var pendingFirstPacket: AudioPacket? = firstPacket
         var packetCount = 0L
@@ -54,7 +53,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                 while (!authoritativePlaybackObserved) {
                     when (_uiState.value.hostPlaybackState) {
                         PlaybackState.PLAYING, PlaybackState.PAUSED -> authoritativePlaybackObserved = true
-                        PlaybackState.ERROR -> return@launch
+                        PlaybackState.ERROR -> return@launchStream
                         PlaybackState.STOPPED,
                         PlaybackState.BUFFERING,
                         PlaybackState.READY,
@@ -77,7 +76,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                         )
                     }.onFailure { error ->
                         handleHostPlaybackEngineFailure(error)
-                        return@launch
+                        return@launchStream
                     }
                     val resumedStart = start.copy(
                         hostStartTimeMs = start.hostStartTimeMs + presentationOffsetMs.toULong(),
@@ -86,7 +85,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                     )
                     hostPlayback.streamStart = resumedStart
                     broadcastHostStreamStart(streamId, resumedStart)
-                    hostPendingTrackBoundaries.values
+                    hostPlayback.pendingBoundaries.values
                         .sortedBy(PendingHostTrackBoundary::firstSampleIndex)
                         .forEach { pending ->
                             broadcastHostTrackBoundary(
@@ -101,7 +100,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                         }
                 }
                 if (_uiState.value.hostPlaybackState in setOf(PlaybackState.STOPPED, PlaybackState.ERROR)) {
-                    return@launch
+                    return@launchStream
                 }
 
                 val prefetchedPacket = pendingFirstPacket
@@ -122,7 +121,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                                     frame.firstSampleIndex.toLong(),
                                 )
                             }
-                            hostPendingTrackBoundaries[frame.firstSampleIndex.toLong()] =
+                            hostPlayback.pendingBoundaries[frame.firstSampleIndex.toLong()] =
                                 PendingHostTrackBoundary(
                                     streamId = frame.streamId,
                                     firstSampleIndex = frame.firstSampleIndex.toLong(),
@@ -199,7 +198,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                         if (_uiState.value.hostPlaybackState != PlaybackState.STOPPED) {
                             handleHostPlaybackEngineFailure(error)
                         }
-                        return@launch
+                        return@launchStream
                     }
                 runCatching {
                     hostTransportController.broadcastAudio(
@@ -250,7 +249,7 @@ internal fun MainViewModel.startHostStreamingLoop(
                         it.copy(streamState = PlaybackState.ERROR, lastError = message, metricsSummary = summarizeMetrics())
                     }
                     refreshHostDiagnostics(streamState = PlaybackState.ERROR)
-                    return@launch
+                    return@launchStream
                 }
                 refreshHostDiagnostics()
                 previousSendElapsedMs = now
@@ -293,7 +292,7 @@ internal fun MainViewModel.startHostStreamingLoop(
             // track no listener will hear. Cancel it before waiting out the
             // tail: its deadline equals the tail's end, and the host queue
             // must not advance to it on whichever timer happens to win.
-            cancelHostBoundaryJobsFrom(
+            hostPlayback.cancelBoundaryTimersFrom(
                 lastPacket?.let { it.firstSampleIndex + it.samplesPerPacket } ?: 0L,
             )
             lastPacket?.let { sentPacket ->
@@ -330,7 +329,7 @@ internal suspend fun awaitHostPacketPresentationTail(
 internal fun MainViewModel.handleHostPlaybackEngineFailure(error: Throwable) {
     val message = error.message ?: "Host playback engine failed"
     logger.e("playback.host", message, error)
-    hostStreamJob?.cancel()
+    hostPlayback.cancelStream()
     stopHostMonitorPlayback()
     _uiState.value = _uiState.value.copy(lastError = message)
     reportRustHostPlaybackFailure(message)
@@ -388,7 +387,7 @@ internal fun MainViewModel.scheduleHostQueueBoundary(
     wait: suspend (Long) -> Unit = { delay(min(it, PAUSE_POLL_INTERVAL_MS)) },
 ) {
     diagnostics.metrics.increment("track_boundary_scheduled")
-    val job = viewModelScope.launch(dispatcher) {
+    hostPlayback.launchBoundaryTimer(boundary.firstSampleIndex.toLong(), dispatcher) {
         val dueAtMs = start.hostStartTimeMs.toLong() +
             boundary.firstSampleIndex.toLong() * 1_000L / sampleRate
         awaitHostQueueBoundary(
@@ -397,11 +396,11 @@ internal fun MainViewModel.scheduleHostQueueBoundary(
             elapsedRealtimeMs = elapsedRealtimeMs,
             wait = wait,
         )
-        if (!isActive) return@launch
+        if (!isActive) return@launchBoundaryTimer
         runCatching {
             ensureRustHostCore().trackBoundaryApplied(boundary.entryId, boundary.firstSampleIndex.toLong())
         }.onSuccess {
-            hostPendingTrackBoundaries.remove(boundary.firstSampleIndex.toLong())
+            hostPlayback.pendingBoundaries.remove(boundary.firstSampleIndex.toLong())
             hostPlayback.streamStart = hostPlayback.streamStart?.copy(
                 currentEntryId = boundary.entryId,
                 currentDisplayName = boundary.displayName,
@@ -411,9 +410,6 @@ internal fun MainViewModel.scheduleHostQueueBoundary(
             refreshHostDiagnostics()
         }.onFailure { error -> reportRustHostCommandFailure("advance playlist", error) }
     }
-    val sampleIndex = boundary.firstSampleIndex.toLong()
-    hostBoundaryJobs.put(sampleIndex, job)?.cancel()
-    job.invokeOnCompletion { hostBoundaryJobs.remove(sampleIndex, job) }
 }
 
 internal suspend fun awaitHostQueueBoundary(
@@ -438,17 +434,7 @@ internal suspend fun awaitHostQueueBoundary(
     }
 }
 
-internal fun MainViewModel.cancelHostBoundaryJobs() {
-    val pendingJobs = hostBoundaryJobs.values.toList()
-    hostBoundaryJobs.clear()
-    pendingJobs.forEach(Job::cancel)
-}
-
-private fun MainViewModel.cancelHostBoundaryJobsFrom(firstUnsentSampleIndex: Long) {
-    hostBoundaryJobs.keys
-        .filter { it >= firstUnsentSampleIndex }
-        .forEach { sampleIndex -> hostBoundaryJobs.remove(sampleIndex)?.cancel() }
-}
+internal fun MainViewModel.cancelHostBoundaryJobs() = hostPlayback.cancelBoundaryTimers()
 
 private const val PAUSE_POLL_INTERVAL_MS = 20L
 private const val POSITION_REPORT_INTERVAL_MS = 250L

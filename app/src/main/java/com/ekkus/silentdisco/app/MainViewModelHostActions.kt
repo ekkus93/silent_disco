@@ -60,7 +60,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
         }
 
         val streamId = StreamId("stream-${SystemClock.elapsedRealtime()}-${java.util.UUID.randomUUID()}")
-        hostPendingTrackBoundaries.clear()
+        hostPlayback.pendingBoundaries.clear()
         currentStreamId = streamId
         val streamer = try {
             val sources = withContext(Dispatchers.IO) { stageHostPlaylistSources() }
@@ -231,7 +231,7 @@ internal fun MainViewModel.stopHostPlaybackImpl() {
     launchHostPlaybackCommand("stop host playback", cancelExisting = true) {
         afterAuthoritativeHostPlaybackState(FfiPlaybackState.STOPPED) {
             logger.i("stream.stop", "Stopping host stream")
-            hostStreamJob?.cancel()
+            hostPlayback.cancelStream()
             listenerPlaybackController.cancelStatusPoll()
             listenerPlaybackController.cancelResync()
             try {
@@ -284,17 +284,7 @@ private fun MainViewModel.launchHostPlaybackCommand(
     cancelExisting: Boolean = false,
     block: suspend () -> Unit,
 ) {
-    val existing = hostPlaybackCommandJob
-    if (cancelExisting) {
-        existing?.cancel()
-    } else if (existing?.isActive == true) {
-        _uiState.value = _uiState.value.copy(
-            lastError = "Another host playback command is already pending",
-        )
-        return
-    }
-
-    val job = viewModelScope.launch {
+    val started = hostPlayback.launchCommand(cancelExisting) {
         try {
             block()
         } catch (error: CancellationException) {
@@ -303,11 +293,10 @@ private fun MainViewModel.launchHostPlaybackCommand(
             reportHostPlaybackCommandFailure(action, error)
         }
     }
-    hostPlaybackCommandJob = job
-    job.invokeOnCompletion {
-        if (hostPlaybackCommandJob === job) {
-            hostPlaybackCommandJob = null
-        }
+    if (!started) {
+        _uiState.value = _uiState.value.copy(
+            lastError = "Another host playback command is already pending",
+        )
     }
 }
 
