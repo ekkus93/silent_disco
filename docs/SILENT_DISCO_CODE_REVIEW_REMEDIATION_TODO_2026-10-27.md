@@ -90,6 +90,14 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 - Tests: 2 FFI tests on a real database worker (host scoping, ordering, revoke keeps the row, repeat/other-host revoke false, claimed ID refused, invalid host key); mutation (list keeps revoked rows) killed. Kotlin VM and screen tests updated; `TrustedDevicesScreenTest` + `TrustedDevicesAdaptiveLayoutTest` (5) passed on the A54.
 - Gates: `check-rust.sh` (931), desktop clippy and tests (426), full Android gate.
 - **Open:** desktop host remembering, Approved-devices mode and revoke; revoke applying to a running session; two-phone run.
+**Step 6 done (2026-11-14, local gates; box stays open): desktop host trust backend.**
+- Shared core `transport::secure_trust_store` (load, enrol, list, revoke, `join_trust_state`; key-bound IDs only, scoped to the host key). The FFI now uses it, so Android and desktop apply one rule.
+- Desktop `DesktopVerifiedTrust` is loaded at profile open for the invitation TLS key (a failure stops the open: "Could not load trusted listeners"). Joins take their trust from it, only over secure v4 (`HostAdmission`); "Always allow" is allowed only over v4 and its storage effect writes a verified record (a claimed ID fails visibly, nothing stored; no legacy `trusted_devices` row). A v3 host still refuses, now "can't remember a listener over an unencrypted connection".
+- Revoke reloads the live registry, so on the desktop it applies from the listener's next join, even mid-session.
+- Tauri commands `list_remembered_listeners` / `revoke_remembered_listener` (`RememberedListenerDto` bindings regenerated); no UI yet.
+- Tests: core store (2), desktop store (1), storage runner (verified record; claimed ID refused; DB failure), real loopback QUIC (stranger session-only → Always allow delivered as remembered → connects Trusted; remembered listener joins Trusted; mutation ignoring the records killed), profile reopen + revoke via the commands.
+- Gates: `check-rust.sh` (933), desktop clippy + `cargo test` (430), `npm run check` (197), full Android gate.
+- **Open:** desktop UI (enable Approved-devices mode in HostSetupScreen; Settings list/revoke replacing the legacy trusted-devices list); Android revoke reaching a running session; two-device run.
 - [ ] Validate cryptographic proof of listener identity before projecting Trusted/Untrusted. Update Rust FFI admission inputs and Android MainViewModelRustHost join mapping; never hard-code TRUSTED.
 - [ ] Update desktop host_join_projection to resolve verified host-owned trust records instead of unconditional SessionOnly; ensure Android/desktop policy parity.
 - [ ] Wire Always allow / Approve once / revoke, first enrollment, host restart, listener reconnect, profile switch and lost-key re-enrollment with accurate user-visible status.

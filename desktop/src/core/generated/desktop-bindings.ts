@@ -12,6 +12,12 @@ export type StoredSettingsSummaryDto = { syncSampleWindow: number, syncCadenceMs
 
 export type TrustedDeviceSummaryDto = { deviceId: string, displayName: string, trustState: string, firstSeenMs: string, lastSeenMs: string, updatedAtMs: string, hasPublicKey: boolean, hasPrivateKeyReference: boolean, };
 
+export type RememberedListenerDto = { deviceId: string, displayName: string,
+/**
+ * Wall-clock approval time in Unix milliseconds, as a decimal string.
+ */
+approvedAtMs: string, };
+
 export type SessionHistorySummaryDto = { sessionId: string, role: string, sessionName: string, startedAtMs: string, endedAtMs: string | null, listenerCount: number, outcome: string, failureCode: string | null, failureMessage: string | null, };
 
 export type BridgeLifecycleDto = { "kind": "closed" } | { "kind": "opening", "details": { profile_id: string, } } | { "kind": "ready", "details": { profile_id: string, } } | { "kind": "failed", "details": { error: DesktopErrorDto, } };

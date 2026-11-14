@@ -15,6 +15,18 @@ impl DesktopHostTransportRuntime {
         sink: Arc<dyn DesktopHostTransportEventSink>,
         clock: Arc<dyn TransportClock>,
     ) -> Result<Self, DesktopNetworkError> {
+        Self::start_with_admission(node, advertisement, sink, clock, HostAdmission::default())
+    }
+
+    /// Starts the worker with the session's admission: its transport and the
+    /// host's remembered listeners.
+    pub(super) fn start_with_admission(
+        node: Box<dyn HostTransportNode>,
+        advertisement: SessionAdvertisement,
+        sink: Arc<dyn DesktopHostTransportEventSink>,
+        clock: Arc<dyn TransportClock>,
+        admission: HostAdmission,
+    ) -> Result<Self, DesktopNetworkError> {
         let endpoint = node.endpoint();
         let stop = Arc::new(AtomicBool::new(false));
         let status = Arc::new(SharedStatus {
@@ -40,6 +52,7 @@ impl DesktopHostTransportRuntime {
                     &worker_stop,
                     &worker_status,
                     &worker_clock,
+                    admission,
                 )
             })
             .map_err(|error| {

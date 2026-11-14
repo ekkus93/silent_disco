@@ -33,6 +33,7 @@ use crate::runtime_dto::{
     JoinRequestCommandRequest, ListenerCommandRequest, OpenProfileRequest, OpenProfileResponse,
     PlatformEffectDto, ReorderHostQueueRequest, RevisionCommandRequest, UpdateHostDraftRequest,
 };
+use crate::trust_commands::RememberedListenerDto;
 use std::fmt;
 use ts_rs::{Config, TS};
 
@@ -58,6 +59,7 @@ fn render_typescript_bindings_inner() -> String {
         declaration::<MigrationSummaryDto>(&config),
         declaration::<StoredSettingsSummaryDto>(&config),
         declaration::<TrustedDeviceSummaryDto>(&config),
+        declaration::<RememberedListenerDto>(&config),
         declaration::<SessionHistorySummaryDto>(&config),
         declaration::<BridgeLifecycleDto>(&config),
         declaration::<AppShutdownPhaseDto>(&config),

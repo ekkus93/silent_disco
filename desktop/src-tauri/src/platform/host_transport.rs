@@ -1,6 +1,8 @@
 //! Owned desktop host transport worker.
 
-use super::host_transport_events::{DesktopHostTransportEventSink, HostTransportEventProcessor};
+use super::host_transport_events::{
+    DesktopHostTransportEventSink, HostAdmission, HostTransportEventProcessor,
+};
 use super::network_error::DesktopNetworkError;
 use silent_disco_core::domain::{DeliverySeverity, MonotonicMillis};
 use silent_disco_core::error::CoreError;

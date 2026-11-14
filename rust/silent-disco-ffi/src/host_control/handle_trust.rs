@@ -2,8 +2,8 @@
 //! here from the host's own records; the app never supplies it.
 
 use silent_disco_core::domain::{DeviceId, TrustState};
-use silent_disco_core::transport::secure_identity::key_bound_fingerprint;
-use silent_disco_core::transport::secure_trust::{HostVerifiedTrust, VerifiedTrustDisposition};
+use silent_disco_core::transport::secure_trust::HostVerifiedTrust;
+use silent_disco_core::transport::secure_trust_store;
 
 use super::handle::FfiCoreHandle;
 use super::types::FfiBridgeError;
@@ -122,27 +122,15 @@ pub(super) fn enroll_verified_listener(
     display_name: &str,
     enrolled_at_ms: u64,
 ) -> Result<(), FfiBridgeError> {
-    let device_id =
-        DeviceId::new(device_id).map_err(|error| FfiBridgeError::Core(format!("{error:?}")))?;
-    let listener_key_fingerprint = key_bound_fingerprint(&device_id).ok_or_else(|| {
-        FfiBridgeError::Core(
-            "only a listener that proved its key over the secure connection can be remembered"
-                .to_owned(),
-        )
-    })?;
-    let host = HostVerifiedTrust::new(host_public_key_der)
-        .map_err(|error| FfiBridgeError::Core(format!("{error:?}")))?;
-    client
-        .enroll_verified_listener(&silent_disco_core::storage::VerifiedListenerRecord {
-            host_key_fingerprint: *host.host_fingerprint(),
-            listener_key_fingerprint,
-            display_name: display_name.to_owned(),
-            enrolled_at_ms,
-            revoked_at_ms: None,
-        })
-        .map_err(|error| {
-            FfiBridgeError::Core(format!("could not remember the listener: {error}"))
-        })?;
+    let device_id = secure_trust_store::parse_device_id(device_id).map_err(core_error)?;
+    secure_trust_store::enroll_listener(
+        client,
+        host_public_key_der,
+        &device_id,
+        display_name,
+        enrolled_at_ms,
+    )
+    .map_err(core_error)?;
     load_host_trust(handle, client, host_public_key_der).map(|_| ())
 }
 
@@ -153,15 +141,8 @@ pub(super) fn load_host_trust(
     client: &silent_disco_core::storage::DatabaseClient,
     host_public_key_der: &[u8],
 ) -> Result<u32, FfiBridgeError> {
-    let empty = HostVerifiedTrust::new(host_public_key_der)
-        .map_err(|error| FfiBridgeError::Core(format!("{error:?}")))?;
-    let records = client
-        .list_verified_listeners(*empty.host_fingerprint())
-        .map_err(|error| {
-            FfiBridgeError::Core(format!("host trust records unavailable: {error}"))
-        })?;
-    let trust = HostVerifiedTrust::from_records(host_public_key_der, &records)
-        .map_err(|error| FfiBridgeError::Core(format!("{error:?}")))?;
+    let trust =
+        secure_trust_store::load_host_trust(client, host_public_key_der).map_err(core_error)?;
     let count = u32::try_from(trust.len()).unwrap_or(u32::MAX);
     *handle
         .host_trust
@@ -170,25 +151,26 @@ pub(super) fn load_host_trust(
     Ok(count)
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "map_err passes the error by value"
+)]
+fn core_error(error: secure_trust_store::TrustStoreError) -> FfiBridgeError {
+    FfiBridgeError::Core(error.to_string())
+}
+
 /// Trust for a join. Only a key-bound device ID can be trusted, and only when the
 /// host's own records hold that key as trusted. Every other join is session-only.
 pub(super) fn join_trust_state(
     handle: &FfiCoreHandle,
     device_id: &DeviceId,
 ) -> Result<TrustState, FfiBridgeError> {
-    let Some(fingerprint) = key_bound_fingerprint(device_id) else {
-        return Ok(TrustState::SessionOnly);
-    };
     let guard = handle
         .host_trust
         .lock()
         .map_err(|_| FfiBridgeError::Closed("host trust is poisoned".to_owned()))?;
-    let trusted = guard.as_ref().is_some_and(|trust| {
-        trust.disposition_for_fingerprint(&fingerprint) == VerifiedTrustDisposition::Trusted
-    });
-    Ok(if trusted {
-        TrustState::Trusted
-    } else {
-        TrustState::SessionOnly
-    })
+    Ok(secure_trust_store::join_trust_state(
+        guard.as_ref(),
+        device_id,
+    ))
 }

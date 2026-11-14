@@ -626,3 +626,71 @@ fn a_release_profile_hosts_v4_and_cannot_switch_to_v3() {
     );
     state.close_sync().expect("close");
 }
+
+/// Remediation F1: a listener remembered with "Always allow" is still trusted
+/// after the profile reopens, and Settings can list and revoke it.
+#[test]
+fn remembered_listeners_survive_reopen_and_can_be_revoked() {
+    use crate::trust_commands::{list, revoke};
+    use silent_disco_core::transport::secure_identity::key_bound_device_id;
+    let root = TestDirectory::new();
+    let (id, paths) = profile(&root);
+    let state = DesktopAppState::new();
+    assert_eq!(
+        list(&state).expect_err("no profile").code,
+        "desktop.profile.not_ready"
+    );
+    let open = |state: &DesktopAppState| {
+        state
+            .open_profile_sync(
+                &paths,
+                id.clone(),
+                &FixedIdentityProvider([11; 32]),
+                &FixedSigningIdentityProvider(11),
+                Arc::new(DesktopNotificationBuffer::new()),
+            )
+            .expect("open profile");
+    };
+    open(&state);
+    assert!(list(&state).expect("list").is_empty());
+    let listener = key_bound_device_id(&[0xa1; 32]);
+    state
+        .ready_verified_trust()
+        .expect("trust")
+        .remember(&listener, "Kitchen laptop", 42)
+        .expect("remember");
+    state.close_sync().expect("close");
+
+    open(&state);
+    let listed = list(&state).expect("list after reopen");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].device_id, listener.as_str());
+    assert_eq!(listed[0].display_name, "Kitchen laptop");
+    assert_eq!(listed[0].approved_at_ms, "42");
+    assert_eq!(
+        state
+            .ready_verified_trust()
+            .expect("trust")
+            .join_trust_state(&listener),
+        silent_disco_core::domain::TrustState::Trusted
+    );
+
+    assert_eq!(
+        revoke(&state, "claimed-listener")
+            .expect_err("claimed ID")
+            .code,
+        "desktop.trust.invalid_listener"
+    );
+    assert!(revoke(&state, listener.as_str()).expect("revoke"));
+    assert!(!revoke(&state, listener.as_str()).expect("second revoke"));
+    assert!(list(&state).expect("list").is_empty());
+    assert_eq!(
+        state
+            .ready_verified_trust()
+            .expect("trust")
+            .join_trust_state(&listener),
+        silent_disco_core::domain::TrustState::SessionOnly,
+        "a revoke reaches the live registry the host checks joins against"
+    );
+    state.close_sync().expect("close again");
+}

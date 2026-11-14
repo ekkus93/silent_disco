@@ -37,6 +37,7 @@ pub mod platform;
 pub mod profile;
 pub mod runtime_dto;
 pub mod shutdown;
+pub mod trust_commands;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,6 +124,8 @@ pub fn run() -> tauri::Result<()> {
             host_commands::set_allow_shared_address_space,
             host_commands::set_secure_transport,
             host_commands::create_host_invitation,
+            trust_commands::list_remembered_listeners,
+            trust_commands::revoke_remembered_listener,
             app_state::attach_notifications,
             app_state::close_profile,
             app_shutdown::get_app_shutdown_state,

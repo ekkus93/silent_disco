@@ -15,7 +15,7 @@ use crate::platform::audio_device::{
 };
 use crate::platform::failure::DesktopPlatformFailure;
 use crate::platform::host_transport::{ActiveHostSessionSnapshot, DesktopHostTransportRuntime};
-use crate::platform::host_transport_events::DesktopHostTransportEventSink;
+use crate::platform::host_transport_events::{DesktopHostTransportEventSink, HostAdmission};
 use crate::platform::mdns::{
     MdnsPublicationState, MdnsPublisher, MdnsSdPublisher, NullMdnsPublisher,
 };
@@ -24,6 +24,7 @@ use crate::platform::network_dto::{
     MonitorStatusDto, NetworkInterfaceSnapshotDto, SetNetworkBindPreferenceRequest,
 };
 use crate::platform::playback_streamer::DesktopPlaybackStreamer;
+use crate::platform::verified_trust::DesktopVerifiedTrust;
 use silent_disco_core::error::CoreError;
 use silent_disco_core::runtime::{
     CoreActorHandle, NetworkEndpoint, SessionAdvertisement, TransportEffect,
@@ -73,6 +74,9 @@ pub(super) struct NetworkState {
     /// profile opens (owner decision 2026-11-13). On, the next host binds
     /// QUIC only and v3 listeners cannot join.
     pub(super) secure_transport: bool,
+    /// The profile's remembered listeners. `None` until the profile opens;
+    /// a host without it trusts and remembers nobody.
+    pub(super) verified_trust: Option<Arc<DesktopVerifiedTrust>>,
     pub(super) active: Option<ActiveBinding>,
 }
 
@@ -137,6 +141,7 @@ impl DesktopHostNetworkControl {
                 allow_shared_address_space: false,
                 secure_control: None,
                 secure_transport: false,
+                verified_trust: None,
                 active: None,
             }),
         }
@@ -320,6 +325,23 @@ impl DesktopHostNetworkControl {
         )
     }
 
+    /// Sets the profile's remembered listeners, used by every later host start.
+    /// Set once while the profile opens, before any host is started.
+    ///
+    /// # Errors
+    ///
+    /// Returns a structured error when the network state is poisoned.
+    pub(crate) fn set_verified_trust(
+        &self,
+        trust: Arc<DesktopVerifiedTrust>,
+    ) -> Result<(), DesktopErrorDto> {
+        self.state
+            .lock()
+            .map_err(|_| DesktopNetworkError::poisoned().dto())?
+            .verified_trust = Some(trust);
+        Ok(())
+    }
+
     /// Sets the TLS identity the next host start presents on its control port.
     /// Set once while the profile opens, before any host is started.
     ///
@@ -397,7 +419,17 @@ impl DesktopHostNetworkControl {
             let cleanup = node.shutdown().err();
             return Err(DesktopNetworkError::endpoint_mismatch(cleanup.as_ref()));
         }
-        let runtime = DesktopHostTransportRuntime::start(node, advertisement.clone(), sink, clock)?;
+        let admission = HostAdmission {
+            secure_v4: secure,
+            trust: state.verified_trust.clone(),
+        };
+        let runtime = DesktopHostTransportRuntime::start_with_admission(
+            node,
+            advertisement.clone(),
+            sink,
+            clock,
+            admission,
+        )?;
         // Publish only now that a real, already-bound endpoint exists
         // (30.2) -- `endpoint` above is what the transport actually
         // bound to, not a value computed ahead of the bind succeeding. A

@@ -3,6 +3,7 @@
 use super::host_join_projection::PendingJoinProjection;
 use super::host_pending_handshake::send_pending_hello;
 use super::network_error::DesktopNetworkError;
+use super::verified_trust::DesktopVerifiedTrust;
 use silent_disco_core::domain::{DeviceId, TransportState, TrustState};
 use silent_disco_core::error::CoreError;
 use silent_disco_core::protocol::{
@@ -37,17 +38,48 @@ impl DesktopHostTransportEventSink for CoreActorHandle {
     }
 }
 
+/// How a host session admits listeners: whether it runs secure v4 (the only
+/// transport where a listener's key is proven) and the host's remembered
+/// listeners. The default trusts nobody and cannot remember anyone.
+#[derive(Clone, Default)]
+pub(crate) struct HostAdmission {
+    pub(crate) secure_v4: bool,
+    pub(crate) trust: Option<Arc<DesktopVerifiedTrust>>,
+}
+
+impl HostAdmission {
+    /// A join's trust, from the host's own records only. Never trusted off v4.
+    fn trust_state(&self, device_id: &DeviceId) -> TrustState {
+        match (&self.trust, self.secure_v4) {
+            (Some(trust), true) => trust.join_trust_state(device_id),
+            _ => TrustState::SessionOnly,
+        }
+    }
+}
+
 pub(crate) struct HostTransportEventProcessor {
     pending: PendingJoinProjection,
     clock: Arc<dyn TransportClock>,
+    admission: HostAdmission,
 }
 
 impl HostTransportEventProcessor {
     pub(crate) fn new(clock: Arc<dyn TransportClock>) -> Self {
+        Self::with_admission(clock, HostAdmission::default())
+    }
+
+    pub(crate) fn with_admission(clock: Arc<dyn TransportClock>, admission: HostAdmission) -> Self {
         Self {
             pending: PendingJoinProjection::new(),
             clock,
+            admission,
         }
+    }
+
+    /// Whether this host may tell a listener it was remembered: only over
+    /// secure v4 with a trust store to write to.
+    pub(crate) const fn can_remember_listeners(&self) -> bool {
+        self.admission.secure_v4 && self.admission.trust.is_some()
     }
 
     pub(crate) fn pending_request_matches(
@@ -135,8 +167,10 @@ impl HostTransportEventProcessor {
                 // Actor mailbox failure or pending-capacity exhaustion must
                 // not terminate the desktop host or strand the listener.
                 // Only successfully projected requests receive Hello.
+                let trust_state = self.admission.trust_state(&request.device.device_id);
                 let Ok(device_id) = self.pending.register(
                     &request,
+                    trust_state,
                     peer.control_address,
                     received_at,
                     advertisement,

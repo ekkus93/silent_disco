@@ -1931,3 +1931,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - FFI top-level `list_verified_listeners_in_database` / `revoke_verified_listener_in_database` (new `silent-disco-ffi/src/verified_listeners.rs` + tests). Settings Approved devices screen now uses them via `KeystoreHostTlsSigner().spkiDer()` + `withDatabaseHandle` (both on IO); store API is `listApprovedListeners`/`revokeApproval`, model `ApprovedListener`.
 - Known limit: revoke does not reach a running host session (trust loaded at start); UI message says it applies from the next session.
 - Gates: check-rust 931, desktop clippy+tests 426, Android gate; A54 screen tests 5/5.
+
+## 2026-11-14T22:26:02Z - claude-opus-5-5 - F1 step 6: desktop host trust backend
+- New core `secure_trust_store` shared by FFI and desktop. Desktop: `platform/verified_trust.rs` (registry + DB), `HostAdmission{secure_v4, trust}` threaded through `DesktopHostTransportRuntime::start_with_admission` -> processor -> join projection; effects allow trusted_for_future only when `can_remember_listeners()`; storage runner PersistTrustedDevice -> `trust.remember`; `trust_commands.rs` list/revoke commands.
+- Desktop revoke is live (registry reloaded); Android revoke still applies next session.
+- Gates: check-rust 933, desktop clippy+tests 430, npm check 197, Android gate. Next: desktop UI (HostSetupScreen mode + Settings list/revoke).

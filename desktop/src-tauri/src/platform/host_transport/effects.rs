@@ -45,17 +45,19 @@ fn process_effect(
                 submit_delivery(sink, operation_id, failed_delivery_report())?;
                 return Ok(());
             }
-            // This host cannot remember listeners yet, on any transport.
-            // Refuse this effect before any JoinApproval or UDP authorization;
-            // the Rust actor receives a failed delivery and the listener sees
-            // a visible rejection rather than a misleading success.
-            if trusted_for_future {
+            // Only a v4 host can remember a listener: only there is the
+            // listener's key proven, and the storage effect that follows
+            // writes it to the host's verified records. Elsewhere, refuse
+            // before any JoinApproval or UDP authorization; the Rust actor
+            // receives a failed delivery and the listener sees a visible
+            // rejection rather than a misleading success.
+            if trusted_for_future && !processor.can_remember_listeners() {
                 refuse_durable_trust(
                     node, sink, status, processor, operation_id, session_id, &listener_id,
                 )?;
                 return Ok(());
             }
-            approved_listener = Some((listener_id.clone(), false, session_id.clone()));
+            approved_listener = Some((listener_id.clone(), trusted_for_future, session_id.clone()));
             eprintln!(
                 "join_approval_send_started operation_id={operation_id} send_started_unix_ms={}",
                 unix_time_ms()
@@ -231,7 +233,7 @@ fn finish_approved_listener(
 }
 
 /// Refuse a durable-trust ("Always allow") request before any admission or
-/// route authorization: this host grants one-session approval only.
+/// route authorization on a host that cannot remember listeners (not v4).
 #[allow(clippy::too_many_arguments)]
 fn refuse_durable_trust(
     node: &dyn HostTransportNode,
@@ -245,12 +247,12 @@ fn refuse_durable_trust(
     processor.take_pending_ports(listener_id);
     set_last_error(
         status,
-        "This host can't remember listeners yet. Approve each listener once instead.".to_owned(),
+        "This host can't remember a listener over an unencrypted connection. Approve it once instead.".to_owned(),
     )?;
     let rejection = ControlMessage::JoinRejection(JoinRejection {
         session_id,
         listener_id: listener_id.clone(),
-        reason: "The host can't remember this phone yet. Ask the host to approve you once.".to_owned(),
+        reason: "The host can't remember this phone over an unencrypted connection. Ask the host to approve you once.".to_owned(),
     });
     if let Err(error) = node.send_pending_control(listener_id, &rejection) {
         set_last_error(status, error.to_string())?;

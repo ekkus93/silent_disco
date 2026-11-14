@@ -1,10 +1,12 @@
 use super::failure::core_error;
-use silent_disco_core::domain::{OperationId, TrustState};
+use super::verified_trust::DesktopVerifiedTrust;
+use silent_disco_core::domain::OperationId;
 use silent_disco_core::error::{CoreError, CoreErrorCode, ErrorSeverity};
 use silent_disco_core::runtime::{
     CoreActorHandle, StorageCompletion, StorageEffect, StorageEffectRequest, StorageEvent,
 };
-use silent_disco_core::storage::{DatabaseClient, StorageError, StoredSettings, TrustedDevice};
+use silent_disco_core::storage::{DatabaseClient, StorageError, StoredSettings};
+use silent_disco_core::transport::secure_trust_store::TrustStoreError;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -91,11 +93,12 @@ impl DesktopStorageEffectRunner {
         dispatcher: DesktopStorageEffectDispatcher,
         sink: Arc<dyn DesktopStorageEventSink>,
         database: DatabaseClient,
+        trust: Arc<DesktopVerifiedTrust>,
     ) -> Result<Self, CoreError> {
         let accepting = Arc::clone(&dispatcher.accepting);
         let join = thread::Builder::new()
             .name("silent-disco-desktop-storage-effects".to_owned())
-            .spawn(move || run_worker(&inbox.receiver, &sink, &database, &accepting))
+            .spawn(move || run_worker(&inbox.receiver, &sink, &database, &trust, &accepting))
             .map_err(|error| {
                 core_error(
                     CoreErrorCode::WorkerStopped,
@@ -128,12 +131,13 @@ fn run_worker(
     receiver: &Receiver<StorageEffect>,
     sink: &Arc<dyn DesktopStorageEventSink>,
     database: &DatabaseClient,
+    trust: &DesktopVerifiedTrust,
     accepting: &AtomicBool,
 ) -> Result<(), CoreError> {
     loop {
         match receiver.recv_timeout(STORAGE_EFFECT_POLL_INTERVAL) {
             Ok(effect) => {
-                let event = execute_effect(database, effect);
+                let event = execute_effect(database, trust, effect);
                 sink.submit_storage_event(event)?;
             }
             Err(RecvTimeoutError::Timeout) if accepting.load(Ordering::Acquire) => {}
@@ -142,14 +146,20 @@ fn run_worker(
     }
 }
 
-fn execute_effect(database: &DatabaseClient, effect: StorageEffect) -> StorageEvent {
+fn execute_effect(
+    database: &DatabaseClient,
+    trust: &DesktopVerifiedTrust,
+    effect: StorageEffect,
+) -> StorageEvent {
     let operation_id = effect.operation_id;
     let result = catch_unwind(AssertUnwindSafe(|| match effect.request {
-        StorageEffectRequest::PersistSettings { settings } => persist_settings(database, settings),
+        StorageEffectRequest::PersistSettings { settings } => persist_settings(database, settings)
+            .map_err(|error| storage_core_error(error, operation_id.clone())),
         StorageEffectRequest::PersistTrustedDevice {
             device_id,
             display_name,
-        } => persist_trusted_device(database, device_id, display_name),
+        } => persist_trusted_device(trust, device_id, &display_name)
+            .map_err(|error| trust_core_error(error, operation_id.clone())),
     }));
     match result {
         Ok(Ok(completion)) => StorageEvent::OperationSucceeded {
@@ -157,8 +167,8 @@ fn execute_effect(database: &DatabaseClient, effect: StorageEffect) -> StorageEv
             completion,
         },
         Ok(Err(error)) => StorageEvent::OperationFailed {
-            operation_id: operation_id.clone(),
-            error: storage_core_error(error, operation_id),
+            operation_id,
+            error,
         },
         Err(_) => StorageEvent::OperationFailed {
             operation_id: operation_id.clone(),
@@ -192,33 +202,16 @@ fn persist_settings(
     Ok(StorageCompletion::SettingsSaved)
 }
 
+/// "Always allow": remembers the listener in the host's verified records for
+/// this profile's host key (and its live registry). Only a key-bound ID, one
+/// whose key the secure connection proved, is accepted; anything else fails
+/// visibly and nothing is stored.
 fn persist_trusted_device(
-    database: &DatabaseClient,
+    trust: &DesktopVerifiedTrust,
     device_id: silent_disco_core::domain::DeviceId,
-    display_name: String,
-) -> Result<StorageCompletion, StorageError> {
-    let now_ms = unix_time_ms();
-    let existing = database.get_trusted_device(&device_id)?;
-    let device = match existing {
-        Some(mut current) => {
-            current.display_name = display_name;
-            current.trust_state = TrustState::Trusted;
-            current.last_seen_ms = now_ms.max(current.last_seen_ms);
-            current.updated_at_ms = now_ms.max(current.last_seen_ms);
-            current
-        }
-        None => TrustedDevice {
-            device_id: device_id.clone(),
-            display_name,
-            public_key: None,
-            private_key_ref: None,
-            trust_state: TrustState::Trusted,
-            first_seen_ms: now_ms,
-            last_seen_ms: now_ms,
-            updated_at_ms: now_ms,
-        },
-    };
-    database.upsert_trusted_device(&device)?;
+    display_name: &str,
+) -> Result<StorageCompletion, TrustStoreError> {
+    trust.remember(&device_id, display_name, unix_time_ms())?;
     Ok(StorageCompletion::TrustedDeviceUpdated { device_id })
 }
 
@@ -231,6 +224,19 @@ fn unix_time_ms() -> u64 {
                 .min(i64::MAX as u64)
                 .max(1)
         })
+}
+
+fn trust_core_error(error: TrustStoreError, operation_id: OperationId) -> CoreError {
+    match error {
+        TrustStoreError::Storage { error, .. } => storage_core_error(error, operation_id),
+        other => core_error(
+            CoreErrorCode::InvalidArgument,
+            other.to_string(),
+            ErrorSeverity::Error,
+            false,
+            Some(operation_id),
+        ),
+    }
 }
 
 fn storage_core_error(error: StorageError, operation_id: OperationId) -> CoreError {

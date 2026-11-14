@@ -47,6 +47,9 @@ pub mod secure_identity;
 pub mod secure_listener_proof;
 pub mod secure_replay;
 pub mod secure_trust;
+pub mod secure_trust_store;
+#[cfg(test)]
+mod secure_trust_store_tests;
 mod socket;
 mod types;
 mod virtual_fault;

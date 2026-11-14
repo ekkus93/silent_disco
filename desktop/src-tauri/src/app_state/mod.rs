@@ -36,6 +36,7 @@ mod host_ops;
 mod lifecycle;
 mod network_policy;
 mod state;
+mod trust;
 
 use construct::open_runtime;
 use state::DesktopRuntimeState;

@@ -8,8 +8,9 @@ fn run_transport_worker(
     stop: &AtomicBool,
     status: &SharedStatus,
     clock: &Arc<dyn TransportClock>,
+    admission: HostAdmission,
 ) -> Result<(), DesktopNetworkError> {
-    let mut processor = HostTransportEventProcessor::new(Arc::clone(clock));
+    let mut processor = HostTransportEventProcessor::with_admission(Arc::clone(clock), admission);
     let mut primary_error = None;
     while !stop.load(Ordering::Acquire) {
         if let Err(error) =

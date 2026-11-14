@@ -11,6 +11,7 @@ use crate::notification_buffer::DesktopNotificationBuffer;
 use crate::platform::identity::DesktopIdentity;
 use crate::platform::invitation_identity::DesktopHostSigningIdentity;
 use crate::platform::network::DesktopHostNetworkControl;
+use crate::platform::verified_trust::DesktopVerifiedTrust;
 use crate::profile::ProfileId;
 use crate::shutdown::DesktopOwnedResources;
 use silent_disco_core::runtime::CoreActorHandle;
@@ -44,6 +45,9 @@ pub(super) struct ReadyRuntime {
     pub(super) sources: PathBuf,
     pub(super) identity: DesktopIdentity,
     pub(super) signing_identity: DesktopHostSigningIdentity,
+    /// The host's remembered listeners, shared with the host transport and
+    /// the storage-effect runner.
+    pub(super) verified_trust: Arc<DesktopVerifiedTrust>,
     pub(super) handle: CoreActorHandle,
     pub(super) notifications: Arc<DesktopNotificationBuffer>,
     pub(super) network: Arc<DesktopHostNetworkControl>,

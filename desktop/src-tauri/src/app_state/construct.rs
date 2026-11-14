@@ -19,6 +19,7 @@ use crate::platform::source_staging::cleanup_incomplete_sources;
 use crate::platform::storage_effect_runner::{
     DesktopStorageEffectDispatcher, DesktopStorageEffectRunner,
 };
+use crate::platform::verified_trust::DesktopVerifiedTrust;
 use crate::profile::ProfileId;
 use crate::runtime_dto::CoreSnapshotDto;
 use crate::shutdown::{
@@ -145,6 +146,29 @@ pub(super) fn open_runtime(
         return Err(cleanup_without_actor(database, lease, primary));
     }
 
+    // The host's remembered listeners for its TLS key (the key listeners pin).
+    // Loaded before any host can start, so no join is ever checked against an
+    // empty or stale list. A failure stops the open visibly.
+    let verified_trust = match DesktopVerifiedTrust::load(
+        database.client(),
+        signing_identity.tls_public_key_der().to_vec(),
+    ) {
+        Ok(trust) => Arc::new(trust),
+        Err(error) => {
+            let primary = DesktopErrorDto::new(
+                "desktop.storage.trusted_listeners_unavailable",
+                "storage",
+                "fatal",
+                false,
+                &format!("Could not load trusted listeners: {error}"),
+            );
+            return Err(cleanup_without_actor(database, lease, primary));
+        }
+    };
+    if let Err(primary) = network.set_verified_trust(Arc::clone(&verified_trust)) {
+        return Err(cleanup_without_actor(database, lease, primary));
+    }
+
     let (platform_dispatcher, platform_inbox) = DesktopPlatformEffectDispatcher::channel();
     let (storage_dispatcher, storage_inbox) = DesktopStorageEffectDispatcher::channel();
     let observer = DesktopCoreObserver::new(
@@ -195,6 +219,7 @@ pub(super) fn open_runtime(
         storage_dispatcher,
         Arc::new(handle.clone()),
         database.client(),
+        Arc::clone(&verified_trust),
     ) {
         Ok(runner) => runner,
         Err(error) => {
@@ -252,6 +277,7 @@ pub(super) fn open_runtime(
             sources: paths.sources().to_path_buf(),
             identity,
             signing_identity,
+            verified_trust,
             handle,
             notifications: Arc::clone(&notifications),
             network,

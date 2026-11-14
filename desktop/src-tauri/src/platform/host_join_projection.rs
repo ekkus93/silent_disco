@@ -47,6 +47,7 @@ impl PendingJoinProjection {
     pub(super) fn register(
         &mut self,
         request: &JoinRequest,
+        trust_state: TrustState,
         control_address: SocketAddr,
         received_at: silent_disco_core::domain::MonotonicMillis,
         advertisement: &SessionAdvertisement,
@@ -93,7 +94,8 @@ impl PendingJoinProjection {
             request_id.clone(),
             device_id.clone(),
             display_name.clone(),
-            TrustState::SessionOnly,
+            // From the host's own records (see `HostAdmission`), never the join.
+            trust_state,
             invite_code_valid,
             received_at,
         )
@@ -356,6 +358,7 @@ mod generation_tests {
             let mut projection = PendingJoinProjection::new();
             let result = projection.register(
                 &request,
+                silent_disco_core::domain::TrustState::SessionOnly,
                 address,
                 MonotonicMillis::new(100),
                 &advertisement,
@@ -414,6 +417,7 @@ mod generation_tests {
             projection
                 .register(
                     &make_request(&id),
+                    silent_disco_core::domain::TrustState::SessionOnly,
                     address,
                     MonotonicMillis::new(1),
                     &advertisement,
@@ -428,6 +432,7 @@ mod generation_tests {
             projection
                 .register(
                     &overflow,
+                    silent_disco_core::domain::TrustState::SessionOnly,
                     overflow_address,
                     MonotonicMillis::new(2),
                     &advertisement,
@@ -442,6 +447,7 @@ mod generation_tests {
         projection
             .register(
                 &overflow,
+                silent_disco_core::domain::TrustState::SessionOnly,
                 overflow_address,
                 MonotonicMillis::new(3),
                 &advertisement,
@@ -452,6 +458,7 @@ mod generation_tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)] // One rollback scenario across three registrations.
     fn failed_actor_submission_rolls_back_ports_without_eviction_or_ghost_admission() {
         use crate::platform::host_transport_events::DesktopHostTransportEventSink;
         use silent_disco_core::domain::{ApprovalMode, MonotonicMillis, SessionId};
@@ -515,6 +522,7 @@ mod generation_tests {
                 projection
                     .register(
                         &request,
+                        silent_disco_core::domain::TrustState::SessionOnly,
                         replacement,
                         MonotonicMillis::new(100),
                         &advertisement,
@@ -536,6 +544,7 @@ mod generation_tests {
             projection
                 .register(
                     &request,
+                    silent_disco_core::domain::TrustState::SessionOnly,
                     replacement,
                     MonotonicMillis::new(101),
                     &advertisement,
@@ -550,6 +559,7 @@ mod generation_tests {
         projection
             .register(
                 &request,
+                silent_disco_core::domain::TrustState::SessionOnly,
                 replacement,
                 MonotonicMillis::new(102),
                 &advertisement,

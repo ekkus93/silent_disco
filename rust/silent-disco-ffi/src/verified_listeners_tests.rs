@@ -138,9 +138,6 @@ fn revoke_refuses_a_claimed_id_and_list_refuses_an_invalid_host_key() {
     let host = spki(3);
     let refused = revoke_verified_listener(&client, &host, "claimed-listener", 1)
         .expect_err("a claimed ID is not a remembered listener");
-    assert!(
-        refused.to_string().contains("remembered secure listener"),
-        "{refused}"
-    );
+    assert!(refused.to_string().contains("proved its key"), "{refused}");
     assert!(list_verified_listeners(&client, b"not a key").is_err());
 }

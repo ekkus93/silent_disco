@@ -312,7 +312,9 @@ fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
             .expect("status")
             .last_error
             .as_deref()
-            .is_some_and(|error| error.contains("can't remember listeners")),
+            .is_some_and(
+                |error| error.contains("can't remember a listener over an unencrypted connection")
+            ),
         "host must expose why a plaintext approval was refused"
     );
     assert!(

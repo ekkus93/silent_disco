@@ -47,6 +47,7 @@ pub(crate) mod storage_effect_runner;
     reason = "the test keeps complete result variants visually separate"
 )]
 pub mod storage_inspection;
+pub(crate) mod verified_trust;
 
 pub(crate) fn recover_interrupted_host_sessions(
     database: &silent_disco_core::storage::DatabaseClient,
@@ -74,6 +75,8 @@ mod host_transport_failure_tests;
 mod host_transport_stale_approval_tests;
 #[cfg(test)]
 mod host_transport_tests;
+#[cfg(test)]
+mod host_transport_verified_trust_tests;
 #[cfg(test)]
 mod monitor_tests;
 #[cfg(test)]
