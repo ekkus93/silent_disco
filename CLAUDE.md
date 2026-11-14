@@ -26,7 +26,7 @@ For desktop companion work, read and follow:
 For Android view-model structure (the `MainViewModel` controllers under `app/controller/`), read and follow:
 
 - `docs/SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md`
-- `docs/SILENT_DISCO_GOD_FILE_REFACTOR_TODO_2026-11-13.md` (§6, `SilentDiscoApp`, is being done now: owner decision 2026-11-14)
+- `docs/SILENT_DISCO_GOD_FILE_REFACTOR_TODO_2026-11-13.md` (all sections done, including §6 `SilentDiscoApp`, 2026-11-14)
 
 Do not create additional assistant-generated design documents unless they are committed at the exact path referenced by one of these specs or TODOs.
 

@@ -1056,3 +1056,44 @@ Open items:
 - The v3-worded durable-trust refusal (§55.3).
 - The Rust watchlist (§55.2).
 - The run 1 first-handshake miss above.
+
+## 57. 2026-11-14 — God-file refactor §6 (`SilentDiscoApp`) done
+
+The owner chose to do §6 now, overriding the earlier deferral to the UI redesign. It was a mechanical split with behaviour unchanged.
+
+**Commits, one per §6 item:**
+
+| Commit | Change |
+| --- | --- |
+| `7b3e3cc2` | Wiring characterization test |
+| `3920fe12` | Feature navigation graphs |
+| `1318eda1` | Launcher helpers |
+| `68f74f2d` | Flow state holders |
+| `c1ce223f` | Listener flow effects |
+
+**What changed:**
+- `SilentDiscoApp.kt` went from 769 to 434 lines. It keeps the `NavHost`, Startup and Home, app-wide state and effects, the dialogs and the snackbar.
+- New files in `app/`:
+  - navigation graphs: `HostNavGraph.kt`, `ListenerNavGraph.kt`, `SettingsNavGraph.kt`, with `AppNavContext.kt`;
+  - launcher helpers: `HostLaunchers.kt`, `ListenerLaunchers.kt`, `PermissionLaunchers.kt`;
+  - state holders: `QrJoinFlowState.kt`, `SessionConfirmationState.kt`;
+  - `ListenerFlowEffects.kt`.
+
+**Tests added (20 instrumented):**
+- `SilentDiscoAppWiringTest` (11): the real app over recording fakes, covering all 16 destinations.
+- `FeatureLaunchersTest` (3): uses a recording `ActivityResultRegistry`, so no other app opens.
+- `QrJoinFlowStateRestorationTest` and `SessionConfirmationStateRestorationTest` (1 each).
+- `ListenerFlowEffectsTest` (4).
+- Every step had a mutation check that was caught, and the full Android gate passed each time.
+
+**Test seams:**
+- The plain-Kotlin fakes moved to `app/src/sharedTest/java`, which both test source sets compile.
+- `SilentDiscoApp` takes an optional `navController`.
+
+**Full A54 instrumented suite at `c1ce223f`:** 200 tests (180 + 20 new), 4 failed, 1 skipped. The 4 failures are the known layout ones (§53.3), so nothing is new. The app stayed installed.
+
+**Possible latent race, not observed in production:** if storage ever opened within the app's first frame, the startup NavigateHome effect would reach the navigation controller before the `NavHost` sets its graph ("You must call setGraph()"). Only the instant fake store triggered this; the test waits until after the first frame.
+
+**Test cautions:**
+- App-level instrumented tests must not tap delete actions: `P2ViewModel` uses the phone's real trusted-hosts store.
+- There is no `androidx.test:rules` dependency, so the camera test reads the phone's real permission instead of granting it.

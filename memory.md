@@ -1849,3 +1849,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Three listener effects moved verbatim into `ListenerFlowEffects` (same keys, same call point). App-wide effects stay in `SilentDiscoApp` (434 lines, was 769 before §6). `ListenerFlowEffectsTest` 4 tests on the A54; dropping the scan-observed guard fails 2. Full Android gate passed.
 - One A54 run failed only because the phone dropped off USB (`device not found`); the rerun passed.
 - Every item in the God-file refactor TODO is now checked. Next: the full A54 instrumented suite to close out §6.
+
+## 2026-11-14T11:56:25Z - claude-opus-5-5 - God-file refactor §6 closed: full A54 suite
+- Full A54 instrumented suite at `c1ce223f`: 200 tests (180 + 20 new), the same 4 known layout failures, 1 skipped; app kept installed. Every item of the God-file refactor TODO is checked.
+- Handoff §57 records §6; CLAUDE.md now says all sections are done.
