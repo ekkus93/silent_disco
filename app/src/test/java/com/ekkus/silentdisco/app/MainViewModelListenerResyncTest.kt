@@ -131,7 +131,7 @@ class MainViewModelListenerResyncTest {
     fun trackBoundaryPresentationWaitsForItsSampleTimeAndSurvivesPause() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         val viewModel = harness.viewModel
-        viewModel.currentStreamId = StreamId("stream-1")
+        viewModel.listenerPlaybackController.streamId = StreamId("stream-1")
         viewModel.listenerPlaybackController.boundaries.streamHostStartTimeMs = SystemClock.elapsedRealtime() + 1_000L
         viewModel._uiState.value = viewModel._uiState.value.copy(
             listenerState = ListenerLifecycleState.PLAYING,

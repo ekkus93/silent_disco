@@ -112,6 +112,9 @@ internal class ListenerPlaybackController(
         get() = runtimeRef.get()
         set(value) = runtimeRef.set(value)
 
+    /** The stream the listener is following, from its StreamStarted on. */
+    @Volatile var streamId: StreamId? = null
+
     /** Session of [runtime], so its clock lock is only reused within that session. */
     private var runtimeSessionId: SessionId? = null
 

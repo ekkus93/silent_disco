@@ -25,6 +25,9 @@ internal class HostPlaybackController(
     parentScope: CoroutineScope,
     val staging: HostSourceStaging,
 ) : ViewModelController(parentScope) {
+    /** The host's stream id, from session start until the session ends. */
+    @Volatile var streamId: com.ekkus.silentdisco.core.protocol.StreamId? = null
+
     /** The Rust decoder/packetizer for the running stream. */
     @Volatile var streamer: HostPlaylistStreamController? = null
 

@@ -415,7 +415,7 @@ private fun MainViewModel.startAdvertisingForRust(
         inviteCodeRequired = effect.approvalMode == FfiApprovalMode.INVITE_CODE,
     )
     currentSessionId = SessionId(effect.sessionId)
-    currentStreamId = StreamId("stream-${SystemClock.elapsedRealtime()}")
+    hostPlayback.streamId = StreamId("stream-${SystemClock.elapsedRealtime()}")
     val bleResult = bleService.startAdvertising(
         BleAdvertisement(
             sessionId = session.id,
@@ -493,7 +493,9 @@ private suspend fun MainViewModel.stopAdvertisingForRust(
         FfiPlatformCompletion.AdvertisingStopped,
     )
     currentSessionId = null
-    currentStreamId = null
+    hostPlayback.streamId = null
+    // Ending the host session also ends any stream a listener role followed.
+    listenerPlaybackController.streamId = null
     hostPlayback.latestPackets = emptyList()
     _uiState.value = _uiState.value.copy(
         discoveredSessions = emptyList(),

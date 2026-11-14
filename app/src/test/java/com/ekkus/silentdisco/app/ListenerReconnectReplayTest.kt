@@ -160,7 +160,7 @@ class ListenerReconnectReplayTest {
         val runtime = RecordingListenerPlayback()
         // The listener was already following this stream when its connection
         // dropped; the runtime survives so the replay re-anchors it in place.
-        viewModel.currentStreamId = StreamId(STREAM_ID)
+        viewModel.listenerPlaybackController.streamId = StreamId(STREAM_ID)
         viewModel.listenerPlayback = runtime
         viewModel._uiState.value = viewModel._uiState.value.copy(
             selectedSession = SessionInfo(

@@ -61,7 +61,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
 
         val streamId = StreamId("stream-${SystemClock.elapsedRealtime()}-${java.util.UUID.randomUUID()}")
         hostPlayback.pendingBoundaries.clear()
-        currentStreamId = streamId
+        hostPlayback.streamId = streamId
         val streamer = try {
             val sources = withContext(Dispatchers.IO) { stageHostPlaylistSources() }
             withContext(Dispatchers.IO) {
@@ -142,7 +142,7 @@ internal fun MainViewModel.startHostPlaybackImpl() {
 
 private fun MainViewModel.resumeHostPlaybackImpl() {
     val sessionId = currentSessionId
-    val streamId = currentStreamId
+    val streamId = hostPlayback.streamId
     val format = hostPlayback.format
     val streamStart = hostPlayback.streamStart
     val streamer = hostPlayback.streamer
@@ -194,7 +194,7 @@ internal fun MainViewModel.pauseHostPlaybackImpl() {
                 listenerState = _uiState.value.listenerState,
                 message = "Host paused the stream",
             )
-            currentStreamId?.let { streamId ->
+            hostPlayback.streamId?.let { streamId ->
                 viewModelScope.launch(Dispatchers.IO) {
                     runCatching {
                         hostTransportController.broadcastPause(
@@ -249,7 +249,7 @@ internal fun MainViewModel.stopHostPlaybackImpl() {
                 listenerState = _uiState.value.listenerState,
                 message = "Host stopped the stream",
             )
-            currentStreamId?.let { streamId ->
+            hostPlayback.streamId?.let { streamId ->
                 viewModelScope.launch(Dispatchers.IO) {
                     runCatching {
                         hostTransportController.broadcastStop(

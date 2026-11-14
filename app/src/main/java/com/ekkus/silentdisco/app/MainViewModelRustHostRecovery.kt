@@ -88,7 +88,9 @@ private fun MainViewModel.rollbackFailedRustHostStart(): List<String> {
     pendingStartAdvertisingOperationId = null
     pendingListenerDatagramPorts.clear()
     currentSessionId = null
-    currentStreamId = null
+    hostPlayback.streamId = null
+    // Ending the host session also ends any stream a listener role followed.
+    listenerPlaybackController.streamId = null
     hostPlayback.latestPackets = emptyList()
     _uiState.value = _uiState.value.copy(discoveredSessions = emptyList())
     return collectRustHostCleanupFailures(
@@ -104,7 +106,9 @@ private fun MainViewModel.finishFailedRustHostStopCleanup(): List<String> {
     pendingStartAdvertisingOperationId = null
     pendingListenerDatagramPorts.clear()
     currentSessionId = null
-    currentStreamId = null
+    hostPlayback.streamId = null
+    // Ending the host session also ends any stream a listener role followed.
+    listenerPlaybackController.streamId = null
     hostPlayback.latestPackets = emptyList()
     _uiState.value = _uiState.value.copy(discoveredSessions = emptyList())
     return collectRustHostCleanupFailures(

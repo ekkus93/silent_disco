@@ -99,7 +99,7 @@ internal fun MainViewModel.handleHostPlaybackEngineFailure(error: Throwable) {
     stopHostMonitorPlayback()
     _uiState.value = _uiState.value.copy(lastError = message)
     reportRustHostPlaybackFailure(message)
-    currentStreamId?.let { failedStreamId ->
+    hostPlayback.streamId?.let { failedStreamId ->
         viewModelScope.launch(hostStreamDispatcher) {
             runCatching {
                 hostTransportController.broadcastStop(

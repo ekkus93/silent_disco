@@ -370,7 +370,7 @@ class HostStreamFailureStopTest {
         val controller = HostPlaylistStreamController(streamer)
         viewModel.hostMonitorPlayback = monitor
         viewModel.hostPlayback.streamer = controller
-        viewModel.currentStreamId = StreamId(STREAM_ID)
+        viewModel.hostPlayback.streamId = StreamId(STREAM_ID)
         viewModel._uiState.value = viewModel._uiState.value.copy(hostPlaybackState = PlaybackState.PLAYING)
 
         viewModel.startHostStreamingLoop(

@@ -5,6 +5,7 @@ import com.ekkus.silentdisco.core.rust.RecordedFailure
 import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
 import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformEffect
+import com.ekkus.silentdisco.core.protocol.StreamId
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -39,6 +40,8 @@ class MainViewModelRustHostNotificationRecoveryTest {
         }
         harness.bleService.startAdvertisingFailure = IllegalStateException("bluetooth stack exploded")
         harness.viewModel.ensureRustHostCore()
+        // A stream this device followed as a listener ends with the host session.
+        harness.viewModel.listenerPlaybackController.streamId = StreamId("listener-stream")
         advanceUntilIdle()
 
         harness.hostCoreController.emit(
@@ -61,7 +64,8 @@ class MainViewModelRustHostNotificationRecoveryTest {
         assertThat(harness.viewModel.uiState.value.lastError).isEqualTo(failureMessage)
         assertThat(harness.viewModel.uiState.value.hostDiagnostics.lastError).isEqualTo(failureMessage)
         assertThat(harness.viewModel.currentSessionId).isNull()
-        assertThat(harness.viewModel.currentStreamId).isNull()
+        assertThat(harness.viewModel.hostPlayback.streamId).isNull()
+        assertThat(harness.viewModel.listenerPlaybackController.streamId).isNull()
         assertThat(harness.bleService.stopAdvertisingCallCount).isEqualTo(1)
         assertThat(harness.wifiDirectService.stopCallCount).isEqualTo(1)
 

@@ -178,7 +178,7 @@ internal fun MainViewModel.handleListenerTransportEvent(
         is FfiListenerTransportEvent.TrackBoundary -> handleTransportTrackBoundary(event)
         is FfiListenerTransportEvent.Paused -> {
             listenerPlaybackController.boundaries.cancelTimers()
-            if (currentStreamId?.value == event.streamId) {
+            if (listenerPlaybackController.streamId?.value == event.streamId) {
                 withdrawListenerTrackBoundariesAfter(event.hostPauseTimeMs.toLong())
             }
             propagateListenerPlaybackState(
@@ -196,8 +196,8 @@ internal fun MainViewModel.handleListenerTransportEvent(
 private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTransportEvent.StreamStarted) {
     val session = _uiState.value.selectedSession ?: return
     val streamId = StreamId(event.streamId)
-    val isSameStream = currentStreamId == streamId
-    currentStreamId = streamId
+    val isSameStream = listenerPlaybackController.streamId == streamId
+    listenerPlaybackController.streamId = streamId
     _uiState.value = _uiState.value.copy(
         listenerCurrentTrackName = listenerTrackNameAfterStreamStart(
             isSameStream = isSameStream,
@@ -277,7 +277,7 @@ internal fun MainViewModel.handleTransportStreamStopped(hostStopTimeMs: ULong) {
 private fun MainViewModel.handleTransportTrackBoundary(
     event: FfiListenerTransportEvent.TrackBoundary,
 ) {
-    if (currentStreamId?.value != event.streamId) return
+    if (listenerPlaybackController.streamId?.value != event.streamId) return
     val sampleIndex = event.firstSampleIndex.toLong()
     diagnostics.metrics.increment("track_boundary_received")
     listenerPlaybackController.boundaries.add(
@@ -314,7 +314,7 @@ private val MainViewModel.listenerBoundaryContext: ListenerBoundaryContext
                 .takeIf { it.confidence != SyncQualityBadge.UNKNOWN }
                 ?.offsetMs
         override val currentStreamId: String?
-            get() = this@listenerBoundaryContext.currentStreamId?.value
+            get() = listenerPlaybackController.streamId?.value
 
         override fun onScheduled() = diagnostics.metrics.increment("track_boundary_scheduled")
 

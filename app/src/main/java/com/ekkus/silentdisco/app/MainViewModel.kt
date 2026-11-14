@@ -45,7 +45,6 @@ import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.rust.UniFfiHostCoreController
 import com.ekkus.silentdisco.core.rust.UniFfiListenerCoreController
 import com.ekkus.silentdisco.core.protocol.SessionId
-import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.rust.RustDomainStore
 import com.ekkus.silentdisco.core.sync.HostTimingService
 import com.ekkus.silentdisco.core.transport.BleDiscoveryService
@@ -182,7 +181,6 @@ class MainViewModel @JvmOverloads constructor(
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
 
     @Volatile internal var currentSessionId: SessionId? = null
-    internal var currentStreamId: StreamId? = null
     val callbackCaptureStatus: StateFlow<String> get() = diagnostics.captureStatus
     internal var listenerPlayback: FfiListenerPlaybackHandle?
         get() = listenerPlaybackController.runtime

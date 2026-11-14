@@ -1793,3 +1793,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - The host stream loop moved unchanged into `app/controller/HostStreamLoop.kt`; it depends on the playback, monitor and diagnostics controllers, the host transport, a clock and dispatcher, and `HostStreamEnvironment` (UI state reads, host core, broadcasts, boundary scheduling, failure reporting). `MainViewModelHostPlayback.kt` keeps the environment adapter, boundary scheduling and the engine-failure handler.
 - Removing the failure-path `cancelBoundaryTimersFrom` fails `HostStreamFailureStopTest`. 600 JVM tests and the full Android gate (`--max-workers=2`, 6m21s) passed.
 - Left: play/pause/stop/resume and the `currentStreamId` split.
+
+## 2026-11-14T00:40:16Z - claude-opus-5-5 - God-file refactor §4: currentStreamId split
+- `MainViewModel.currentStreamId` is gone: the host uses `hostPlayback.streamId`, the listener `listenerPlaybackController.streamId`. Host session teardown (stop advertising, failed start rollback, failed stop cleanup) clears both, keeping spec A.3 item 1.
+- `MainViewModelRustHostNotificationRecoveryTest` now sets the listener stream id first; removing the listener reset fails it. 600 JVM tests and the full Android gate (`--max-workers=2`, 7m16s) passed.
+- Next: move host stream preparation (open playlist, first packet) into `HostPlaybackController`, then check off the item; then `HostSessionController` and the coordinator clean-up.
