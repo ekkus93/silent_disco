@@ -146,8 +146,8 @@ class TrustedDevicesViewModel internal constructor(
                 _uiState.value = TrustedDevicesUiState(
                     devices = devices,
                     message = if (deleted) {
-                        "This phone will need your approval next time it joins. " +
-                            "If you are hosting now, this applies from your next session."
+                        "This phone will need your approval next time it joins, " +
+                            "including in a session you are hosting now."
                     } else {
                         "That phone was already removed. The list has been refreshed."
                     },

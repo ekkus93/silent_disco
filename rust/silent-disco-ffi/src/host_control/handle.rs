@@ -16,7 +16,6 @@ use silent_disco_core::runtime::{
     ListenerSummary, PlatformEvent, QueueEntry, SessionAdvertisement, SnapshotRevision,
     StorageCompletion, StorageEvent, SynchronizationSummary, TransportEvent,
 };
-use silent_disco_core::transport::secure_trust::HostVerifiedTrust;
 use std::sync::{Arc, Mutex};
 
 #[derive(uniffi::Object)]
@@ -25,7 +24,7 @@ pub struct FfiCoreHandle {
     handle: CoreActorHandle,
     /// The host's durable listener trust, when the app has loaded it. Absent
     /// trust leaves every verified listener session-only.
-    pub(super) host_trust: Mutex<Option<HostVerifiedTrust>>,
+    pub(super) host_trust: Mutex<Option<super::handle_trust::LoadedHostTrust>>,
 }
 
 #[allow(

@@ -1940,3 +1940,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-14T22:33:41Z - claude-opus-5-5 - F1 step 7: desktop Approved-devices UI
 - HostSetupScreen enables trusted_devices mode and the remember checkbox; new `screens/ApprovedDevicesCard.tsx` in Settings lists/revokes remembered listeners (replaces legacy storage.trustedDevices list). App.test mocks `listRememberedListeners`; WorkflowGolden snapshot updated.
 - Gate: npm run check 202. Not launched by hand.
+
+## 2026-11-14T22:53:06Z - claude-opus-5-5 - F1 step 8: Android live revoke
+- FFI `handle_trust.rs`: `LoadedHostTrust {trust, source: Option<TrustSource{client, host der, generation}>}`, static `TRUST_RECORDS_GENERATION` bumped by `trust_records_changed()` (enrol + revoke); `join_trust_state` refreshes when stale, fails closed on read error.
+- Flake seen once under load: ffi `listener_playback::tests::final_diagnostics_survive_the_teardown_that_produced_them` (packets_accepted 5 != 10, asserts before the pump drains). Passed 5/5 isolated and in a full rerun. Not fixed; candidate for §7 test debt.
+- Gates: check-rust 934 (rerun), Android gate.

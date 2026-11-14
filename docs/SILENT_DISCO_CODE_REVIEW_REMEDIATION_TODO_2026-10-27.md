@@ -104,6 +104,11 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 - Tests: `ApprovedDevicesCard.test.tsx` (5: list, empty, confirm-then-revoke and refresh, keep, host failure); setup tests rewritten (mode and remember selectable and saved; restored Approved-only profile reaches review); golden snapshot updated to the new wording.
 - Gate: `npm run check` (202). Not run: the app by hand, and a desktop-host → phone run.
 - **Open:** Android revoke reaching a running session; two-device run (Always allow, host restart, auto-admit; revoke; unknown listener rejected) on Android and desktop hosts.
+**Step 8 done (2026-11-14, local gates; box stays open): Android revoke reaches a running session.**
+- The FFI host keeps the database client its trust came from; every trust-record write through the FFI (Always allow, Settings revoke) bumps a process-wide generation, and the host re-reads its records at its next join when it moved. A failed re-read trusts nobody (fail closed). The Settings message now says the removal applies "including in a session you are hosting now".
+- Test: a revoke through a second database connection (as Settings does) makes the running host's next join session-only without a reload; a closed database fails closed. Mutation (skip the refresh) killed.
+- Gates: `check-rust.sh` (934; the first run hit an unrelated flake, `listener_playback::tests::final_diagnostics_survive_the_teardown_that_produced_them` read `packets_accepted` 5 vs 10 before the pump drained, which passed 5/5 alone and in the full rerun), full Android gate.
+- **Open:** two-device run (Always allow, host restart, auto-admit; revoke mid-session; unknown listener rejected) on Android and desktop hosts.
 - [ ] Validate cryptographic proof of listener identity before projecting Trusted/Untrusted. Update Rust FFI admission inputs and Android MainViewModelRustHost join mapping; never hard-code TRUSTED.
 - [ ] Update desktop host_join_projection to resolve verified host-owned trust records instead of unconditional SessionOnly; ensure Android/desktop policy parity.
 - [ ] Wire Always allow / Approve once / revoke, first enrollment, host restart, listener reconnect, profile switch and lost-key re-enrollment with accurate user-visible status.

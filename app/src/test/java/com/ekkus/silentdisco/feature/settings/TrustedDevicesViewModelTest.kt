@@ -75,7 +75,8 @@ class TrustedDevicesViewModelTest {
 
         assertThat(store.deletedDeviceIds).containsExactly(removed.deviceId)
         assertThat(viewModel.uiState.value.devices).containsExactly(remaining)
-        assertThat(viewModel.uiState.value.message).contains("need your approval next time it joins")
+        assertThat(viewModel.uiState.value.message)
+            .contains("next time it joins, including in a session you are hosting now")
     }
 
     @Test

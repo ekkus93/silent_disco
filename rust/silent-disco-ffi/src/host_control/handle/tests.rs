@@ -147,6 +147,7 @@ mod legacy_v3_trust_boundary_tests {
     use silent_disco_core::transport::secure_identity::{
         PendingListenerProof, VerifiedListenerKey,
     };
+    use silent_disco_core::transport::secure_trust::HostVerifiedTrust;
 
     struct NoopObserver;
 
@@ -358,6 +359,83 @@ mod legacy_v3_trust_boundary_tests {
 
     /// "Always allow" for a verified listener writes its record and trusts its
     /// next join; a claimed legacy ID is refused and nothing is stored.
+    #[test]
+    fn a_revoke_elsewhere_reaches_a_running_host_at_its_next_join() {
+        use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};
+        let (host, _listener, verified) = verified_listener();
+        let device = verified.canonical_device_id();
+        let directory = std::env::temp_dir().join(format!(
+            "sd-ffi-live-revoke-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        let worker = DatabaseWorker::start(
+            DatabaseConfig::new(directory.join("trust.sqlite3")).expect("config"),
+        )
+        .expect("database worker");
+        // The Settings screen writes through its own database connection.
+        let settings_worker = DatabaseWorker::start(
+            DatabaseConfig::new(directory.join("trust.sqlite3")).expect("config"),
+        )
+        .expect("second connection");
+        let handle = FfiCoreHandle::open("live-revoke-host".to_owned(), Arc::new(NoopObserver))
+            .expect("open core");
+        crate::host_control::handle_trust::enroll_verified_listener(
+            &handle,
+            &worker.client(),
+            &host,
+            device.as_str(),
+            "Kitchen",
+            5,
+        )
+        .expect("enrols");
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::Trusted
+        );
+
+        assert!(
+            crate::verified_listeners::revoke_verified_listener(
+                &settings_worker.client(),
+                &host,
+                device.as_str(),
+                9,
+            )
+            .expect("revokes")
+        );
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::SessionOnly,
+            "the running host re-reads its records at the next join"
+        );
+
+        // A host that can no longer read its records trusts nobody.
+        crate::host_control::handle_trust::enroll_verified_listener(
+            &handle,
+            &worker.client(),
+            &host,
+            device.as_str(),
+            "Kitchen",
+            10,
+        )
+        .expect("re-enrols");
+        worker.stop_and_join().expect("database closes");
+        crate::host_control::trust_records_changed();
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::SessionOnly,
+            "an unreadable record store fails closed"
+        );
+        handle.shutdown().expect("shutdown");
+        settings_worker
+            .stop_and_join()
+            .expect("second connection closes");
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
     #[test]
     fn always_allow_enrolls_only_a_key_bound_listener() {
         use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};

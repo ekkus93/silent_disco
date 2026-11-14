@@ -4,6 +4,7 @@ mod handle_trust;
 mod types;
 
 pub use handle::FfiCoreHandle;
+pub(crate) use handle_trust::trust_records_changed;
 pub use types::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCommandReceipt,
     FfiCoreDiagnostic, FfiCoreError, FfiCoreNotification, FfiCoreObserver, FfiCoreSnapshot,
