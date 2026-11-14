@@ -28,8 +28,9 @@ import type {
   NetworkInterfaceSnapshotDto,
   OpenProfileRequest,
   OpenProfileResponse,
-  RevisionCommandRequest,
+  RememberedListenerDto,
   ReorderHostQueueRequest,
+  RevisionCommandRequest,
   SetNetworkBindPreferenceRequest,
   StorageInspectionDto,
   UpdateHostDraftRequest,
@@ -414,6 +415,16 @@ export async function setAllowSharedAddressSpace(
   allow: boolean,
 ): Promise<NetworkInterfaceSnapshotDto> {
   return invokeDesktop<NetworkInterfaceSnapshotDto>("set_allow_shared_address_space", { allow });
+}
+
+/// The listeners this host remembered with "Always allow", oldest first.
+export async function listRememberedListeners(): Promise<RememberedListenerDto[]> {
+  return invokeDesktop<RememberedListenerDto[]>("list_remembered_listeners");
+}
+
+/// Revokes a remembered listener. Resolves `false` if it was not trusted.
+export async function revokeRememberedListener(deviceId: string): Promise<boolean> {
+  return invokeDesktop<boolean>("revoke_remembered_listener", { deviceId });
 }
 
 export async function setSecureTransport(enabled: boolean): Promise<NetworkInterfaceSnapshotDto> {

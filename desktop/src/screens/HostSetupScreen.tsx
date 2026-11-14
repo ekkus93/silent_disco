@@ -8,6 +8,7 @@ import {
 } from "../app/selectors";
 import { useAppDispatch, useAppSelector } from "../app/store";
 import { uiActions } from "../app/uiSlice";
+import { ErrorAlert } from "../components/ErrorAlert";
 import {
   addHostAudioSources,
   createHostSession,
@@ -19,7 +20,6 @@ import {
 } from "../core/client";
 import type { UpdateHostDraftRequest } from "../core/generated/desktop-bindings";
 import { HostNetworkReadinessSummary } from "./HostNetworkReadinessSummary";
-import { ErrorAlert } from "../components/ErrorAlert";
 
 type ApprovalMode = "manual" | "trusted_devices" | "invite_code";
 
@@ -155,11 +155,7 @@ export function HostSetupScreen() {
   const lifecycleAllowsSetup =
     snapshot.hostLifecycle === "idle" || snapshot.hostLifecycle === "error";
   const canSubmit = snapshot.selectedRole === "host" && lifecycleAllowsSetup && !pending;
-  // This host cannot remember listeners yet. Never offer or silently persist
-  // "always allow" semantics it would not honour.
-  const unverifiedTrust = draft.approvalMode === "trusted_devices" || draft.rememberApprovedDevices;
-  const canCreate =
-    canSubmit && !dirty && !unverifiedTrust && snapshot.canCreateHostSession && networkReady;
+  const canCreate = canSubmit && !dirty && snapshot.canCreateHostSession && networkReady;
   const createPending = pendingCommands.some(
     (command) => command.commandKind === "create_host_session",
   );
@@ -168,7 +164,6 @@ export function HostSetupScreen() {
   );
 
   const submitDraft = async () => {
-    if (unverifiedTrust) return false;
     const request: UpdateHostDraftRequest = {
       expectedRevision: snapshot.revision,
       sessionName: draft.sessionName,
@@ -195,9 +190,7 @@ export function HostSetupScreen() {
   };
 
   const continueSetup = async () => {
-    // The Music step must still let an old profile reach Access to repair
-    // its unsupported trust settings; only leaving Access is blocked.
-    if (pending || (setupStage === "access" && unverifiedTrust)) return;
+    if (pending) return;
     if (dirty && !(await submitDraft())) return;
     setSetupStage((stage) => (stage === "music" ? "access" : "ready"));
   };
@@ -223,7 +216,6 @@ export function HostSetupScreen() {
   };
 
   const createSession = async () => {
-    if (unverifiedTrust) return;
     try {
       const receipt = await createHostSession(snapshot.revision);
       dispatch(
@@ -352,14 +344,12 @@ export function HostSetupScreen() {
                 className="mt-2 w-full rounded-xl border border-violet-200/25 bg-slate-950 px-3 py-2"
               >
                 <option value="manual">Approve each listener</option>
-                <option value="trusted_devices" disabled>
-                  Approved devices only (unavailable until secure transport)
-                </option>
+                <option value="trusted_devices">Approved devices only</option>
                 <option value="invite_code">Require an invite code</option>
               </select>
               <p id="approval-mode-help" className="mt-2 text-sm text-violet-100/70">
-                Approved-device auto-admission requires verified identities and is unavailable on
-                this plaintext LAN transport.
+                Approved devices only admits listeners you approved with "Always allow" over the
+                secure connection. Anyone else is turned away.
               </p>
             </div>
           ) : null}
@@ -394,7 +384,6 @@ export function HostSetupScreen() {
               <input
                 aria-describedby="remember-approved-devices-help"
                 aria-label="Remember approved devices"
-                disabled={!draft.rememberApprovedDevices}
                 type="checkbox"
                 checked={draft.rememberApprovedDevices}
                 onChange={(event) => {
@@ -409,18 +398,11 @@ export function HostSetupScreen() {
                   className="mt-1 block text-sm text-violet-100/65"
                   id="remember-approved-devices-help"
                 >
-                  This host can't remember listeners yet. If an old profile enabled this, uncheck it
-                  before continuing.
+                  When you approve a listener, also remember it so it can join later sessions
+                  without asking. You can remove it in Settings.
                 </span>
               </span>
             </label>
-          ) : null}
-
-          {unverifiedTrust && setupStage !== "music" ? (
-            <p role="alert" className="rounded-lg border border-amber-300/40 p-3 text-amber-200">
-              This profile asks to remember approved devices, which this host can't do yet. Select
-              manual or invite-code approval and turn off remembered devices before continuing.
-            </p>
           ) : null}
 
           {setupStage === "ready" ? (
@@ -434,7 +416,7 @@ export function HostSetupScreen() {
                 {draft.approvalMode === "manual"
                   ? "Approve each listener"
                   : draft.approvalMode === "trusted_devices"
-                    ? "Trusted devices"
+                    ? "Approved devices only"
                     : "Invite code required"}
               </p>
               {draft.approvalMode === "invite_code" ? (
@@ -479,7 +461,7 @@ export function HostSetupScreen() {
                 </button>
                 <button
                   type="submit"
-                  disabled={!canSubmit || unverifiedTrust}
+                  disabled={!canSubmit}
                   className="sd-workflow-control rounded-sd-control bg-sd-secondary-container px-4 py-2 font-semibold text-sd-on-secondary-container disabled:opacity-40"
                 >
                   Review session

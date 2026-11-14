@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
-import { StrictMode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { Provider } from "react-redux";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -184,17 +184,25 @@ describe("HostSetupScreen", () => {
     expect(screen.getByRole("button", { name: "Start hosting" })).toBeInTheDocument();
   });
 
-  it("disables unverified approved-only admission and remembered identities on plaintext v3", () => {
+  it("offers approved-only admission and remembering approved devices", async () => {
     renderScreen();
     fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
-    expect(screen.getByRole("option", { name: /Approved devices only/ })).toBeDisabled();
-    expect(screen.getByLabelText("Remember approved devices")).toBeDisabled();
-    expect(
-      screen.getByText(/Approved-device auto-admission requires verified identities/),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Approved devices only" })).toBeEnabled();
+    expect(screen.getByLabelText("Remember approved devices")).toBeEnabled();
+    expect(screen.getByText(/Anyone else is turned away/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Listener approval"), {
+      target: { value: "trusted_devices" },
+    });
+    fireEvent.click(screen.getByLabelText("Remember approved devices"));
+    fireEvent.click(screen.getByRole("button", { name: "Review session" }));
+    await waitFor(() =>
+      expect(updateHostDraft).toHaveBeenCalledWith(
+        expect.objectContaining({ approvalMode: "trusted_devices", rememberApprovedDevices: true }),
+      ),
+    );
   });
 
-  it("blocks restored unverified trust until the host explicitly chooses safe settings", async () => {
+  it("lets a restored approved-only profile continue to review", () => {
     const old = snapshot();
     renderScreen(
       snapshot({
@@ -206,20 +214,11 @@ describe("HostSetupScreen", () => {
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("remember approved devices");
-    expect(screen.getByRole("button", { name: "Review session" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Listener approval"), {
-      target: { value: "manual" },
-    });
-    fireEvent.click(screen.getByLabelText("Remember approved devices"));
-    expect(screen.getByLabelText("Remember approved devices")).toBeDisabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review session" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Review session" }));
-    await waitFor(() =>
-      expect(updateHostDraft).toHaveBeenCalledWith(
-        expect.objectContaining({ approvalMode: "manual", rememberApprovedDevices: false }),
-      ),
-    );
+    expect(screen.getByRole("heading", { name: "Ready to host" })).toBeInTheDocument();
+    expect(screen.getByText("Approved devices only")).toBeInTheDocument();
   });
 
   it("shows invite-code controls only for invite-code approval", () => {

@@ -1936,3 +1936,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - New core `secure_trust_store` shared by FFI and desktop. Desktop: `platform/verified_trust.rs` (registry + DB), `HostAdmission{secure_v4, trust}` threaded through `DesktopHostTransportRuntime::start_with_admission` -> processor -> join projection; effects allow trusted_for_future only when `can_remember_listeners()`; storage runner PersistTrustedDevice -> `trust.remember`; `trust_commands.rs` list/revoke commands.
 - Desktop revoke is live (registry reloaded); Android revoke still applies next session.
 - Gates: check-rust 933, desktop clippy+tests 430, npm check 197, Android gate. Next: desktop UI (HostSetupScreen mode + Settings list/revoke).
+
+## 2026-11-14T22:33:41Z - claude-opus-5-5 - F1 step 7: desktop Approved-devices UI
+- HostSetupScreen enables trusted_devices mode and the remember checkbox; new `screens/ApprovedDevicesCard.tsx` in Settings lists/revokes remembered listeners (replaces legacy storage.trustedDevices list). App.test mocks `listRememberedListeners`; WorkflowGolden snapshot updated.
+- Gate: npm run check 202. Not launched by hand.

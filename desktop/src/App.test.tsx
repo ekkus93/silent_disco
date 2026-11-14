@@ -66,6 +66,7 @@ vi.mock("./core/client", async () => {
     getLabState: getLabStateMock,
     getStorageInspection: getStorageInspectionMock,
     getHostDiagnostics: getHostDiagnosticsMock,
+    listRememberedListeners: vi.fn().mockResolvedValue([]),
   };
 });
 

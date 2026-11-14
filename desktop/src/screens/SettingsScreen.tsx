@@ -20,6 +20,7 @@ import {
   readProfileIdPreference,
   saveProfileIdPreference,
 } from "../core/profilePreference";
+import { ApprovedDevicesCard } from "./ApprovedDevicesCard";
 import { HostNetworkPolicyCard } from "./HostNetworkPolicyCard";
 
 /// App-wide configuration.
@@ -183,33 +184,7 @@ export function SettingsScreen() {
         ) : null}
       </Panel>
 
-      <Panel title="Trusted devices">
-        {storage && storage.trustedDevices.length === 0 ? (
-          <p className="text-sm text-slate-300">
-            No devices have been trusted for this profile yet.
-          </p>
-        ) : null}
-        {storage && storage.trustedDevices.length > 0 ? (
-          <ul className="flex flex-col gap-2">
-            {storage.trustedDevices.map((device) => (
-              <li
-                key={device.deviceId}
-                className="rounded-lg bg-slate-900 p-3 text-sm text-slate-100"
-              >
-                <p className="font-semibold">{device.displayName}</p>
-                <p className="mt-1 break-all font-mono text-xs text-slate-400">{device.deviceId}</p>
-                <p className="mt-1 text-xs text-slate-300">
-                  {device.trustState}
-                  {device.hasPublicKey ? " · public key stored" : " · no public key"}
-                </p>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {!storage && !storageError ? (
-          <p className="text-sm text-slate-300">Loading trusted devices…</p>
-        ) : null}
-      </Panel>
+      <ApprovedDevicesCard />
 
       <Panel title="About">
         {diagnosticsError ? (

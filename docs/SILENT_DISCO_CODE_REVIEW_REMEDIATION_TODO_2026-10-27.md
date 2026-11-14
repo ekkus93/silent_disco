@@ -98,6 +98,12 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 - Tests: core store (2), desktop store (1), storage runner (verified record; claimed ID refused; DB failure), real loopback QUIC (stranger session-only → Always allow delivered as remembered → connects Trusted; remembered listener joins Trusted; mutation ignoring the records killed), profile reopen + revoke via the commands.
 - Gates: `check-rust.sh` (933), desktop clippy + `cargo test` (430), `npm run check` (197), full Android gate.
 - **Open:** desktop UI (enable Approved-devices mode in HostSetupScreen; Settings list/revoke replacing the legacy trusted-devices list); Android revoke reaching a running session; two-device run.
+**Step 7 done (2026-11-14, local gates; box stays open): desktop UI.**
+- `HostSetupScreen` offers "Approved devices only" and "Remember approved devices" (help text: only listeners approved with Always allow over the secure connection; anyone else is turned away); the old unverified-trust block, alert and greyed-out controls are removed.
+- Settings shows `ApprovedDevicesCard` (from `list_remembered_listeners`; "Remove approval" → confirm → `revoke_remembered_listener` → list refreshed) instead of the legacy claimed-ID trusted-devices list.
+- Tests: `ApprovedDevicesCard.test.tsx` (5: list, empty, confirm-then-revoke and refresh, keep, host failure); setup tests rewritten (mode and remember selectable and saved; restored Approved-only profile reaches review); golden snapshot updated to the new wording.
+- Gate: `npm run check` (202). Not run: the app by hand, and a desktop-host → phone run.
+- **Open:** Android revoke reaching a running session; two-device run (Always allow, host restart, auto-admit; revoke; unknown listener rejected) on Android and desktop hosts.
 - [ ] Validate cryptographic proof of listener identity before projecting Trusted/Untrusted. Update Rust FFI admission inputs and Android MainViewModelRustHost join mapping; never hard-code TRUSTED.
 - [ ] Update desktop host_join_projection to resolve verified host-owned trust records instead of unconditional SessionOnly; ensure Android/desktop policy parity.
 - [ ] Wire Always allow / Approve once / revoke, first enrollment, host restart, listener reconnect, profile switch and lost-key re-enrollment with accurate user-visible status.
