@@ -1880,3 +1880,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - New `quic_on_wire_tests` (UDP relay between real v4 listener and host workers): tampered packets (byte flipped in the AEAD tag) never deliver anything and the connection ends; duplicated packets deliver each control frame once in order and no datagram twice. Sanity check: a relay that does not tamper fails the tamper test.
 - Closed the §1 negative-test item with existing evidence mapped per category; nonce/sequence wrap on v4 is QUIC's (62-bit packet numbers), stated as such.
 - Gates: core fmt, clippy -D warnings, all core tests (732) passed; only test code changed.
+
+## 2026-11-14T15:23:53Z - claude-opus-5-5 - Remediation §1 encrypted integration: v4 through the native callback
+- `callback_pcm_tests` now runs the production transport -> FFI -> scheduler -> native callback scenario over both v3 sockets and v4 QUIC (`quic_pcm_callback_is_sample_exact_...`); corrupting one v4 PCM byte in the listener fails only the QUIC variant. New `quic_admission_tests::each_listener_connection_to_one_host_has_its_own_keys`.
+- `check-rust.sh` passed (915 tests). The item stays open only for an unmeasured CPU cost.

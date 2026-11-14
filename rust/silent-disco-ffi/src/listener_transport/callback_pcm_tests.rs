@@ -1,4 +1,5 @@
-//! Real production socket -> FFI -> scheduler -> native callback PCM proof.
+//! Real production transport -> FFI -> scheduler -> native callback PCM
+//! proof, once over plaintext v3 sockets and once over secure v4 QUIC.
 //! Software-only: does not claim Oboe/DAC or physical output continuity.
 use super::{FfiListenerTransportHandle, Inner};
 use crate::audio_abi::{
@@ -13,9 +14,14 @@ use silent_disco_core::domain::{
 use silent_disco_core::protocol::{
     AudioCodec, AudioDatagram, ControlMessage, ProtocolFrame, StreamStart, TrackBoundary,
 };
+use silent_disco_core::transport::quic_transport_factory::QuicTransportFactory;
+use silent_disco_core::transport::secure_control_tls::host_tls_identity_from_pkcs8;
+use silent_disco_core::transport::secure_identity::device_id_for_listener_key;
+use silent_disco_core::transport::secure_listener_proof::ListenerProofSigner;
 use silent_disco_core::transport::{
-    HostTransportConfig, ListenerTransportConfig, ManualTransportClock, SocketTransportFactory,
-    TransportChannel, TransportClock, TransportEvent, TransportFactory,
+    HostTransportConfig, HostTransportNode, ListenerTransportConfig, ListenerTransportNode,
+    ManualTransportClock, SecureHostTarget, SocketTransportFactory, TransportChannel,
+    TransportClock, TransportEvent, TransportFactory,
 };
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
@@ -24,29 +30,97 @@ use std::time::{Duration, Instant};
 const PACKET_FRAMES: u32 = 240;
 const START_MS: u64 = 2_000;
 
+#[derive(Clone, Copy)]
+enum Wire {
+    /// Plaintext v3 TCP control and UDP PCM.
+    Socket,
+    /// Secure v4 QUIC: pinned host key, proven listener key, PCM in DATAGRAMs.
+    Quic,
+}
+
 #[test]
+fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retirement() {
+    pcm_callback_is_sample_exact_across_track_boundary_and_engine_retirement(Wire::Socket);
+}
+
+/// The same end-to-end scenario over v4. QUIC encrypts and authenticates
+/// every packet with keys of its own per connection.
+#[test]
+fn quic_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retirement() {
+    pcm_callback_is_sample_exact_across_track_boundary_and_engine_retirement(Wire::Quic);
+}
+
+/// A bound host and a connected listener for `wire`, with the listener's
+/// device ID (key-bound on v4).
+fn transports(
+    wire: Wire,
+    session: &SessionId,
+    clock: &Arc<ManualTransportClock>,
+) -> (
+    Box<dyn HostTransportNode>,
+    Box<dyn ListenerTransportNode>,
+    DeviceId,
+) {
+    match wire {
+        Wire::Socket => {
+            let device = DeviceId::new("callback-listener").expect("device");
+            let host = SocketTransportFactory
+                .bind_host(
+                    HostTransportConfig::loopback(session.clone()),
+                    clock.clone(),
+                )
+                .expect("production TCP/UDP host");
+            let listener = SocketTransportFactory
+                .connect_listener(
+                    ListenerTransportConfig::loopback(
+                        session.clone(),
+                        device.clone(),
+                        host.endpoint(),
+                    ),
+                    clock.clone(),
+                )
+                .expect("production TCP/UDP listener");
+            (host, listener, device)
+        }
+        Wire::Quic => {
+            use p256::ecdsa::SigningKey;
+            use p256::pkcs8::EncodePrivateKey;
+            let host_key = SigningKey::from_slice(&[21; 32]).expect("host key");
+            let identity = Arc::new(
+                host_tls_identity_from_pkcs8(host_key.to_pkcs8_der().expect("pkcs8").as_bytes())
+                    .expect("host identity"),
+            );
+            let listener_key = SigningKey::from_slice(&[22; 32]).expect("listener key");
+            let device = device_id_for_listener_key(&listener_key.spki_der().expect("spki"));
+            let mut host_config = HostTransportConfig::loopback(session.clone());
+            host_config.secure_control = Some(Arc::clone(&identity));
+            let host = QuicTransportFactory
+                .bind_host(host_config, clock.clone())
+                .expect("production v4 QUIC host");
+            let mut listener_config =
+                ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint());
+            listener_config.secure_host = Some(SecureHostTarget {
+                host_spki: identity.spki.clone(),
+                signer: Arc::new(listener_key),
+            });
+            let listener = QuicTransportFactory
+                .connect_listener(listener_config, clock.clone())
+                .expect("production v4 QUIC listener");
+            (host, listener, device)
+        }
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
-    reason = "single end-to-end TCP/UDP through native callback scenario keeps sample and lifecycle assertions together"
+    reason = "single end-to-end transport through native callback scenario keeps sample and lifecycle assertions together"
 )]
-fn socket_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retirement() {
+fn pcm_callback_is_sample_exact_across_track_boundary_and_engine_retirement(wire: Wire) {
     let _guard = registry_test_guard();
     let session = SessionId::new("callback-session").expect("session");
     let stream = StreamId::new("callback-stream").expect("stream");
-    let device = DeviceId::new("callback-listener").expect("device");
     let clock = Arc::new(ManualTransportClock::new(0));
-    let mut host = SocketTransportFactory
-        .bind_host(
-            HostTransportConfig::loopback(session.clone()),
-            clock.clone(),
-        )
-        .expect("production TCP/UDP host");
-    let listener = SocketTransportFactory
-        .connect_listener(
-            ListenerTransportConfig::loopback(session.clone(), device.clone(), host.endpoint()),
-            clock.clone(),
-        )
-        .expect("production TCP/UDP listener");
+    let (mut host, listener, device) = transports(wire, &session, &clock);
     let routes = listener.local_routes();
     let transport_clock: Arc<dyn TransportClock> = clock;
     let handle = FfiListenerTransportHandle {

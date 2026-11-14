@@ -243,3 +243,54 @@ fn a_proof_bound_to_another_connection_is_refused() {
         );
     });
 }
+
+/// Two listeners on one host get independent keys: each QUIC connection
+/// derives its own secrets, so its exporter value (what a listener's proof is
+/// bound to) differs between connections while both ends of one agree.
+#[test]
+fn each_listener_connection_to_one_host_has_its_own_keys() {
+    let identity = host(31);
+    runtime().block_on(async {
+        let server = quinn::Endpoint::server(
+            quic_server_config(&identity).expect("server"),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        )
+        .expect("server endpoint");
+        let address = server.local_addr().expect("address");
+        let mut bindings = Vec::new();
+        for _ in 0..2 {
+            let mut client = quinn::Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+                .expect("client endpoint");
+            client.set_default_client_config(quic_client_config(&identity.spki).expect("client"));
+            let accepting = server.clone();
+            let host_side = tokio::spawn(async move {
+                accepting
+                    .accept()
+                    .await
+                    .expect("incoming")
+                    .await
+                    .expect("host handshake")
+            });
+            let listener = tokio::time::timeout(
+                STEP,
+                client.connect(address, HOST_SERVER_NAME).expect("connect"),
+            )
+            .await
+            .expect("handshake in time")
+            .expect("listener handshake");
+            let host_end = host_side.await.expect("host task");
+            let listener_binding = quic_binding(&listener).expect("listener exporter");
+            assert_eq!(
+                listener_binding,
+                quic_binding(&host_end).expect("host exporter"),
+                "both ends of one connection derive the same secret"
+            );
+            bindings.push(listener_binding);
+            listener.close(0_u32.into(), b"done");
+        }
+        assert_ne!(
+            bindings[0], bindings[1],
+            "two listeners must not share connection keys"
+        );
+    });
+}
