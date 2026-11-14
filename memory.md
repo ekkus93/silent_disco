@@ -1814,3 +1814,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Folded and deleted 5 pure-forwarding files (Support, RustListenerNetwork, RustHostEvents, CallbackCapture, HostMonitorPlayback); removed dead `generateSyntheticPackets` and `ensureListenerTransportEventLoop`. 16 extension files remain; `MainViewModel.kt` 772 lines; its only state is `_uiState` plus 5 forwarding accessors.
 - Handoff §55: T1–T3 timing state logged (TODO §5), Rust near-limit watchlist with line counts (TODO §7), open finding that the v4 Android host still refuses durable trust with the v3-worded `LEGACY_V3_DURABLE_TRUST_ERROR`. §6 marked deferred to the UI redesign.
 - 607 JVM tests and the full Android gate (`--max-workers=2`, 3m14s) passed. Next: §8 close-out on the A54.
+
+## 2026-11-14T03:58:10Z - claude-opus-5-5 - God-file refactor close-out: A54 suite and device run
+- Full A54 instrumented suite at `de8a504e`: 180 tests, the same 4 known layout failures, 1 skipped; nothing new; app kept installed.
+- Device run 1 failed in the environment: the phone got "no QUIC answer ... within 3 s" from 192.168.5.48:45825; ping and UDP both ways worked afterwards; no Rust/desktop change since run 14; cause not established. Run 2 passed: late join 2,999 fully delivered (Good, RTT 26 ms), 0 listeners during the 12 s drop, rejoin 4,006 fully delivered (Excellent, RTT 17 ms); phone session 2: 4,005 accepted, 1 concealed, 0 late. Session 1's 102 concealed frames are the drop itself.
+- How a stuck-looking phone was diagnosed: the error was below the fold on the manual-connect screen (scroll, then `uiautomator dump`); a thread dump via `adb shell run-as com.ekkus.silentdisco kill -3 <pid>` lands in `/data/anr/trace_N`, readable only through `adb bugreport`.
+- Handoff §56 records the close-out. TODO §§0–5, 7, 8 done; §6 deferred to the UI redesign. Not yet asked: whether CLAUDE.md should list the refactor spec.

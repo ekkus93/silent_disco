@@ -80,7 +80,7 @@ For each item:
 
 ## 8. Close-out
 
-- [ ] Full instrumented suite on the A54 with no new failures against the §2 baseline.
-- [ ] A54 device run: `manual_real_android_listener_late_joins_and_reconnects_over_secure_transport`, which needs one QR scan from the owner.
-- [ ] Final survey: no type holds mutable state for more than one responsibility, and no file mixes responsibilities. Update the CLAUDE.md "Authoritative migration documents" list if the owner wants this spec referenced there.
-- [ ] Handoff section and `memory.md` entry with the gates actually run.
+- [x] Full instrumented suite on the A54 with no new failures against the §2 baseline. (2026-11-14 at `de8a504e`: 180 tests, 4 failed, 1 skipped; the same 4 known layout failures, nothing new.)
+- [x] A54 device run: `manual_real_android_listener_late_joins_and_reconnects_over_secure_transport`, which needs one QR scan from the owner. (2026-11-14 at `de8a504e`: run 1 failed in the environment, run 2 passed; handoff §56.)
+- [x] Final survey: no type holds mutable state for more than one responsibility, and no file mixes responsibilities (handoff §56.3). Update the CLAUDE.md "Authoritative migration documents" list if the owner wants this spec referenced there (not yet asked; left unchanged).
+- [x] Handoff section and `memory.md` entry with the gates actually run (handoff §56, memory 2026-11-14T03:58:10Z).

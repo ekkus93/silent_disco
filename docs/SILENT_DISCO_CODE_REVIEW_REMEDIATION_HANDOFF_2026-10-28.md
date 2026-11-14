@@ -1005,3 +1005,54 @@ Rule: the next change that adds lines to any of these splits it by responsibilit
 ### 55.3 Open finding (behaviour unchanged by the refactor)
 
 The Android host now runs secure transport v4, but it still refuses durable listener trust. A "trust for future" approval reports a failed delivery, and `PersistTrustedDevice` fails, both with `LEGACY_V3_DURABLE_TRUST_ERROR`. The text still says v3. Proper v4 trust needs verified, host-scoped listener key storage on Android. Until then, the refusal is the safe behaviour, but the message should stop saying v3.
+
+## 56. 2026-11-14 — God-file refactor close-out (TODO §8)
+
+### 56.1 Full instrumented suite on the A54
+
+At `de8a504e`, with `-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true`: 180 tests, 4 failed, 1 skipped. The 4 failures are the known layout ones (§53.3: `AdaptiveLayoutRemainingCoverageTest` ×3, `SessionJoinPinnedStatusTest` ×1). Nothing new, and the app stayed installed.
+
+### 56.2 A54 late-join and reconnect device run
+
+Setup: desktop v4 host on 192.168.5.48, the A54 on 192.168.4.191, same private /21 LAN, no shared-address opt-in. Invocation as in §51.
+
+**Run 1 failed in the environment, not the app.**
+- The scan, the verified invitation and Connect all worked.
+- The phone showed "no QUIC answer from 192.168.5.48:45825 within 3 s", and the host timed out after 8 minutes without a join.
+- Afterwards ping and plain UDP worked in both directions between the two machines.
+- Nothing in Rust or the desktop has changed since run 14 (`fe6d7dd4`). On the Android side, the refactor only renamed fields in the manual-connect path.
+- The cause of the missing first QUIC answer is not established. Worth watching: the 3 s first-handshake window may be tight on a busy LAN.
+
+**Run 2 passed** (host 192.168.5.48:40360, same key-bound ID `v4-17dc809d…` as run 14).
+
+| Phase | Host side | Phone side |
+| --- | --- | --- |
+| Late join, 15 s | 2,999 frames fully delivered, 0 partial, 0 undelivered; sync Good, RTT 26 ms | — |
+| 12 s Wi-Fi drop | 0 listeners while the phone was offline | Session 1 summary: 3,009 accepted, 102 concealed (the frames lost at the drop), 0 late, 1 hard resync |
+| Rejoin, 20 s | 4,006 frames fully delivered; sync Excellent, RTT 17 ms | — |
+| Stop | Logged `Stopped` | Session 2 summary: 4,005 accepted, 1 concealed, 0 late, 0 hard resyncs; graceful close 30 ms after the stop |
+
+No second scan was needed for the rejoin.
+
+### 56.3 Final survey
+
+`MainViewModel.kt` is 772 lines. Its only state is `_uiState`, plus five forwarding accessors to controller state.
+
+Each controller under `app/controller/` holds the state for one responsibility:
+- diagnostics
+- persistence
+- discovery
+- host monitor
+- listener playback, with its track boundaries
+- listener session
+- host playback, with staging and the stream loop
+- host session
+
+The largest controller file is 500 lines (`HostSessionController.kt`).
+
+The 16 remaining `MainViewModel*.kt` files are coordinator code, each split by responsibility, per the owner's decision of 2026-11-14 (TODO §4). `SilentDiscoApp` (§6) is deferred to the UI redesign.
+
+Open items:
+- The v3-worded durable-trust refusal (§55.3).
+- The Rust watchlist (§55.2).
+- The run 1 first-handshake miss above.
