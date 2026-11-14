@@ -1830,3 +1830,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Seams: plain-Kotlin fakes moved to `app/src/sharedTest/java` (compiled into test and androidTest); `SilentDiscoApp(navController = rememberNavController())` parameter.
 - Test lessons: create the `TestNavHostController` with `remember`; gate the fake store's `initialize` until after the first frame, or the startup NavigateHome effect runs before the NavHost sets its graph (possible latent race if real storage ever opened within the first frame); invoke `SemanticsActions.OnClick` directly because snackbars cover bottom-anchored buttons; starting a host stages audio first, so a fake content URI fails visibly before the core is called.
 - Never tap delete actions in app-level instrumented tests: P2ViewModel uses the phone's real trusted-hosts store.
+
+## 2026-11-14T10:10:02Z - claude-opus-5-5 - God-file refactor §6.2: feature nav graphs
+- 14 feature destinations moved verbatim into `hostNavGraph`, `listenerNavGraph`, `settingsNavGraph` (app package) with an `AppNavContext` (view-models, State-backed UI state getters read in composition, app-level actions). Startup/Home stay in `SilentDiscoApp` (544 lines, was 769).
+- Wiring test passed on the A54; removing the listener graph call fails it. Full Android gate passed.
+- Pitfall: an unused-import prune must keep `androidx.compose.runtime.getValue`/`setValue`, which `by` delegation uses implicitly.

@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
@@ -19,14 +18,13 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -37,26 +35,11 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.model.AppRole
-import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.transport.DiscoveryLifecycleController
-import com.ekkus.silentdisco.feature.diagnostics.ConnectionHelpScreen
-import com.ekkus.silentdisco.feature.diagnostics.DiagnosticsScreen
 import com.ekkus.silentdisco.feature.home.RoleFirstHomeScreen
-import com.ekkus.silentdisco.feature.host.HostAccessSetupScreen
-import com.ekkus.silentdisco.feature.host.HostDashboardScreen
-import com.ekkus.silentdisco.feature.host.HostMusicSetupScreen
-import com.ekkus.silentdisco.feature.host.HostQueueManagementScreen
-import com.ekkus.silentdisco.feature.host.HostReadyScreen
 import com.ekkus.silentdisco.feature.host.InviteSessionSheet
-import com.ekkus.silentdisco.feature.listener.ListenerPlaybackV2Screen
-import com.ekkus.silentdisco.feature.listener.ManualEndpointScreen
-import com.ekkus.silentdisco.feature.listener.NearbySessionsScreen
-import com.ekkus.silentdisco.feature.listener.SessionJoinScreen
 import com.ekkus.silentdisco.feature.p2.QrHostInvitationDialog
-import com.ekkus.silentdisco.feature.p2.TrustedHostsScreen
 import com.ekkus.silentdisco.feature.p2.VerifiedQrInvitationDialog
-import com.ekkus.silentdisco.feature.settings.SettingsScreen
-import com.ekkus.silentdisco.feature.settings.TrustedDevicesScreen
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesViewModel
 import com.ekkus.silentdisco.feature.startup.StartupGateScreen
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
@@ -74,10 +57,12 @@ fun SilentDiscoApp(
     /** Injectable so instrumented tests can observe and drive navigation; production uses the default. */
     navController: NavHostController = rememberNavController(),
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val captureStatus by viewModel.callbackCaptureStatus.collectAsStateWithLifecycle()
-    val trustedDevicesUiState by trustedDevicesViewModel.uiState.collectAsStateWithLifecycle()
-    val p2UiState by p2ViewModel.uiState.collectAsStateWithLifecycle()
+    val uiStateSource = viewModel.uiState.collectAsStateWithLifecycle()
+    val captureStatusSource = viewModel.callbackCaptureStatus.collectAsStateWithLifecycle()
+    val trustedDevicesUiStateSource = trustedDevicesViewModel.uiState.collectAsStateWithLifecycle()
+    val p2UiStateSource = p2ViewModel.uiState.collectAsStateWithLifecycle()
+    val uiState by uiStateSource
+    val p2UiState by p2UiStateSource
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val discoveryLifecycleController = remember(context) { DiscoveryLifecycleController(context) }
@@ -339,6 +324,24 @@ fun SilentDiscoApp(
         }
     }
 
+    val nav = AppNavContext(
+        viewModel = viewModel,
+        workflowViewModel = workflowViewModel,
+        trustedDevicesViewModel = trustedDevicesViewModel,
+        p2ViewModel = p2ViewModel,
+        navController = navController,
+        uiStateSource = uiStateSource,
+        p2UiStateSource = p2UiStateSource,
+        trustedDevicesUiStateSource = trustedDevicesUiStateSource,
+        captureStatusSource = captureStatusSource,
+        discoveryLifecycleController = discoveryLifecycleController,
+        requestPermissionThen = ::requestPermissionThen,
+        shareSupportReport = ::shareSupportReport,
+        openSystemSettings = ::openSystemSettings,
+        launchQrScanner = ::launchQrScanner,
+        showInviteDialog = { showInviteDialog = true },
+    )
+
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { paddingValues ->
@@ -380,237 +383,9 @@ fun SilentDiscoApp(
                 )
             }
 
-            composable(AppRoutes.HostMusicSetup) {
-                HostMusicSetupScreen(
-                    uiState = uiState,
-                    onBack = { navController.popBackStack() },
-                    onSessionNameChanged = { viewModel.updateHostForm(sessionName = it) },
-                    onChooseAudio = {
-                        requestPermissionThen(PermissionAction.PICK_SETUP_AUDIO)
-                    },
-                    onRemoveAudio = viewModel::removeSetupAudio,
-                    onMoveAudio = viewModel::moveSetupAudio,
-                    onNext = { navController.navigateSingleTop(AppRoutes.HostAccessSetup) },
-                )
-            }
-
-            composable(AppRoutes.HostAccessSetup) {
-                HostAccessSetupScreen(
-                    uiState = uiState,
-                    onBack = { navController.popBackStack() },
-                    onApprovalModeChanged = { mode -> viewModel.updateHostForm(approvalMode = mode) },
-                    onInviteCodeChanged = { code ->
-                        viewModel.updateHostForm(inviteCode = normalizeInviteCode(code))
-                    },
-                    onGenerateCode = { viewModel.updateHostForm(inviteCode = generateInviteCode()) },
-                    onNext = { navController.navigateSingleTop(AppRoutes.HostReady) },
-                )
-            }
-
-            composable(AppRoutes.HostReady) {
-                // Hardware/system Back must discard the same saved Access
-                // submission lock as the toolbar Back action.
-                BackHandler(onBack = navController::returnFromHostReadyToAccess)
-                HostReadyScreen(
-                    uiState = uiState,
-                    onBack = { navController.returnFromHostReadyToAccess() },
-                    onStartSession = viewModel::createHostSession,
-                    onOpenSettings = ::openSystemSettings,
-                    onShareSupportReport = ::shareSupportReport,
-                )
-            }
-
-            composable(AppRoutes.HostDashboard) {
-                BackHandler(onBack = workflowViewModel::requestEndSessionConfirmation)
-                HostDashboardScreen(
-                    uiState = uiState,
-                    onBackRequest = workflowViewModel::requestEndSessionConfirmation,
-                    onInvite = { showInviteDialog = true },
-                    onApproval = { request, action ->
-                        workflowViewModel.handleJoinApproval(viewModel, request, action)
-                    },
-                    onRemoveListener = viewModel::removeListener,
-                    onPlayPause = {
-                        if (uiState.hostPlaybackState == PlaybackState.PLAYING) {
-                            viewModel.pauseHostPlayback()
-                        } else {
-                            viewModel.startHostPlayback()
-                        }
-                    },
-                    onStop = viewModel::stopHostPlayback,
-                    onEndSessionRequest = workflowViewModel::requestEndSessionConfirmation,
-                    onOpenConnectionHelp = {
-                        navController.navigateSingleTop(AppRoutes.ConnectionHelp)
-                    },
-                    onAddDemoJoinRequest = viewModel::addDemoJoinRequest,
-                    onAddSongs = {
-                        requestPermissionThen(PermissionAction.PICK_LIVE_AUDIO)
-                    },
-                    onManageQueue = { navController.navigateSingleTop(AppRoutes.HostQueueManagement) },
-                )
-            }
-
-            composable(AppRoutes.HostQueueManagement) {
-                HostQueueManagementScreen(
-                    uiState = uiState,
-                    onBack = { navController.popBackStack() },
-                    onAddSongs = {
-                        requestPermissionThen(PermissionAction.PICK_LIVE_AUDIO)
-                    },
-                    onReorderQueue = viewModel::reorderLiveQueue,
-                    onRemoveQueueEntry = viewModel::removeLiveQueueEntry,
-                )
-            }
-
-            composable(AppRoutes.NearbySessions) {
-                DisposableEffect(discoveryLifecycleController) {
-                    onDispose {
-                        discoveryLifecycleController.stopDiscovery(workflowViewModel::showTransientMessage)
-                    }
-                }
-                val permissionRequired = !uiState.hasPermissions(PermissionRequestContext.LISTENER_NEARBY)
-                LaunchedEffect(permissionRequired, uiState.isScanning) {
-                    if (!permissionRequired && !uiState.isScanning) viewModel.scanForSessions()
-                }
-                NearbySessionsScreen(
-                    uiState = uiState,
-                    permissionRequired = permissionRequired,
-                    onBack = {
-                        p2ViewModel.cancelRecentSessionCheck()
-                        navController.popBackStack()
-                    },
-                    onRequestPermission = {
-                        requestPermissionThen(PermissionAction.LISTENER_PERMISSION_ONLY)
-                    },
-                    onRefresh = viewModel::scanForSessions,
-                    onSelectSession = { session ->
-                        p2ViewModel.cancelRecentSessionCheck()
-                        viewModel.selectDiscoveredSession(session)
-                        navController.navigateSingleTop(AppRoutes.SessionJoin)
-                    },
-                    onScanQr = ::launchQrScanner,
-                    onConnectManually = {
-                        navController.navigateSingleTop(AppRoutes.ManualConnect)
-                    },
-                    trustedVerifiedSessionIds = p2UiState.trustedVerifiedSessionIds(),
-                )
-            }
-
-            composable(AppRoutes.ManualConnect) {
-                val cancelManualConnect: () -> Unit = {
-                    viewModel.cancelManualEndpointConnect()
-                    navController.popBackStack()
-                }
-                ManualEndpointScreen(
-                    uiState = uiState,
-                    onBack = cancelManualConnect,
-                    onInputChanged = viewModel::updateManualEndpointInput,
-                    onInviteCodeChanged = viewModel::updateManualEndpointInviteCode,
-                    onConnect = viewModel::connectManualEndpoint,
-                    onCancel = cancelManualConnect,
-                )
-            }
-
-            composable(AppRoutes.SessionJoin) {
-                val cancelJoin: () -> Unit = {
-                    if (viewModel.listenerHasPendingWifiDirectJoin) {
-                        discoveryLifecycleController.cancelJoinTransport(
-                            workflowViewModel::showTransientMessage,
-                        )
-                    }
-                    viewModel.cancelJoin()
-                    val returned = navController.popBackStack(AppRoutes.NearbySessions, inclusive = false)
-                    if (!returned) navController.navigateSingleTop(AppRoutes.NearbySessions)
-                }
-                SessionJoinScreen(
-                    uiState = uiState,
-                    onInviteCodeChanged = viewModel::updateInviteCode,
-                    onJoin = viewModel::requestJoin,
-                    onCancel = cancelJoin,
-                    onRetry = viewModel::retryJoin,
-                    onReturnToSessions = cancelJoin,
-                    onOpenSettings = ::openSystemSettings,
-                    onShareSupportReport = ::shareSupportReport,
-                )
-            }
-
-            composable(AppRoutes.ListenerPlayback) {
-                BackHandler(onBack = workflowViewModel::requestLeaveSessionConfirmation)
-                ListenerPlaybackV2Screen(
-                    uiState = uiState,
-                    onBackRequest = workflowViewModel::requestLeaveSessionConfirmation,
-                    onVolumeChanged = viewModel::setLocalVolume,
-                    onFixConnection = {
-                        navController.navigateSingleTop(AppRoutes.ConnectionHelp)
-                    },
-                    onLeaveRequest = workflowViewModel::requestLeaveSessionConfirmation,
-                )
-            }
-
-            composable(AppRoutes.ConnectionHelp) {
-                ConnectionHelpScreen(
-                    uiState = uiState,
-                    onBack = { navController.popBackStack() },
-                    onResynchronize = viewModel::manualResync,
-                    onReconnect = {
-                        viewModel.retryJoin()
-                        navController.navigateSingleTop(AppRoutes.NearbySessions)
-                    },
-                    onShareSupportReport = ::shareSupportReport,
-                    onAdvancedDiagnostics = {
-                        navController.navigateSingleTop(AppRoutes.AdvancedDiagnostics)
-                    },
-                )
-            }
-
-            composable(AppRoutes.AdvancedDiagnostics) {
-                DiagnosticsScreen(
-                    uiState = uiState,
-                    onBack = { navController.popBackStack() },
-                    onManualResync = viewModel::manualResync,
-                    onAdjustTuning = viewModel::adjustTuning,
-                    onShare = { shareSupportReport() },
-                    callbackCaptureStatus = captureStatus,
-                    onStartCallbackCapture = viewModel::startCallbackPcmCapture,
-                    onStopCallbackCapture = viewModel::stopCallbackPcmCapture,
-                )
-            }
-
-            composable(AppRoutes.Settings) {
-                SettingsScreen(
-                    uiState = uiState,
-                    trustedDeviceManagementAvailable = true,
-                    onBack = { navController.popBackStack() },
-                    onOpenSystemSettings = ::openSystemSettings,
-                    onOpenTrustedDevices = {
-                        navController.navigateSingleTop(AppRoutes.TrustedDevices)
-                    },
-                    onOpenAdvancedDiagnostics = {
-                        navController.navigateSingleTop(AppRoutes.AdvancedDiagnostics)
-                    },
-                    onOpenTrustedHosts = {
-                        navController.navigateSingleTop(AppRoutes.TrustedHosts)
-                    },
-                )
-            }
-
-            composable(AppRoutes.TrustedDevices) {
-                LaunchedEffect(Unit) { trustedDevicesViewModel.refresh() }
-                TrustedDevicesScreen(
-                    uiState = trustedDevicesUiState,
-                    onBack = { navController.popBackStack() },
-                    onRefresh = trustedDevicesViewModel::refresh,
-                    onDelete = trustedDevicesViewModel::deleteDevice,
-                )
-            }
-
-            composable(AppRoutes.TrustedHosts) {
-                TrustedHostsScreen(
-                    uiState = p2UiState,
-                    onBack = { navController.popBackStack() },
-                    onDelete = p2ViewModel::deleteTrustedHost,
-                )
-            }
+            hostNavGraph(nav)
+            listenerNavGraph(nav)
+            settingsNavGraph(nav)
         }
     }
 
