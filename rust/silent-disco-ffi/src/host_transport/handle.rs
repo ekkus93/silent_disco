@@ -48,6 +48,8 @@ impl std::fmt::Debug for FfiHostTransportHandle {
 struct Inner {
     transport: Box<dyn HostTransportNode>,
     session_id: SessionId,
+    /// Only a secure-v4 host has TLS-proven listener keys it can remember.
+    protocol: TransportProtocol,
 }
 
 #[allow(
@@ -181,20 +183,22 @@ impl FfiHostTransportHandle {
         )
     }
 
-    /// Sends a session-only join approval to one identified listener. The
-    /// Android host cannot yet store an approved listener's key for later.
+    /// Sends a join approval to one identified listener. `trusted_for_future`
+    /// tells the listener the host remembered it; the host core stores the
+    /// verified record before it asks for this delivery. A legacy plaintext
+    /// host has no proven listener key, so it never sends remembered trust.
     pub fn send_join_approval(
         &self,
         listener_id: String,
         trusted_for_future: bool,
     ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
-        if trusted_for_future {
-            return Err(FfiHostTransportError::Unauthorized(
-                "This phone can't remember listeners yet. Approve this listener once instead."
-                    .to_owned(),
-            ));
-        }
         self.with_transport(|inner| {
+            if trusted_for_future && inner.protocol != TransportProtocol::SecureV4 {
+                return Err(FfiHostTransportError::Unauthorized(
+                    "This host can't remember a listener over an unencrypted connection. Approve it once instead."
+                        .to_owned(),
+                ));
+            }
             let listener_id = device_id(listener_id)?;
             let message = ControlMessage::JoinApproval(JoinApproval {
                 session_id: inner.session_id.clone(),
@@ -776,6 +780,7 @@ impl FfiHostTransportHandle {
             inner: Mutex::new(Some(Inner {
                 transport,
                 session_id,
+                protocol,
             })),
         }))
     }

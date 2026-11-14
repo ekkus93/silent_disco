@@ -10,7 +10,6 @@ import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.HostTransportController
-import com.ekkus.silentdisco.core.rust.DURABLE_LISTENER_TRUST_UNAVAILABLE
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.transport.TransportPorts
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
@@ -67,6 +66,9 @@ internal interface HostSessionCallbacks {
 
     /** Persists tuning settings the core asked to save. */
     suspend fun saveTuning(settings: RustStoredTuningSettings)
+
+    /** Stores "Always allow" for a verified listener (remediation F1); throws on refusal or failure. */
+    suspend fun rememberVerifiedListener(core: HostCoreController, deviceId: String, displayName: String)
 }
 
 /**
@@ -419,15 +421,6 @@ internal class HostSessionController(
     }
 
     private suspend fun deliverJoinApproval(core: HostCoreController, effect: FfiTransportEffect.DeliverJoinApproval) {
-        if (effect.trustedForFuture) {
-            // The Android host cannot store an approved listener's key yet:
-            // report a failed delivery to the actor, not a pending approval or
-            // a remembered listener that would be forgotten on restart.
-            joinRoutes.discard(effect.requestId, effect.listenerId)
-            core.transportDeliveryCompleted(effect.operationId, FAILED_DELIVERY)
-            callbacks.commandFailed("approve listener", IllegalStateException(DURABLE_LISTENER_TRUST_UNAVAILABLE))
-            return
-        }
         // Do not send a successful approval without the UDP ports needed to
         // authorize the SAME peer/session. Approval and route authorization
         // must not straddle a host close/rebind suspend boundary.
@@ -475,11 +468,19 @@ internal class HostSessionController(
             }.onFailure { error ->
                 core.storageOperationFailed(effect.operationId, error.message ?: "Failed to persist settings", true)
             }
-            // The Android host has no store for approved listeners' keys yet.
-            // Fail the effect rather than acknowledge a trust record that
-            // holds no key and would not survive a restart.
-            is FfiStorageEffect.PersistTrustedDevice ->
-                core.storageOperationFailed(effect.operationId, DURABLE_LISTENER_TRUST_UNAVAILABLE, false)
+            // "Always allow": Rust stores the verified key and refuses a claimed
+            // ID. The actor sees success only after the record is committed.
+            is FfiStorageEffect.PersistTrustedDevice -> runCatching {
+                callbacks.rememberVerifiedListener(core, effect.deviceId, effect.displayName)
+            }.onSuccess {
+                core.trustedDeviceUpdated(effect.operationId, effect.deviceId)
+            }.onFailure { error ->
+                core.storageOperationFailed(
+                    effect.operationId,
+                    error.message ?: "Could not remember the listener",
+                    false,
+                )
+            }
         }
     }
 

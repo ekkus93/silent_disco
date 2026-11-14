@@ -277,3 +277,41 @@ fn the_parser_marks_only_a_v4_endpoint_as_secure_transport() {
         .expect("v3 parses");
     assert!(!v3.secure_transport);
 }
+
+/// "Always allow" over v4: the host may send remembered trust, and the v4
+/// listener receives it as a remembered approval (remediation F1).
+#[test]
+fn a_v4_host_can_send_remembered_trust_to_a_v4_listener() {
+    let session = "ffi-quic-remembered";
+    let (host, port) = quic_host(session);
+    let listener = FfiListenerTransportHandle::connect_quic(
+        v4_payload(session, port),
+        0,
+        listener_id(),
+        "127.0.0.1".to_owned(),
+        host_spki(),
+        signer(false),
+    )
+    .expect("v4 listener connects");
+    listener
+        .send_join_request("QUIC listener".to_owned(), None)
+        .expect("join");
+    wait_host(&host, |event| match event {
+        FfiHostTransportEvent::JoinRequestReceived { device_id, .. }
+            if device_id == listener_id() =>
+        {
+            Some(())
+        }
+        _ => None,
+    });
+    let delivery = host
+        .send_join_approval(listener_id(), true)
+        .expect("a v4 host may send remembered trust");
+    assert_eq!(delivery.successful_peers, 1);
+    let remembered = wait_listener(&listener, |event| match event {
+        FfiListenerTransportEvent::JoinApproved { trusted_for_future } => Some(trusted_for_future),
+        FfiListenerTransportEvent::JoinRejected { reason } => panic!("rejected: {reason}"),
+        _ => None,
+    });
+    assert!(remembered, "the listener sees it was remembered");
+}

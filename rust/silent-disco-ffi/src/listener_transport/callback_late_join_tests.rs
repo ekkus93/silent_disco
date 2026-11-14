@@ -77,6 +77,7 @@ fn late_join_replays_multitrack_controls_and_delivers_exact_pcm_to_two_native_ca
             })),
             playback: Mutex::new(None),
             forwarded_audio: AtomicU64::new(0),
+            secure_v4: false,
             closed: std::sync::atomic::AtomicBool::new(false),
         };
         handle

@@ -19,6 +19,7 @@ fn detached_handle() -> FfiListenerTransportHandle {
         inner: RwLock::new(None),
         playback: Mutex::new(None),
         forwarded_audio: AtomicU64::new(0),
+        secure_v4: false,
         closed: AtomicBool::new(false),
     }
 }
@@ -402,6 +403,7 @@ fn real_socket_pcm_forwarding_survives_pause_late_join_resume_and_stop_without_r
         })),
         playback: Mutex::new(None),
         forwarded_audio: AtomicU64::new(0),
+        secure_v4: false,
         closed: AtomicBool::new(false),
     };
     handle

@@ -132,6 +132,7 @@ fn pcm_callback_is_sample_exact_across_track_boundary_and_engine_retirement(wire
         })),
         playback: Mutex::new(None),
         forwarded_audio: AtomicU64::new(0),
+        secure_v4: false,
         closed: std::sync::atomic::AtomicBool::new(false),
     };
     handle

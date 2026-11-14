@@ -20,14 +20,6 @@ import kotlinx.coroutines.withContext
 private const val POLL_TIMEOUT_MS: ULong = 500uL
 
 /**
- * The Android host has no store for approved listeners' keys yet, so it
- * cannot remember a listener for future sessions. One-session approval still
- * works. Shown to the host when they choose "Always allow".
- */
-internal const val DURABLE_LISTENER_TRUST_UNAVAILABLE =
-    "This phone can't remember listeners yet. Approve this listener once instead."
-
-/**
  * Android-facing wrapper around the shared Rust host transport for one
  * hosted session at a time. Owns no domain policy: it only binds the real
  * transport, exposes its send/broadcast methods, and surfaces the
@@ -147,8 +139,7 @@ class HostTransportController(
     }
 
     suspend fun sendJoinApproval(listenerId: String, trustedForFuture: Boolean): FfiHostTransportDelivery? {
-        check(!trustedForFuture) { DURABLE_LISTENER_TRUST_UNAVAILABLE }
-        return withHandle { it.sendJoinApproval(listenerId, trustedForFuture = false) }
+        return withHandle { it.sendJoinApproval(listenerId, trustedForFuture) }
     }
 
     /**
@@ -163,9 +154,6 @@ class HostTransportController(
         audioPort: UShort,
         expectedGeneration: FfiHostTransportHandle? = handleGate.currentHandle(),
     ): HostJoinAuthorizationResult<FfiHostTransportDelivery>? {
-        // A manually approved listener may join this session, but nothing on
-        // the Android host can remember its key for later sessions yet.
-        check(!trustedForFuture) { DURABLE_LISTENER_TRUST_UNAVAILABLE }
         val expected = expectedGeneration ?: return null
         return withContext(callDispatcher) {
             handleGate.deliverAndAuthorize(

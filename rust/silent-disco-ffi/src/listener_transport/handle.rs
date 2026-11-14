@@ -12,7 +12,7 @@ use silent_disco_core::transport::{
     DEFAULT_IO_TIMEOUT, DEFAULT_OPERATION_TIMEOUT, DEFAULT_TRANSPORT_EVENT_CAPACITY,
     DEFAULT_TRANSPORT_QUEUE_CAPACITY, ListenerTransportConfig, ListenerTransportNode,
     ManualHostEndpoint, SecureHostTarget, SystemTransportClock, TransportChannel, TransportClock,
-    TransportEvent, transport_factory_for,
+    TransportEvent, TransportProtocol, transport_factory_for,
 };
 
 use crate::listener_playback::{FfiListenerPlaybackHandle, FfiSyncConfidence};
@@ -83,6 +83,9 @@ pub struct FfiListenerTransportHandle {
     /// received-packet count the foreign caller used to derive by counting
     /// the per-packet events it no longer sees.
     forwarded_audio: AtomicU64,
+    /// True for a secure-v4 (QUIC, pinned host key) connection. Only such a
+    /// host can tell this listener it was remembered.
+    secure_v4: bool,
     /// Terminal fence shared by attach, forwarding and shutdown. Once closed,
     /// delayed callers cannot reattach a retired native playback runtime.
     closed: AtomicBool,
@@ -359,7 +362,7 @@ impl FfiListenerTransportHandle {
             // caller's loop keeps pace with control traffic no matter how
             // much audio is arriving.
             if let Some(event) = self.forward_audio(event)?
-                && let Some(mapped) = map_event(event)
+                && let Some(mapped) = map_event(event, self.secure_v4)
             {
                 return Ok(Some(mapped));
             }
@@ -520,14 +523,14 @@ impl FfiListenerTransportHandle {
     }
 }
 
-fn map_event(event: TransportEvent) -> Option<FfiListenerTransportEvent> {
+fn map_event(event: TransportEvent, secure_v4: bool) -> Option<FfiListenerTransportEvent> {
     use silent_disco_core::protocol::ProtocolFrame;
     match event {
         TransportEvent::FrameReceived {
             channel: TransportChannel::Control,
             frame,
             ..
-        } => map_control_frame(frame),
+        } => map_control_frame(frame, secure_v4),
         TransportEvent::FrameReceived {
             channel: TransportChannel::Synchronization,
             frame: ProtocolFrame::SyncResponse(response),
@@ -570,6 +573,7 @@ fn map_event(event: TransportEvent) -> Option<FfiListenerTransportEvent> {
 
 fn map_control_frame(
     frame: silent_disco_core::protocol::ProtocolFrame,
+    secure_v4: bool,
 ) -> Option<FfiListenerTransportEvent> {
     use silent_disco_core::protocol::ProtocolFrame;
     let ProtocolFrame::Control(message) = frame else {
@@ -583,7 +587,13 @@ fn map_control_frame(
         }),
         // Legacy v3 carries no verified host or listener key identity.
         // An untrusted host must not persuade the app to persist a durable
-        // approval just by setting a boolean in a plaintext TCP frame.
+        // approval just by setting a boolean in a plaintext TCP frame. A
+        // secure-v4 host is the pinned key, and it stores the record itself.
+        ControlMessage::JoinApproval(value) if value.trusted_for_future && secure_v4 => {
+            Some(FfiListenerTransportEvent::JoinApproved {
+                trusted_for_future: true,
+            })
+        }
         ControlMessage::JoinApproval(value) if value.trusted_for_future => {
             Some(FfiListenerTransportEvent::JoinRejected {
                 reason: "Legacy v3 host advertised unverified permanent trust; rejoin with session-only approval"
@@ -668,6 +678,7 @@ impl FfiListenerTransportHandle {
         Ok(Arc::new(Self {
             playback: Mutex::new(None),
             forwarded_audio: AtomicU64::new(0),
+            secure_v4: protocol == TransportProtocol::SecureV4,
             closed: AtomicBool::new(false),
             inner: RwLock::new(Some(Inner {
                 transport,

@@ -1,7 +1,7 @@
 use super::conversions::network_endpoint;
 use super::types::{
-    FfiAppRole, FfiApprovalMode, FfiBridgeError, FfiCommandReceipt, FfiCoreError, FfiCoreObserver,
-    FfiCoreSnapshot, FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary,
+    FfiAppRole, FfiBridgeError, FfiCommandReceipt, FfiCoreError, FfiCoreObserver, FfiCoreSnapshot,
+    FfiDeliveryReport, FfiHostDraft, FfiJoinRequestInput, FfiListenerSummary,
     FfiPlatformCompletion, FfiPlaybackState, FfiQueueEntry, FfiSessionAdvertisement,
     FfiTransportState, FfiTuningPatch, FfiTuningSettings,
 };
@@ -82,7 +82,6 @@ impl FfiCoreHandle {
         draft: FfiHostDraft,
     ) -> Result<FfiCommandReceipt, FfiBridgeError> {
         self.ensure_open()?;
-        reject_legacy_durable_host_draft(draft.approval_mode, draft.remember_approved_devices)?;
         let current = self.handle.current_snapshot()?;
         if FfiTuningSettings::from(current.tuning) != draft.tuning {
             return Err(FfiBridgeError::Core(
@@ -187,10 +186,9 @@ impl FfiCoreHandle {
         expected_revision: u64,
     ) -> Result<FfiCommandReceipt, FfiBridgeError> {
         self.ensure_open()?;
-        let draft = self.handle.current_snapshot()?.host_draft;
-        if draft.approval_mode == ApprovalMode::TrustedDevices || draft.remember_approved_devices {
-            return Err(durable_trust_unavailable());
-        }
+        // Approved-devices mode and "Always allow" are backed by the host's
+        // verified records (remediation F1): trust is loaded from them, and
+        // only a key-bound (proven) listener can be remembered.
         self.submit_command(expected_revision, CoreCommand::CreateHostSession)
     }
 
@@ -200,9 +198,6 @@ impl FfiCoreHandle {
         request_id: String,
         remember_for_future: bool,
     ) -> Result<FfiCommandReceipt, FfiBridgeError> {
-        if remember_for_future {
-            return Err(durable_trust_unavailable());
-        }
         self.submit_command(
             expected_revision,
             CoreCommand::ApproveJoin {
@@ -381,10 +376,10 @@ impl FfiCoreHandle {
 
     pub fn submit_join_approved(&self, trusted_for_future: bool) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
-        if trusted_for_future {
-            let message = "This phone can't accept a permanent approval yet. Ask the host to approve you once.";
-            return Err(FfiBridgeError::Core(message.to_owned()));
-        }
+        // `trusted_for_future` only reports that the host remembered this
+        // listener; the listener core stores nothing from it. The listener
+        // transport passes it through only from a secure-v4 host and turns a
+        // plaintext host's claim into a visible rejection.
         self.handle
             .submit_transport_event(TransportEvent::JoinApproved { trusted_for_future })?;
         Ok(())
@@ -677,23 +672,12 @@ impl Drop for FfiCoreHandle {
     }
 }
 
-// No verified listener key reaches this bridge: a caller-supplied trust enum
-// is NOT proof of public-key possession. Durable trust must arrive through
-// VerifiedJoinAdmission, never by bypassing these guards.
-fn durable_trust_unavailable() -> FfiBridgeError {
+// A caller-supplied trust enum is NOT proof of public-key possession. A
+// listener's trust comes only from the host's own verified records.
+fn claimed_trust_refused() -> FfiBridgeError {
     FfiBridgeError::Core(
-        "This phone can't remember listeners yet. Approve this listener once instead.".to_owned(),
+        "A listener's trust comes from this host's own records, not from the app.".to_owned(),
     )
-}
-
-fn reject_legacy_durable_host_draft(
-    mode: FfiApprovalMode,
-    remember_approved_devices: bool,
-) -> Result<(), FfiBridgeError> {
-    if mode == FfiApprovalMode::TrustedDevices || remember_approved_devices {
-        return Err(durable_trust_unavailable());
-    }
-    Ok(())
 }
 
 fn legacy_v3_unverified_trust(
@@ -704,7 +688,7 @@ fn legacy_v3_unverified_trust(
             Ok(TrustState::SessionOnly)
         }
         super::types::FfiTrustState::Trusted | super::types::FfiTrustState::Revoked => {
-            Err(durable_trust_unavailable())
+            Err(claimed_trust_refused())
         }
     }
 }

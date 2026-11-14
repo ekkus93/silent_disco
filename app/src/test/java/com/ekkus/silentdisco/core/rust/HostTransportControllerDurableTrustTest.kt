@@ -4,46 +4,27 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
-/** The Android host cannot remember listeners yet: "Always allow" is refused, approve-once is not. */
+/**
+ * "Always allow" is now stored by Rust before the approval is sent
+ * (remediation F1), so the transport no longer refuses it. Without a bound
+ * native session neither kind of approval can be sent.
+ */
 class HostTransportControllerDurableTrustTest {
     @Test
-    fun directApprovalRejectsDurableTrustEvenBeforeNativeBind() = runTest {
+    fun anUnboundHostSendsNoApprovalOfEitherKind() = runTest {
         val controller = HostTransportController()
         try {
-            val failure = runCatching {
-                controller.sendJoinApproval("claimed-listener", trustedForFuture = true)
-            }.exceptionOrNull()
-            assertThat(failure).isInstanceOf(IllegalStateException::class.java)
-            assertThat(failure?.message).isEqualTo(DURABLE_LISTENER_TRUST_UNAVAILABLE)
-        } finally {
-            controller.close()
-        }
-    }
-
-    @Test
-    fun combinedApprovalAndAuthorizationCannotRememberTheListener() = runTest {
-        val controller = HostTransportController()
-        try {
-            val failure = runCatching {
-                controller.approveAndAuthorizeListener(
-                    "claimed-listener",
-                    trustedForFuture = true,
-                    syncPort = 11001u,
-                    audioPort = 11002u,
-                )
-            }.exceptionOrNull()
-            assertThat(failure).isInstanceOf(IllegalStateException::class.java)
-            assertThat(failure?.message).isEqualTo(DURABLE_LISTENER_TRUST_UNAVAILABLE)
-            // Manual one-session admission is still permitted by policy;
-            // absent a bound native session it cannot send an approval.
-            assertThat(
-                controller.approveAndAuthorizeListener(
-                    "claimed-listener",
-                    trustedForFuture = false,
-                    syncPort = 11001u,
-                    audioPort = 11002u,
-                ),
-            ).isNull()
+            assertThat(controller.sendJoinApproval("v4-listener", trustedForFuture = true)).isNull()
+            for (trusted in listOf(true, false)) {
+                assertThat(
+                    controller.approveAndAuthorizeListener(
+                        "v4-listener",
+                        trustedForFuture = trusted,
+                        syncPort = 11001u,
+                        audioPort = 11002u,
+                    ),
+                ).isNull()
+            }
         } finally {
             controller.close()
         }

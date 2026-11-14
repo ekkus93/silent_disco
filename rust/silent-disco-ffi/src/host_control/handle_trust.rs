@@ -70,6 +70,82 @@ impl FfiCoreHandle {
     }
 }
 
+#[allow(
+    clippy::missing_errors_doc,
+    reason = "exported method uses the uniform validated FfiBridgeError contract"
+)]
+#[uniffi::export]
+impl FfiCoreHandle {
+    /// Stores an "Always allow" approval for a verified listener in the app's
+    /// Rust database and reloads this host's trust from it. Only a key-bound
+    /// device ID (a key proven over the secure channel) can be enrolled; a
+    /// claimed legacy ID is refused. The caller then reports the storage
+    /// effect's completion to the actor.
+    ///
+    /// # Errors
+    /// Returns an error for a device ID that is not key-bound, an invalid
+    /// database handle or host key, an invalid name, or a storage failure.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "uniffi::export requires owned parameters at the foreign boundary"
+    )]
+    pub fn enroll_verified_listener_in_database(
+        &self,
+        database_handle: i64,
+        host_public_key_der: Vec<u8>,
+        device_id: String,
+        display_name: String,
+        enrolled_at_ms: u64,
+    ) -> Result<(), FfiBridgeError> {
+        let client =
+            crate::android_database_abi::database_client(database_handle).map_err(|status| {
+                FfiBridgeError::Core(format!("host trust database unavailable: {status}"))
+            })?;
+        enroll_verified_listener(
+            self,
+            &client,
+            &host_public_key_der,
+            &device_id,
+            &display_name,
+            enrolled_at_ms,
+        )
+    }
+}
+
+/// Writes the enrolment for a key-bound `device_id`, then reloads the trust
+/// registry so the next join from that key is trusted.
+pub(super) fn enroll_verified_listener(
+    handle: &FfiCoreHandle,
+    client: &silent_disco_core::storage::DatabaseClient,
+    host_public_key_der: &[u8],
+    device_id: &str,
+    display_name: &str,
+    enrolled_at_ms: u64,
+) -> Result<(), FfiBridgeError> {
+    let device_id =
+        DeviceId::new(device_id).map_err(|error| FfiBridgeError::Core(format!("{error:?}")))?;
+    let listener_key_fingerprint = key_bound_fingerprint(&device_id).ok_or_else(|| {
+        FfiBridgeError::Core(
+            "only a listener that proved its key over the secure connection can be remembered"
+                .to_owned(),
+        )
+    })?;
+    let host = HostVerifiedTrust::new(host_public_key_der)
+        .map_err(|error| FfiBridgeError::Core(format!("{error:?}")))?;
+    client
+        .enroll_verified_listener(&silent_disco_core::storage::VerifiedListenerRecord {
+            host_key_fingerprint: *host.host_fingerprint(),
+            listener_key_fingerprint,
+            display_name: display_name.to_owned(),
+            enrolled_at_ms,
+            revoked_at_ms: None,
+        })
+        .map_err(|error| {
+            FfiBridgeError::Core(format!("could not remember the listener: {error}"))
+        })?;
+    load_host_trust(handle, client, host_public_key_der).map(|_| ())
+}
+
 /// Reads the records for `host_public_key_der` and installs them as this
 /// handle's trust registry.
 pub(super) fn load_host_trust(

@@ -1911,3 +1911,14 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-14T16:34:37Z - claude-opus-5-5 - F1 durable trust step 2b: Android host start loads trust
 - `createRustHostSession` calls `HostCoreController.loadHostTrust(dbHandle, hostTlsPublicKeyDer)` via `persistence.withDatabaseHandle` before `configureAndCreate`; failure -> "Could not load trusted listeners: ..." and no session. `RustDatabase.withNativeHandle` is @Synchronized so close cannot race the load.
 - JVM harness default `HostTransportController(hostTlsSigner = FixedHostTlsSigner)` (Keystore unavailable on JVM). `HostTrustLoadTest` 3 tests; mutation killed; full Android gate green. No device run.
+
+## 2026-11-14T16:53:52Z - claude-opus-5-5 - F1 step 3 (Always allow on Android/FFI) written
+- FFI `enroll_verified_listener_in_database` (key-bound IDs only; writes `verified_listeners`, reloads trust). Android `PersistTrustedDevice` effect now calls it via `HostSessionCallbacks.rememberVerifiedListener`; success -> trustedDeviceUpdated, refusal -> non-retryable storageOperationFailed. Removed `DURABLE_LISTENER_TRUST_UNAVAILABLE` and the Android/FFI refusals of Always allow and Approved-devices drafts.
+- Kept/added protocol gates: FFI host transport refuses trusted_for_future unless the host is SecureV4 (legacy integration test caught my first, too-broad removal); FFI listener transport maps a remembered approval to JoinApproved(true) only on secure_v4, else the existing visible JoinRejected. Listener core `submit_join_approved(true)` guard lifted (the core stores nothing from it).
+- New tests: FFI enrol (claimed ID refused; reload trusts), QUIC host->listener remembered approval, listener mapping over v4; Kotlin session/effect tests rewritten. Targeted Rust (lib/legacy-v3/listener_control) and Kotlin tests pass.
+- Full gate run was KILLED for low memory during the Android gate (Rust gate in that run had the legacy failure, since fixed). Stopped Gradle/Kotlin daemons (~2.5 GB). Full check-rust.sh, desktop and Android gates NOT yet rerun; uncommitted. Waiting for the owner before rerunning.
+- Still open: Android setup screen greys out Approved-devices mode (F1 item 5 UI); desktop host still refuses remembering; revoke UI; no device run.
+
+## 2026-11-14T20:14:29Z - claude-opus-5-5 - F1 step 3 gates passed
+- Owner approved rerunning gates one at a time. `CARGO_BUILD_JOBS=2 check-rust.sh` passed (929 tests, 0 failed); full Android gate with `--max-workers=2` passed (6m15s). Desktop not rerun: desktop depends only on silent-disco-core, unchanged in step 3.
+- TODO F1 trust-records item has step 3 evidence; box stays open.

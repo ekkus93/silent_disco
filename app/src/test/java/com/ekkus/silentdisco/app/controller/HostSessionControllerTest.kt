@@ -6,7 +6,6 @@ import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.rust.FakeHostCoreController
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.HostTransportController
-import com.ekkus.silentdisco.core.rust.DURABLE_LISTENER_TRUST_UNAVAILABLE
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiCoreError
@@ -36,6 +35,8 @@ class HostSessionControllerTest {
     private val core = FakeHostCoreController()
     private val transport = HostTransportController()
     private val failures = mutableListOf<Pair<String, String?>>()
+    private val remembered = mutableListOf<Pair<String, String>>()
+    private var rememberFailure: Throwable? = null
     private val coreErrors = mutableListOf<String>()
     private val recovered = mutableListOf<FfiCoreNotification>()
     private val saved = mutableListOf<RustStoredTuningSettings>()
@@ -66,6 +67,10 @@ class HostSessionControllerTest {
         override suspend fun saveTuning(settings: RustStoredTuningSettings) {
             saveFailure?.let { throw it }
             saved += settings
+        }
+        override suspend fun rememberVerifiedListener(core: HostCoreController, deviceId: String, displayName: String) {
+            rememberFailure?.let { throw it }
+            remembered += deviceId to displayName
         }
     }
 
@@ -127,10 +132,10 @@ class HostSessionControllerTest {
     }
 
     @Test
-    fun anApprovalWithoutItsJoinRouteOrAskingForDurableTrustIsReportedAsUndelivered() = runTest {
+    fun anApprovalWithoutItsJoinRouteIsReportedAsUndelivered() = runTest {
         val (session, parent) = controller()
         session.ensureCore()
-        listOf(false to "route missing", true to DURABLE_LISTENER_TRUST_UNAVAILABLE).forEachIndexed { index, (trust, reason) ->
+        listOf(false to "route missing", true to "route missing").forEachIndexed { index, (trust, reason) ->
             core.emit(
                 FfiCoreNotification.TransportEffect(
                     FfiTransportEffect.DeliverJoinApproval(
@@ -151,7 +156,7 @@ class HostSessionControllerTest {
     }
 
     @Test
-    fun settingsAreSavedOrFailRetryablyAndDurableTrustIsRefused() = runTest {
+    fun settingsAreSavedOrFailRetryablyAndARefusedRememberFailsTerminally() = runTest {
         val (session, parent) = controller()
         session.ensureCore()
 
@@ -161,6 +166,7 @@ class HostSessionControllerTest {
         assertThat(core.settingsSavedCalls).containsExactly("op-save")
 
         saveFailure = IllegalStateException("disk full")
+        rememberFailure = IllegalStateException("only a listener that proved its key can be remembered")
         core.emit(FfiCoreNotification.StorageEffect(FfiStorageEffect.PersistSettings("op-fail", tuning)))
         core.emit(
             FfiCoreNotification.StorageEffect(
@@ -170,6 +176,26 @@ class HostSessionControllerTest {
         advanceUntilIdle()
         assertThat(core.storageOperationFailedCalls.map { it.operationId to it.retryable })
             .containsExactly("op-fail" to true, "op-trust" to false).inOrder()
+        assertThat(core.storageOperationFailedCalls.last().message)
+            .isEqualTo("only a listener that proved its key can be remembered")
+        assertThat(core.trustedDeviceUpdatedCalls).isEmpty()
+        parent.cancel()
+    }
+
+    @Test
+    fun alwaysAllowIsReportedStoredOnlyAfterTheVerifiedRecordIsWritten() = runTest {
+        val (session, parent) = controller()
+        session.ensureCore()
+
+        core.emit(
+            FfiCoreNotification.StorageEffect(
+                FfiStorageEffect.PersistTrustedDevice(operationId = "op-trust", deviceId = "v4-abc", displayName = "Alex"),
+            ),
+        )
+        advanceUntilIdle()
+        assertThat(remembered).containsExactly("v4-abc" to "Alex")
+        assertThat(core.trustedDeviceUpdatedCalls).containsExactly("op-trust" to "v4-abc")
+        assertThat(core.storageOperationFailedCalls).isEmpty()
         parent.cancel()
     }
 

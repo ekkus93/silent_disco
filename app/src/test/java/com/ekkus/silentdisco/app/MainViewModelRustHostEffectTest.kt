@@ -400,8 +400,34 @@ class MainViewModelRustHostEffectTest {
     }
 
     @Test
-    fun persistTrustedDeviceRejectsUnverifiedIdentityWithoutTouchingStorage() = runTest(dispatcher) {
+    fun persistTrustedDeviceStoresTheVerifiedRecordThroughRust() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
+        harness.viewModel.ensureRustHostCore()
+        advanceUntilIdle()
+
+        harness.hostCoreController.emit(
+            FfiCoreNotification.StorageEffect(
+                FfiStorageEffect.PersistTrustedDevice(
+                    operationId = "op-trust",
+                    deviceId = "v4-listener",
+                    displayName = "Alex's phone",
+                ),
+            ),
+        )
+        settleIo { harness.hostCoreController.trustedDeviceUpdatedCalls.isNotEmpty() }
+
+        // Rust writes the verified record; the legacy claimed-ID table is untouched.
+        assertThat(harness.hostCoreController.enrollCalls).containsExactly("v4-listener" to "Alex's phone")
+        assertThat(harness.domainStore.trustDeviceCalls).isEmpty()
+        assertThat(harness.hostCoreController.trustedDeviceUpdatedCalls).containsExactly("op-trust" to "v4-listener")
+        assertThat(harness.hostCoreController.storageOperationFailedCalls).isEmpty()
+    }
+
+    @Test
+    fun persistTrustedDeviceRefusedByRustIsATerminalFailure() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.hostCoreController.enrollFailure =
+            IllegalStateException("only a listener that proved its key over the secure connection can be remembered")
         harness.viewModel.ensureRustHostCore()
         advanceUntilIdle()
 
@@ -414,54 +440,33 @@ class MainViewModelRustHostEffectTest {
                 ),
             ),
         )
-        advanceUntilIdle()
+        settleIo { harness.hostCoreController.storageOperationFailedCalls.isNotEmpty() }
 
-        // A plaintext-v3 claimed ID is not a verified public-key identity.
-        // The actor must see a terminal failure, never a durable-trust success.
+        // A claimed ID is not a verified public-key identity: the actor sees a
+        // terminal failure, never a durable-trust success.
         assertThat(harness.domainStore.trustDeviceCalls).isEmpty()
         assertThat(harness.hostCoreController.trustedDeviceUpdatedCalls).isEmpty()
         assertThat(harness.hostCoreController.storageOperationFailedCalls).containsExactly(
             RecordedFailure(
                 "op-trust",
-                com.ekkus.silentdisco.core.rust.DURABLE_LISTENER_TRUST_UNAVAILABLE,
+                "only a listener that proved its key over the secure connection can be remembered",
                 false,
             ),
         )
     }
 
-    @Test
-    fun persistTrustedDeviceDoesNotAccessFailingLegacyStore() = runTest(dispatcher) {
-        val harness = newTestMainViewModelHarness()
-        harness.domainStore.trustDeviceFailure = RuntimeException("db locked")
-        harness.viewModel.ensureRustHostCore()
+    /** Storage effects run partly on [kotlinx.coroutines.Dispatchers.IO]; wait for [done] with a bound. */
+    private fun kotlinx.coroutines.test.TestScope.settleIo(done: () -> Boolean) {
+        repeat(400) {
+            advanceUntilIdle()
+            if (done()) return
+            Thread.sleep(5)
+        }
         advanceUntilIdle()
-
-        harness.hostCoreController.emit(
-            FfiCoreNotification.StorageEffect(
-                FfiStorageEffect.PersistTrustedDevice(
-                    operationId = "op-trust-fail",
-                    deviceId = "spoofed-listener",
-                    displayName = "Unknown device",
-                ),
-            ),
-        )
-        advanceUntilIdle()
-
-        // A storage exception must not mask the security refusal: the
-        // unverified request is rejected before any legacy DB access.
-        assertThat(harness.domainStore.trustDeviceCalls).isEmpty()
-        assertThat(harness.hostCoreController.storageOperationFailedCalls).containsExactly(
-            RecordedFailure(
-                "op-trust-fail",
-                com.ekkus.silentdisco.core.rust.DURABLE_LISTENER_TRUST_UNAVAILABLE,
-                false,
-            ),
-        )
-        assertThat(harness.hostCoreController.trustedDeviceUpdatedCalls).isEmpty()
     }
 
     @Test
-    fun trustedForFutureJoinApprovalIsExplicitlyRefusedOnLegacyTransport() = runTest(dispatcher) {
+    fun trustedForFutureJoinApprovalWithoutAJoinRouteIsNotDelivered() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
         harness.viewModel.ensureRustHostCore()
         advanceUntilIdle()

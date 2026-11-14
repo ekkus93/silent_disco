@@ -71,6 +71,20 @@ interface HostCoreController : AutoCloseable {
     fun loadHostTrust(databaseHandle: Long, hostPublicKeyDer: ByteArray): UInt {
         throw UnsupportedOperationException("host trust loading is unavailable")
     }
+    /**
+     * Stores an "Always allow" for a verified (key-bound) listener in the Rust
+     * database and reloads this host's trust. A claimed legacy ID is refused.
+     * Blocking; call on an IO thread.
+     */
+    fun enrollVerifiedListener(
+        databaseHandle: Long,
+        hostPublicKeyDer: ByteArray,
+        deviceId: String,
+        displayName: String,
+        enrolledAtMs: Long,
+    ) {
+        throw UnsupportedOperationException("listener enrolment is unavailable")
+    }
     suspend fun approveJoin(requestId: String, rememberForFuture: Boolean)
     suspend fun rejectJoin(requestId: String)
     suspend fun removeListener(listenerId: String)
@@ -149,6 +163,18 @@ class UniFfiHostCoreController(
 
     override fun loadHostTrust(databaseHandle: Long, hostPublicKeyDer: ByteArray): UInt =
         nativeGate.withOpen { it.loadHostTrustFromDatabase(databaseHandle, hostPublicKeyDer) }
+
+    override fun enrollVerifiedListener(
+        databaseHandle: Long,
+        hostPublicKeyDer: ByteArray,
+        deviceId: String,
+        displayName: String,
+        enrolledAtMs: Long,
+    ) = nativeGate.withOpen {
+        it.enrollVerifiedListenerInDatabase(
+            databaseHandle, hostPublicKeyDer, deviceId, displayName, enrolledAtMs.toULong(),
+        )
+    }
 
     override suspend fun configureAndCreate(draft: FfiHostDraft) = withContext(Dispatchers.IO) {
         configureAndCreate(draft, emptyList())

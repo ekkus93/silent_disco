@@ -110,6 +110,21 @@ class FakeHostCoreController : HostCoreController {
         return loadHostTrustCount
     }
 
+    /** (device ID, display name) for each enrolment; [enrollFailure] makes it throw. */
+    val enrollCalls = mutableListOf<Pair<String, String>>()
+    var enrollFailure: Throwable? = null
+
+    override fun enrollVerifiedListener(
+        databaseHandle: Long,
+        hostPublicKeyDer: ByteArray,
+        deviceId: String,
+        displayName: String,
+        enrolledAtMs: Long,
+    ) {
+        enrollFailure?.let { throw it }
+        enrollCalls += deviceId to displayName
+    }
+
     override suspend fun approveJoin(requestId: String, rememberForFuture: Boolean) {
         approveJoinCalls += requestId to rememberForFuture
     }

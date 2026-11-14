@@ -64,6 +64,16 @@ internal fun MainViewModel.hostSessionCallbacks() = object : HostSessionCallback
     override fun pendingJoinDisplayName(listenerId: String): String? =
         _uiState.value.pendingJoinRequests.firstOrNull { it.listenerId == listenerId }?.listenerName
     override suspend fun saveTuning(settings: RustStoredTuningSettings) = persistence.saveTuning(settings)
+    override suspend fun rememberVerifiedListener(
+        core: HostCoreController,
+        deviceId: String,
+        displayName: String,
+    ) = withContext(Dispatchers.IO) {
+        val hostKey = hostTransportController.hostTlsPublicKeyDer()
+        persistence.withDatabaseHandle { handle ->
+            core.enrollVerifiedListener(handle, hostKey, deviceId, displayName, System.currentTimeMillis())
+        }
+    }
 }
 
 internal fun MainViewModel.createRustHostSession() {

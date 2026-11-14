@@ -172,7 +172,7 @@ mod legacy_v3_trust_boundary_tests {
             };
             assert!(matches!(
                 handle.submit_listener_connected(listener),
-                Err(FfiBridgeError::Core(message)) if message.contains("can't remember listeners")
+                Err(FfiBridgeError::Core(message)) if message.contains("this host's own records")
             ));
         }
         assert_eq!(
@@ -187,31 +187,17 @@ mod legacy_v3_trust_boundary_tests {
     }
 
     #[test]
-    fn plaintext_ffi_rejects_durable_approval_and_unsupported_host_drafts() {
+    fn approved_devices_drafts_are_accepted_now_that_trust_is_verified() {
         let handle = FfiCoreHandle::open("legacy-host".to_owned(), Arc::new(NoopObserver))
             .expect("open core");
-        assert!(matches!(
-            handle.submit_join_approved(true),
-            Err(FfiBridgeError::Core(message)) if message.contains("permanent approval")
-        ));
-        assert!(matches!(
-            handle.approve_join(0, "join-1".to_owned(), true),
-            Err(FfiBridgeError::Core(message)) if message.contains("can't remember listeners")
-        ));
+        // Approved-devices mode and "Always allow" are accepted: they are
+        // backed by the host's verified records (remediation F1).
         let mut draft = handle.current_snapshot().expect("snapshot").host_draft;
-        draft.approval_mode = FfiApprovalMode::TrustedDevices;
-        assert!(matches!(
-            handle.update_host_draft(0, draft.clone()),
-            Err(FfiBridgeError::Core(message)) if message.contains("can't remember listeners")
-        ));
-        draft.approval_mode = FfiApprovalMode::Manual;
+        draft.approval_mode = crate::host_control::types::FfiApprovalMode::TrustedDevices;
         draft.remember_approved_devices = true;
-        assert!(matches!(
-            handle.update_host_draft(0, draft),
-            Err(FfiBridgeError::Core(message)) if message.contains("can't remember listeners")
-        ));
-        assert!(reject_legacy_durable_host_draft(FfiApprovalMode::Manual, false).is_ok());
-        assert!(reject_legacy_durable_host_draft(FfiApprovalMode::InviteCode, false).is_ok());
+        handle
+            .update_host_draft(0, draft)
+            .expect("approved-devices draft is accepted");
         handle.shutdown().expect("shutdown");
     }
 
@@ -364,6 +350,68 @@ mod legacy_v3_trust_boundary_tests {
             crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
             TrustState::SessionOnly,
             "a revoked key must not be trusted"
+        );
+        handle.shutdown().expect("shutdown");
+        worker.stop_and_join().expect("database closes");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// "Always allow" for a verified listener writes its record and trusts its
+    /// next join; a claimed legacy ID is refused and nothing is stored.
+    #[test]
+    fn always_allow_enrolls_only_a_key_bound_listener() {
+        use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};
+        let (host, _listener, verified) = verified_listener();
+        let device = verified.canonical_device_id();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sd-ffi-host-enroll-{unique}"));
+        std::fs::create_dir_all(&root).expect("temp dir");
+        let worker =
+            DatabaseWorker::start(DatabaseConfig::new(root.join("trust.sqlite3")).expect("config"))
+                .expect("database worker");
+        let client = worker.client();
+        let handle = FfiCoreHandle::open("trust-host".to_owned(), Arc::new(NoopObserver))
+            .expect("open core");
+
+        let refused = crate::host_control::handle_trust::enroll_verified_listener(
+            &handle,
+            &client,
+            &host,
+            "claimed-listener",
+            "Claimed",
+            1,
+        )
+        .expect_err("a claimed ID cannot be remembered");
+        assert!(refused.to_string().contains("proved its key"), "{refused}");
+        assert!(
+            client
+                .list_verified_listeners(*verified.host_fingerprint())
+                .expect("lists")
+                .is_empty()
+        );
+
+        crate::host_control::handle_trust::enroll_verified_listener(
+            &handle,
+            &client,
+            &host,
+            device.as_str(),
+            "Kitchen",
+            5,
+        )
+        .expect("enrolls");
+        let stored = client
+            .list_verified_listeners(*verified.host_fingerprint())
+            .expect("lists");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(&stored[0].listener_key_fingerprint, verified.fingerprint());
+        assert_eq!(stored[0].display_name, "Kitchen");
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::Trusted,
+            "the registry is reloaded after enrolment"
         );
         handle.shutdown().expect("shutdown");
         worker.stop_and_join().expect("database closes");
