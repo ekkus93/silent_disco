@@ -1,15 +1,8 @@
 package com.ekkus.silentdisco.app
 
-import android.os.SystemClock
 import com.ekkus.silentdisco.BuildConfig
-import com.ekkus.silentdisco.core.audio.AudioFormatSpec
-import com.ekkus.silentdisco.core.audio.DecodedAudioChunk
-import com.ekkus.silentdisco.core.audio.PcmPacketizer
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
 import com.ekkus.silentdisco.core.model.PlaybackState
-import com.ekkus.silentdisco.core.protocol.AudioPacket
-import com.ekkus.silentdisco.core.protocol.SessionId
-import com.ekkus.silentdisco.core.protocol.StreamId
 import kotlinx.coroutines.delay
 
     /**
@@ -97,20 +90,4 @@ import kotlinx.coroutines.delay
             )
         }
         refreshListenerDiagnostics()
-    }
-
-    internal fun MainViewModel.generateSyntheticPackets(sessionId: String): List<AudioPacket> {
-        val packetizer = PcmPacketizer(
-            sessionId = SessionId(sessionId),
-            streamId = StreamId("synthetic-stream"),
-            format = AudioFormatSpec(),
-        )
-        return packetizer.packetize(
-            chunk = DecodedAudioChunk(
-                pcm16Le = ByteArray(48_000 / 25 * 4 * 8),
-                firstSampleIndex = 0,
-                frameCount = 48_000 / 25 * 8,
-            ),
-            hostPresentationStartMs = SystemClock.elapsedRealtime() + 500,
-        )
     }

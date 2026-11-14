@@ -24,6 +24,9 @@ import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
 
 private const val CANONICAL_STREAM_SAMPLE_RATE = 48_000L
 
+/** Protocol version advertised by this app's BLE and desktop-mDNS discovery layers. */
+internal const val LISTENER_DISCOVERY_PROTOCOL_VERSION: Int = 3
+
 /** Mirrors the host transport's replay cache bound (`MAX_CACHED_TRACK_BOUNDARIES`). */
 private val REQUESTED_OR_LATER = setOf(
     ListenerLifecycleState.JOIN_REQUESTED,
@@ -149,8 +152,6 @@ internal fun MainViewModel.applyRustListenerSnapshot(snapshot: FfiCoreSnapshot) 
         refreshDiscoveredSessions()
     }
 }
-
-internal fun MainViewModel.ensureListenerTransportEventLoop() = listenerSession.ensureEventLoop()
 
 internal fun MainViewModel.handleListenerTransportEvent(
     controller: ListenerCoreController,

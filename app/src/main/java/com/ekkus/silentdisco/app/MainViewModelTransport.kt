@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
                 refreshDiscoveredSessions()
                 reportRustHostTransportState(snapshot.state)
                 handleTransportSnapshot(snapshot)
-                completeRustListenerNetworkEstablishment(snapshot)
+                listenerSession.completeWifiDirectEstablishment(snapshot)
                 completeRustHostAdvertising(snapshot)
             }
         }

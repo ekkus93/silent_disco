@@ -79,11 +79,12 @@ internal fun MainViewModel.startHostPlaybackImpl() {
         afterAuthoritativeHostPlaybackStart(streamId) {
             try {
                 withContext(Dispatchers.IO) {
-                    startHostMonitorPlayback(
+                    hostMonitor.start(
                         sessionId = sessionId,
                         streamId = streamId,
                         format = format,
                         firstPacket = firstPacket,
+                        volume = uiState.value.localVolume,
                     )
                 }
             } catch (error: Throwable) {
@@ -220,7 +221,7 @@ internal fun MainViewModel.stopHostPlaybackImpl() {
             try {
                 withContext(Dispatchers.IO) {
                     clearHostPlaylistStream()
-                    stopHostMonitorPlayback()
+                    hostMonitor.stop()
                 }
             } catch (error: Throwable) {
                 handleHostPlaybackEngineFailure(error)

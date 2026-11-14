@@ -690,7 +690,7 @@ class MainViewModel @JvmOverloads constructor(
         releaseLiveQueueAudioGrants()
         runBlocking(Dispatchers.IO) {
             runCatching { releaseStagedHostSources() }
-            runCatching { stopHostMonitorPlayback() }
+            runCatching { hostMonitor.stop() }
                 .onFailure { error -> logger.e("playback.host.stop", "Host monitor cleanup failed", error) }
             persistence.closeStore()
         }

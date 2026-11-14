@@ -126,12 +126,12 @@ class MainViewModelRefactorSafetyNetTest {
         advanceUntilIdle()
 
         // Idle: stopping does nothing, not even closing the output.
-        viewModel.stopHostMonitorPlayback()
+        viewModel.hostMonitor.stop()
         assertThat(outputCloses).isEqualTo(0)
 
         val runtime = mock(FfiListenerPlaybackHandle::class.java)
         viewModel.swapHostMonitorPlayback(runtime)
-        viewModel.stopHostMonitorPlayback()
+        viewModel.hostMonitor.stop()
         val order = inOrder(runtime)
         order.verify(runtime).stop()
         order.verify(runtime).close()
@@ -139,7 +139,7 @@ class MainViewModelRefactorSafetyNetTest {
         assertThat(viewModel.hostMonitorPlayback).isNull()
 
         // Idempotent.
-        viewModel.stopHostMonitorPlayback()
+        viewModel.hostMonitor.stop()
         assertThat(outputCloses).isEqualTo(1)
     }
 

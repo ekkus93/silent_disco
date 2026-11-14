@@ -63,7 +63,7 @@ class HostJoinProjectionFailureTest {
         harness.hostCoreController.submitJoinRequestFailure = IllegalStateException("actor queue unavailable")
         try {
             transport.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "session-1")
-            harness.viewModel.handleHostTransportEvent(harness.hostCoreController, join(), native)
+            harness.viewModel.hostSession.handleTransportEvent(harness.hostCoreController, join(), native)
 
             Mockito.verify(native, Mockito.timeout(2_000))
                 .rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "host_busy")
@@ -92,14 +92,14 @@ class HostJoinProjectionFailureTest {
         try {
             transport.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "session-1")
             repeat(128) { index ->
-                harness.viewModel.handleHostTransportEvent(
+                harness.viewModel.hostSession.handleTransportEvent(
                     harness.hostCoreController, join("listener-$index"), native,
                 )
             }
             assertThat(harness.hostCoreController.submitJoinRequestCalls).hasSize(128)
             assertThat(harness.viewModel.hostSession.joinRoutes.size).isEqualTo(128)
 
-            harness.viewModel.handleHostTransportEvent(
+            harness.viewModel.hostSession.handleTransportEvent(
                 harness.hostCoreController, join("overflow-listener"), native,
             )
             Mockito.verify(native, Mockito.timeout(2_000))
@@ -110,7 +110,7 @@ class HostJoinProjectionFailureTest {
             // A terminal event frees capacity; a subsequent distinct join
             // reaches the actor rather than remaining permanently refused.
             harness.viewModel.hostSession.joinRoutes.removeDevice("listener-0")
-            harness.viewModel.handleHostTransportEvent(
+            harness.viewModel.hostSession.handleTransportEvent(
                 harness.hostCoreController, join("fresh-listener"), native,
             )
             assertThat(harness.hostCoreController.submitJoinRequestCalls).hasSize(129)
@@ -137,7 +137,7 @@ class HostJoinProjectionFailureTest {
         harness.hostCoreController.submitJoinRequestFailure = IllegalStateException("actor queue unavailable")
         try {
             transport.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "session-1")
-            harness.viewModel.handleHostTransportEvent(harness.hostCoreController, join(), native)
+            harness.viewModel.hostSession.handleTransportEvent(harness.hostCoreController, join(), native)
 
             Mockito.verify(native, Mockito.timeout(2_000))
                 .rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "host_busy")
@@ -162,12 +162,12 @@ class HostJoinProjectionFailureTest {
         val harness = newTestMainViewModelHarness()
         val controller = harness.hostCoreController
         val viewModel = harness.viewModel
-        viewModel.handleHostTransportEvent(controller, join(controlAddress = "127.0.0.1:10001"), native)
-        viewModel.handleHostTransportEvent(controller, join(controlAddress = "127.0.0.1:10002"), native)
+        viewModel.hostSession.handleTransportEvent(controller, join(controlAddress = "127.0.0.1:10001"), native)
+        viewModel.hostSession.handleTransportEvent(controller, join(controlAddress = "127.0.0.1:10002"), native)
         val requests = controller.submitJoinRequestCalls
         assertThat(requests).hasSize(2)
 
-        viewModel.handleHostTransportEvent(
+        viewModel.hostSession.handleTransportEvent(
             controller,
             FfiHostTransportEvent.PeerDisconnectedAt(
                 controlAddress = "127.0.0.1:10001",
@@ -200,10 +200,10 @@ class HostJoinProjectionFailureTest {
             advanceUntilIdle()
             // The old approval decision can arrive after another TCP socket
             // claims the same unverified legacy device ID.
-            harness.viewModel.handleHostTransportEvent(
+            harness.viewModel.hostSession.handleTransportEvent(
                 harness.hostCoreController, join(controlAddress = "127.0.0.1:10001"), native,
             )
-            harness.viewModel.handleHostTransportEvent(
+            harness.viewModel.hostSession.handleTransportEvent(
                 harness.hostCoreController, join(controlAddress = "127.0.0.1:10002"), native,
             )
             val requests = harness.hostCoreController.submitJoinRequestCalls

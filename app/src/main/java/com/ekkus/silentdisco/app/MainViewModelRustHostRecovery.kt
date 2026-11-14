@@ -112,7 +112,7 @@ private fun MainViewModel.finishFailedRustHostStopCleanup(): List<String> {
     hostPlayback.latestPackets = emptyList()
     _uiState.value = _uiState.value.copy(discoveredSessions = emptyList())
     return collectRustHostCleanupFailures(
-        "stop playback" to { stopHostMonitorPlayback() },
+        "stop playback" to { hostMonitor.stop() },
         "stop BLE" to { bleService.stop() },
         "stop Wi-Fi Direct" to { wifiDirectService.stop() },
         "close host transport" to { hostTransportController.close() },

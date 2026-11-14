@@ -47,7 +47,7 @@ class HostJoinTrustProjectionTest {
         val harness = newTestMainViewModelHarness(hostTransportController = transport)
         try {
             transport.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "session-1")
-            harness.viewModel.handleHostTransportEvent(
+            harness.viewModel.hostSession.handleTransportEvent(
                 harness.hostCoreController,
                 FfiHostTransportEvent.JoinRequestReceived(
                     controlAddress = "127.0.0.1:10001",

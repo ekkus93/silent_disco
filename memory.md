@@ -1808,3 +1808,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `app/controller/HostSessionController.kt` owns the host core and its notification loop (with recovery via callback), the transport event loop, join/sync/resync projection (generation-bound), transport and storage effects, and the advertising bind retry, plus the session id, pending advertising op, join routes and recovery dispatch. `MainViewModelRustHostSync.kt` and `...Resync.kt` deleted; `MainViewModel` forwards `hostCoreController` and `currentSessionId`.
 - 5 new tests; dropping the refused-approval early return fails them and `MainViewModelStaleApprovalTest`. 607 JVM tests and the full Android gate (`--max-workers=2`, 2m52s) passed.
 - Left: start/stop advertising, failed start/stop cleanup, host intents.
+
+## 2026-11-14T03:28:40Z - claude-opus-5-5 - God-file refactor: HostSession and coordinator clean-up done; §5/§7 logged
+- Owner decision 2026-11-14: keep the remaining `MainViewModel*.kt` extension files as coordinator code (UI mapping and cross-controller orchestration) instead of role coordinator classes. HostSession part 2 (start/stop advertising, failed start/stop cleanup, host intents) stays orchestration on the same basis.
+- Folded and deleted 5 pure-forwarding files (Support, RustListenerNetwork, RustHostEvents, CallbackCapture, HostMonitorPlayback); removed dead `generateSyntheticPackets` and `ensureListenerTransportEventLoop`. 16 extension files remain; `MainViewModel.kt` 772 lines; its only state is `_uiState` plus 5 forwarding accessors.
+- Handoff §55: T1–T3 timing state logged (TODO §5), Rust near-limit watchlist with line counts (TODO §7), open finding that the v4 Android host still refuses durable trust with the v3-worded `LEGACY_V3_DURABLE_TRUST_ERROR`. §6 marked deferred to the UI redesign.
+- 607 JVM tests and the full Android gate (`--max-workers=2`, 3m14s) passed. Next: §8 close-out on the A54.

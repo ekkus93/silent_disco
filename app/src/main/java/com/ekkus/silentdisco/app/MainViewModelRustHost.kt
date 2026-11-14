@@ -359,7 +359,7 @@ private suspend fun MainViewModel.stopAdvertisingForRust(
     hostPlayback.cancelStream()
     listenerPlaybackController.cancelStatusPoll()
     listenerPlaybackController.cancelResync()
-    stopHostMonitorPlayback()
+    hostMonitor.stop()
     bleService.stop()
     wifiDirectService.stop()
     hostSession.joinRoutes.clear()

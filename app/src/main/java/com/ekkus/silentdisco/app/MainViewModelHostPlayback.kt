@@ -96,7 +96,7 @@ internal fun MainViewModel.handleHostPlaybackEngineFailure(error: Throwable) {
     val message = error.message ?: "Host playback engine failed"
     logger.e("playback.host", message, error)
     hostPlayback.cancelStream()
-    stopHostMonitorPlayback()
+    hostMonitor.stop()
     _uiState.value = _uiState.value.copy(lastError = message)
     reportRustHostPlaybackFailure(message)
     hostPlayback.streamId?.let { failedStreamId ->

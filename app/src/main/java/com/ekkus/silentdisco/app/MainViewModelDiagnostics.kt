@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.app
 
+import android.app.Application
 import com.ekkus.silentdisco.app.controller.HostDiagnosticsInput
 import com.ekkus.silentdisco.core.model.BridgeQueueCounters
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
@@ -60,3 +61,14 @@ import com.ekkus.silentdisco.core.model.TransportConnectionState
     }
 
     internal fun MainViewModel.summarizeMetrics(): String = diagnostics.summarizeMetrics()
+
+/** Developer-only, explicitly enabled output callback recording (owned by [diagnostics]). */
+internal fun MainViewModel.startCallbackPcmCapture() {
+    // The manual listener path owns its playback runtime through its own controller.
+    diagnostics.startCapture(
+        playback = listenerPlayback ?: manualListenerController.playbackRuntime,
+        directory = getApplication<Application>().getExternalFilesDir("diagnostics"),
+    )
+}
+
+internal fun MainViewModel.stopCallbackPcmCapture() = diagnostics.stopCapture()

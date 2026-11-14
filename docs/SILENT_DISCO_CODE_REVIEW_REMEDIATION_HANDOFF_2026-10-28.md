@@ -965,3 +965,43 @@ Spec and TODO: `docs/SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md` and `doc
 
 - Memory is tight on this machine (Chrome, Slack and Discord hold most of the 7 GB). A full gate was once killed by Claude Code for low memory; running Gradle with `--max-workers=2` has passed every time since (5–10 minutes).
 - On the A54, always pass `-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true` to connected tests, or Gradle uninstalls the app and erases its data.
+
+## 55. 2026-11-14 — God-file refactor: Kotlin timing state, Rust watchlist and an open finding
+
+### 55.1 Kotlin timing state, logged for a later Rust block (TODO §5, owner decision: log, do not move)
+
+Each moved unchanged into its controller.
+
+- **T1, track boundaries.**
+  - Listener side, `controller/ListenerTrackBoundaries.kt`: pending and applied boundaries, the timers, and the stream's host start time.
+  - Host side, `controller/HostPlaybackController.kt`: `pendingBoundaries` and `boundaryJobs`, scheduled by `scheduleHostQueueBoundary` in `MainViewModelHostPlayback.kt`.
+  - Kotlin decides when a boundary takes effect. Still unconfirmed: does it only drive the displayed track name and the host queue advance, or does it compete with boundary timing in the Rust scheduler? Check that before any move.
+- **T2, the pre-runtime sync exchange.**
+  - Kotlin side: `MainViewModelSynchronization.kt` sends the probes. `controller/ListenerPlaybackController.kt` keeps the pre-runtime estimator, the same-session clock-lock handover and the probe IDs. `hostTimingService` answers demo sessions.
+  - Rust already owns the estimate, so Kotlin only orchestrates.
+  - Candidate: move probe scheduling and the handover into Rust.
+- **T3, host packet pacing.**
+  - `controller/HostStreamLoop.kt` keeps the pause offset, the send pacing (`delay(packetDurationMs)`) and the presentation-tail wait. `HostPlaybackController.latestPackets` holds the last packets for diagnostics.
+  - The dead `latestDecodedAudio` field was removed; it was only ever set to null.
+  - Candidate: move pacing into the Rust packetizer worker.
+
+### 55.2 Rust near-limit watchlist (TODO §7, owner decision: split only when a file next grows)
+
+Line counts at 2026-11-14 (guideline 800):
+
+| Lines | File |
+| ---: | --- |
+| 799 | `silent-disco-core/src/audio/packetizer_worker.rs` |
+| 796 | `silent-disco-ffi/src/audio_abi.rs` |
+| 786 | `silent-disco-ffi/src/host_transport/handle.rs` |
+| 784 | `silent-disco-core/src/audio/scheduler/engine.rs` |
+| 776 | `silent-disco-core/src/runtime/types.rs` |
+| 759 | `silent-disco-ffi/src/host_control/handle.rs` |
+| 759 | `silent-disco-ffi/src/audio_output.rs` |
+| 758 | `silent-disco-core/src/runtime/actor_runtime/mod.rs` |
+
+Rule: the next change that adds lines to any of these splits it by responsibility in the same block. For `runtime/types.rs` the planned split is `runtime/types/{revision,host_draft,tuning,network,listeners,diagnostics}.rs`, with `pub use` re-exports and no API change.
+
+### 55.3 Open finding (behaviour unchanged by the refactor)
+
+The Android host now runs secure transport v4, but it still refuses durable listener trust. A "trust for future" approval reports a failed delivery, and `PersistTrustedDevice` fails, both with `LEGACY_V3_DURABLE_TRUST_ERROR`. The text still says v3. Proper v4 trust needs verified, host-scoped listener key storage on Android. Until then, the refusal is the safe behaviour, but the message should stop saying v3.
