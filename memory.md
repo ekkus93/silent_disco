@@ -1907,3 +1907,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Core `HostVerifiedTrust::from_records`; FFI `load_host_trust_from_database(db_handle, host_key_der)` reads `verified_listeners` via the Android database registry (`android_database_abi::database_client`). 3 tests; mutation killed. check-rust 926, Android gate green.
 - Gradle gotcha: `compile{Debug,PocDebug}UnitTestKotlin` failed with "Cannot access class FakeListenerTransport" (sharedTest source set) on unchanged Kotlin -- stale incremental cache. Fixed by `--rerun-tasks` on the three unit-test compile tasks; not a code defect.
 - FFI flake `shutdown_races_with_concurrent_command_submission_and_notification_delivery` hit again under full-suite load; 5/5 isolated.
+
+## 2026-11-14T16:34:37Z - claude-opus-5-5 - F1 durable trust step 2b: Android host start loads trust
+- `createRustHostSession` calls `HostCoreController.loadHostTrust(dbHandle, hostTlsPublicKeyDer)` via `persistence.withDatabaseHandle` before `configureAndCreate`; failure -> "Could not load trusted listeners: ..." and no session. `RustDatabase.withNativeHandle` is @Synchronized so close cannot race the load.
+- JVM harness default `HostTransportController(hostTlsSigner = FixedHostTlsSigner)` (Keystore unavailable on JVM). `HostTrustLoadTest` 3 tests; mutation killed; full Android gate green. No device run.

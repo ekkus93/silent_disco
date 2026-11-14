@@ -222,6 +222,14 @@ class RustDatabase internal constructor(
         handle = 0L
     }
 
+    /**
+     * Lends the native handle to another Rust FFI object for the duration of
+     * [action] (the host core reads its trust records with it). Holding this
+     * object's lock keeps [close] from running while the handle is in use.
+     */
+    @Synchronized
+    internal fun <T> withNativeHandle(action: (Long) -> T): T = action(requireOpenHandle())
+
     private fun requireOpenHandle(): Long {
         if (handle <= 0L) {
             throw RustDatabaseClosedException()

@@ -93,6 +93,9 @@ class HostTransportController(
     /** Best-effort diagnostic events dropped while the UI collector was slow. */
     val droppedDiagnosticEvents: Long get() = eventQueue.droppedBestEffort
 
+    /** The host TLS public key (SPKI DER) listeners pin; its private key stays in Keystore. */
+    fun hostTlsPublicKeyDer(): ByteArray = hostTlsSigner.spkiDer()
+
     suspend fun bind(
         scope: CoroutineScope,
         localAddress: String,

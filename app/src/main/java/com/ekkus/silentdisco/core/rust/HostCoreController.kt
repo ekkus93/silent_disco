@@ -63,6 +63,14 @@ interface HostCoreController : AutoCloseable {
     suspend fun removeHostQueueEntry(entryId: String) {
         throw UnsupportedOperationException("host queue removal is unavailable")
     }
+    /**
+     * Loads this host's verified-listener trust records from the Rust database
+     * for [hostPublicKeyDer] (the host TLS key listeners pin). Blocking; call
+     * on an IO thread. Returns how many records were loaded.
+     */
+    fun loadHostTrust(databaseHandle: Long, hostPublicKeyDer: ByteArray): UInt {
+        throw UnsupportedOperationException("host trust loading is unavailable")
+    }
     suspend fun approveJoin(requestId: String, rememberForFuture: Boolean)
     suspend fun rejectJoin(requestId: String)
     suspend fun removeListener(listenerId: String)
@@ -138,6 +146,9 @@ class UniFfiHostCoreController(
             sessionId, streamId, hostStartTimeMs, sources, handle,
         )
     }
+
+    override fun loadHostTrust(databaseHandle: Long, hostPublicKeyDer: ByteArray): UInt =
+        nativeGate.withOpen { it.loadHostTrustFromDatabase(databaseHandle, hostPublicKeyDer) }
 
     override suspend fun configureAndCreate(draft: FfiHostDraft) = withContext(Dispatchers.IO) {
         configureAndCreate(draft, emptyList())

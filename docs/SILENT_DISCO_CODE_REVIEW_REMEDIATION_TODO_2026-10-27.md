@@ -62,7 +62,13 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 - The FFI method `FfiCoreHandle::load_host_trust_from_database(database_handle, host_public_key_der)` reads the records straight from the app's Rust database (the Android JNI database handle), so no trust data passes through Kotlin. It returns the count loaded.
 - Tests: 2 core tests and 1 FFI test against a real database worker (enrol → Trusted; revoke → SessionOnly). Mutation (loader ignores revocation) killed by both.
 - Gates: `check-rust.sh` (926), full Android gate.
-- **Open:** call the loader at Android host session start with the host TLS key; desktop equivalent; write records from "Always allow"; revoke UI.
+**Step 2b done (2026-11-14, local gates; box stays open): Android host start.**
+- `createRustHostSession` loads the host's records before `configureAndCreate`, so before the session can bind or receive a join. The key is the host TLS key (`HostTransportController.hostTlsPublicKeyDer()`, the key listeners pin). The handle is the Rust database handle, lent only while held open (`RustDatabase.withNativeHandle` under the store mutex; `RustDomainStore.withDatabaseHandle`).
+- A failed load stops the start with "Could not load trusted listeners: …"; the session is not created.
+- JVM tests: `HostTrustLoadTest` (3: load with the store handle and the TLS key before create; failed load; database not open). Mutation (skip the load) killed. The JVM harness uses a fixed host TLS signer because Keystore is unavailable there.
+- Gate: full Android gate.
+- Not yet run: an on-device test of the real FFI load path (no device run this step).
+- **Open:** desktop equivalent; write records from "Always allow"; revoke UI.
 - [ ] Validate cryptographic proof of listener identity before projecting Trusted/Untrusted. Update Rust FFI admission inputs and Android MainViewModelRustHost join mapping; never hard-code TRUSTED.
 - [ ] Update desktop host_join_projection to resolve verified host-owned trust records instead of unconditional SessionOnly; ensure Android/desktop policy parity.
 - [ ] Wire Always allow / Approve once / revoke, first enrollment, host restart, listener reconnect, profile switch and lost-key re-enrollment with accurate user-visible status.

@@ -35,6 +35,15 @@ class FakeRustDomainStore(
         saveTuningFailure?.let { throw it }
     }
 
+    /** The handle [withDatabaseHandle] lends; when [databaseHandleFailure] is set it throws instead. */
+    var databaseHandle: Long = 42L
+    var databaseHandleFailure: Throwable? = null
+
+    override suspend fun <T> withDatabaseHandle(load: (databaseHandle: Long) -> T): T {
+        databaseHandleFailure?.let { throw it }
+        return load(databaseHandle)
+    }
+
     override suspend fun trustDevice(deviceId: String, displayName: String, observedAtMs: Long) {
         trustDeviceCalls += Triple(deviceId, displayName, observedAtMs)
         trustDeviceFailure?.let { throw it }

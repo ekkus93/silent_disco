@@ -34,6 +34,9 @@ internal class PersistenceController(
 
     suspend fun saveTuning(settings: RustStoredTuningSettings) = store.saveTuning(settings)
 
+    suspend fun <T> withDatabaseHandle(load: (databaseHandle: Long) -> T): T =
+        store.withDatabaseHandle(load)
+
     fun retainAudioReadGrant(uri: Uri, newlyRetained: MutableSet<Uri>) =
         readGrants.retain(uri, newlyRetained)
 

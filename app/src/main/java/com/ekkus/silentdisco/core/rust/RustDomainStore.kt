@@ -22,5 +22,12 @@ interface RustDomainStore {
         observedAtMs: Long = System.currentTimeMillis(),
     )
 
+    /**
+     * Runs [load] with the open Rust database handle, so a Rust FFI object can
+     * read host-owned records (verified listener trust) without them passing
+     * through Kotlin. Throws if the database is not open.
+     */
+    suspend fun <T> withDatabaseHandle(load: (databaseHandle: Long) -> T): T
+
     suspend fun close()
 }

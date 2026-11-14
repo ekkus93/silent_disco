@@ -99,6 +99,17 @@ class FakeHostCoreController : HostCoreController {
         removeHostQueueEntryCalls += entryId
     }
 
+    /** (database handle, host key) for each trust load, and its scripted outcome. */
+    val loadHostTrustCalls = mutableListOf<Pair<Long, ByteArray>>()
+    var loadHostTrustFailure: Throwable? = null
+    var loadHostTrustCount: UInt = 0u
+
+    override fun loadHostTrust(databaseHandle: Long, hostPublicKeyDer: ByteArray): UInt {
+        loadHostTrustCalls += databaseHandle to hostPublicKeyDer
+        loadHostTrustFailure?.let { throw it }
+        return loadHostTrustCount
+    }
+
     override suspend fun approveJoin(requestId: String, rememberForFuture: Boolean) {
         approveJoinCalls += requestId to rememberForFuture
     }

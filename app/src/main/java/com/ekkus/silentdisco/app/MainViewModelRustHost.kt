@@ -99,6 +99,22 @@ internal fun MainViewModel.createRustHostSession() {
             _uiState.value = _uiState.value.copy(lastError = error.message ?: "Could not prepare selected songs")
             return@launch
         }
+        // Trust comes only from the host's own records, so load them before
+        // the session can bind and receive a join (remediation F1).
+        val trust = runCatching {
+            withContext(Dispatchers.IO) {
+                val hostKey = hostTransportController.hostTlsPublicKeyDer()
+                persistence.withDatabaseHandle { handle -> controller.loadHostTrust(handle, hostKey) }
+            }
+        }
+        val loaded = trust.getOrElse {
+            reportRustHostCommandFailure(
+                "load trusted listeners",
+                IllegalStateException("Could not load trusted listeners: ${it.message ?: it::class.simpleName}", it),
+            )
+            return@launch
+        }
+        logger.i("trust.load", "Loaded $loaded verified listener record(s) for this host key")
         runCatching { controller.configureAndCreate(draft, additionalEntries) }
             .onFailure { reportRustHostCommandFailure("start host session", it) }
     }

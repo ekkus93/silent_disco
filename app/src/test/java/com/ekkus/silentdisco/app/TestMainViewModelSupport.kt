@@ -87,7 +87,7 @@ private fun fakeApplication(): Application {
 
 /** Constructs a real [MainViewModel] wired entirely to recording fakes; see [MainViewModelHarness]. */
 fun newTestMainViewModelHarness(
-    hostTransportController: HostTransportController = HostTransportController(),
+    hostTransportController: HostTransportController = HostTransportController(hostTlsSigner = FixedHostTlsSigner),
     hostElapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
     hostStreamDispatcher: CoroutineDispatcher = Dispatchers.IO,
     closeHostMonitorOutput: () -> Unit = {},
@@ -125,4 +125,17 @@ fun newTestMainViewModelHarness(
         mdnsService = mdnsService,
         listenerTransport = listenerTransport,
     )
+}
+
+/**
+ * A host TLS identity for JVM tests, where Keystore is unavailable. Only its
+ * public key is read (the host trust load); it never signs.
+ */
+object FixedHostTlsSigner : com.ekkus.silentdisco.core.uniffi.FfiListenerProofSigner {
+    val publicKeyDer: ByteArray = ByteArray(91) { it.toByte() }
+
+    override fun spkiDer(): ByteArray = publicKeyDer.copyOf()
+
+    override fun signDer(transcript: ByteArray): ByteArray =
+        throw UnsupportedOperationException("the JVM test host never signs")
 }

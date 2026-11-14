@@ -107,6 +107,11 @@ class AndroidRustDomainStore internal constructor(
         }
     }
 
+    override suspend fun <T> withDatabaseHandle(load: (databaseHandle: Long) -> T): T =
+        withContext(ioDispatcher) {
+            mutex.withLock { requireDatabase().withNativeHandle(load) }
+        }
+
     override suspend fun close() = withContext(ioDispatcher) {
         mutex.withLock {
             val current = database ?: return@withLock
