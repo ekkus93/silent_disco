@@ -1820,3 +1820,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Device run 1 failed in the environment: the phone got "no QUIC answer ... within 3 s" from 192.168.5.48:45825; ping and UDP both ways worked afterwards; no Rust/desktop change since run 14; cause not established. Run 2 passed: late join 2,999 fully delivered (Good, RTT 26 ms), 0 listeners during the 12 s drop, rejoin 4,006 fully delivered (Excellent, RTT 17 ms); phone session 2: 4,005 accepted, 1 concealed, 0 late. Session 1's 102 concealed frames are the drop itself.
 - How a stuck-looking phone was diagnosed: the error was below the fold on the manual-connect screen (scroll, then `uiautomator dump`); a thread dump via `adb shell run-as com.ekkus.silentdisco kill -3 <pid>` lands in `/data/anr/trace_N`, readable only through `adb bugreport`.
 - Handoff §56 records the close-out. TODO §§0–5, 7, 8 done; §6 deferred to the UI redesign. Not yet asked: whether CLAUDE.md should list the refactor spec.
+
+## 2026-11-14T04:02:47Z - claude-opus-5-5 - CLAUDE.md lists the God-file refactor spec
+- Owner approved listing `docs/SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md` and its TODO under "Authoritative migration documents" for Android view-model structure; §6 noted as deferred to the UI redesign.

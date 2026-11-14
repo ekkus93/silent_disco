@@ -23,6 +23,11 @@ For desktop companion work, read and follow:
 - `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_SPEC.md`
 - `docs/SILENT_DISCO_TAURI_DESKTOP_HOST_TODO.md`
 
+For Android view-model structure (the `MainViewModel` controllers under `app/controller/`), read and follow:
+
+- `docs/SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md`
+- `docs/SILENT_DISCO_GOD_FILE_REFACTOR_TODO_2026-11-13.md` (§6, `SilentDiscoApp`, is deferred to the UI redesign)
+
 Do not create additional assistant-generated design documents unless they are committed at the exact path referenced by one of these specs or TODOs.
 
 `README.md` is the maintained developer quick-start for the current Rust/Android/Tauri repository. The architecture specs and TODOs above remain authoritative when a quick-start statement and a scoped design/completion decision differ. `.github/copilot-instructions.md` may still contain older Android-only context; do not treat it as authoritative over the migration documents.
