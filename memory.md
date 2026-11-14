@@ -1835,3 +1835,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - 14 feature destinations moved verbatim into `hostNavGraph`, `listenerNavGraph`, `settingsNavGraph` (app package) with an `AppNavContext` (view-models, State-backed UI state getters read in composition, app-level actions). Startup/Home stay in `SilentDiscoApp` (544 lines, was 769).
 - Wiring test passed on the A54; removing the listener graph call fails it. Full Android gate passed.
 - Pitfall: an unused-import prune must keep `androidx.compose.runtime.getValue`/`setValue`, which `by` delegation uses implicitly.
+
+## 2026-11-14T11:32:26Z - claude-opus-5-5 - God-file refactor §6.3: feature launcher helpers
+- `rememberAudioPicker` (host), `rememberQrScanner` with camera permission (listener), `rememberRuntimePermissionLauncher`; callbacks only. `SilentDiscoApp.kt` 478 lines.
+- `FeatureLaunchersTest` uses a recording `ActivityResultRegistry` via `LocalActivityResultRegistryOwner` (no external app). There is no `androidx.test:rules` dependency, so no `GrantPermissionRule`; the test reads the real camera permission and checks the matching branch instead of changing device state.
+- The first full gate was stopped by Claude Code for low memory; the rerun passed (4m21s). CLAUDE.md now says §6 is being done (owner decision 2026-11-14).

@@ -1,15 +1,11 @@
 package com.ekkus.silentdisco.app
 
-import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -27,7 +23,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -43,8 +38,6 @@ import com.ekkus.silentdisco.feature.p2.VerifiedQrInvitationDialog
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesViewModel
 import com.ekkus.silentdisco.feature.startup.StartupGateScreen
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
 import java.time.Instant
 import kotlinx.coroutines.flow.collect
 
@@ -105,69 +98,17 @@ fun SilentDiscoApp(
         )
     }
 
-    fun qrScanOptions(): ScanOptions = ScanOptions().apply {
-        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-        setPrompt("Scan a signed Silent Disco invitation")
-        setBeepEnabled(false)
-        setOrientationLocked(false)
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) { results ->
-        results.forEach { (permission, granted) ->
-            viewModel.updatePermission(permission, granted)
-        }
-        val granted = permissionRequest.pendingAction?.context?.requiredPermissions()?.all { permission ->
-            results[permission.androidPermission] == true ||
-                uiState.permissions.firstOrNull { it.permission == permission }?.granted == true
-        } == true
-        permissionRequest.complete(granted)
-    }
-
-    // The system document picker may return after an Activity recreation.
-    // Save the destination so live additions never overwrite setup selections.
-    val audioPickerDestination = rememberAudioPickerDestination()
-    val audioPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments(),
-    ) { uris: List<Uri> ->
-        dispatchAudioPickerResult(
-            destination = audioPickerDestination,
-            uris = uris,
-            onSetup = { viewModel.selectAudioFiles(it) },
-            onLiveQueue = viewModel::addSongsToLiveQueue,
-        )
-    }
-
-    val qrScannerLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        val payload = result.contents
-        if (payload.isNullOrBlank()) {
-            workflowViewModel.showTransientMessage("QR scanning cancelled")
-        } else {
-            p2ViewModel.validateScannedQr(payload)
-        }
-    }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) {
-            qrScannerLauncher.launch(qrScanOptions())
-        } else {
-            showCameraDenied = true
-        }
-    }
-
-    fun launchQrScanner() {
-        if (
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            qrScannerLauncher.launch(qrScanOptions())
-        } else {
-            showCameraRationale = true
-        }
-    }
+    val permissionLauncher = rememberRuntimePermissionLauncher(viewModel::updatePermission, permissionRequest, uiState)
+    val audioPicker = rememberAudioPicker(
+        onSetup = { viewModel.selectAudioFiles(it) },
+        onLiveQueue = viewModel::addSongsToLiveQueue,
+    )
+    val qrScanner = rememberQrScanner(
+        onScanned = p2ViewModel::validateScannedQr,
+        onCancelled = { workflowViewModel.showTransientMessage("QR scanning cancelled") },
+        onRationaleNeeded = { showCameraRationale = true },
+        onCameraDenied = { showCameraDenied = true },
+    )
 
     // ActivityResult callbacks can arrive after recreation; restore an
     // explicit destination rather than keeping an obsolete Compose lambda.
@@ -184,14 +125,8 @@ fun SilentDiscoApp(
             PermissionAction.DIRECT_QR_CONNECT ->
                 navController.navigateSingleTop(AppRoutes.ManualConnect)
             PermissionAction.LISTENER_PERMISSION_ONLY -> Unit
-            PermissionAction.PICK_SETUP_AUDIO, PermissionAction.PICK_LIVE_AUDIO -> {
-                audioPickerDestination.value = if (action == PermissionAction.PICK_SETUP_AUDIO) {
-                    AudioPickerDestination.SETUP
-                } else {
-                    AudioPickerDestination.LIVE_QUEUE
-                }
-                audioPickerLauncher.launch(arrayOf("audio/*"))
-            }
+            PermissionAction.PICK_SETUP_AUDIO -> audioPicker.launch(AudioPickerDestination.SETUP)
+            PermissionAction.PICK_LIVE_AUDIO -> audioPicker.launch(AudioPickerDestination.LIVE_QUEUE)
         }
     }
 
@@ -338,7 +273,7 @@ fun SilentDiscoApp(
         requestPermissionThen = ::requestPermissionThen,
         shareSupportReport = ::shareSupportReport,
         openSystemSettings = ::openSystemSettings,
-        launchQrScanner = ::launchQrScanner,
+        launchQrScanner = qrScanner::launch,
         showInviteDialog = { showInviteDialog = true },
     )
 
@@ -429,7 +364,7 @@ fun SilentDiscoApp(
                 Button(
                     onClick = {
                         showCameraRationale = false
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        qrScanner.requestCameraPermission()
                     },
                 ) {
                     Text("Continue")
