@@ -65,9 +65,9 @@ For each item:
 
 ## 6. `SilentDiscoApp` (order per decision 0.2)
 
-**Deferred to the UI redesign (decision 0.2 = b).** These items stay open on purpose and are not part of this refactor's close-out.
+**Owner decision 2026-11-14: do §6 now** (overrides the earlier deferral to the UI redesign, decision 0.2 = b). Mechanical split, behaviour unchanged.
 
-- [ ] Characterization: confirm the existing UI tests cover each of the 16 destinations' main callbacks, and add any that are missing.
+- [x] Characterization: confirm the existing UI tests cover each of the 16 destinations' main callbacks, and add any that are missing. (None did: every existing UI test renders one screen with stub callbacks, or a `NavHost` of placeholder boxes. Added `androidTest/.../app/SilentDiscoAppWiringTest.kt`: 11 tests rendering the real `SilentDiscoApp` over a `MainViewModel` on recording fakes, covering all 16 destinations; passed 3 consecutive A54 runs. Not tapped: callbacks that start other apps (share, system settings, document picker, QR camera) and deletes against the real trusted-hosts store. Seams: the plain-Kotlin fakes moved to `src/sharedTest/java` for both test sets; `SilentDiscoApp` takes an optional `navController`.)
 - [ ] Feature navigation-graph builders `hostNavGraph`, `listenerNavGraph` and `settingsNavGraph`. `SilentDiscoApp` keeps only the `NavHost`, top-level state and the snackbar.
 - [ ] Launcher helpers per feature (audio picker, QR scanner, camera permission, runtime permissions).
 - [ ] Flow state holders `QrJoinFlowState` and `SessionConfirmationState`, keeping `rememberSaveable` behaviour across rotation and process death, with a `StateRestorationTester` test for each.

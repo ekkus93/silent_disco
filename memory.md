@@ -1823,3 +1823,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-14T04:02:47Z - claude-opus-5-5 - CLAUDE.md lists the God-file refactor spec
 - Owner approved listing `docs/SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md` and its TODO under "Authoritative migration documents" for Android view-model structure; §6 noted as deferred to the UI redesign.
+
+## 2026-11-14T10:00:30Z - claude-opus-5-5 - God-file refactor §6.1: SilentDiscoApp wiring characterization
+- Owner decision 2026-11-14: do §6 now (overrides the deferral to the UI redesign).
+- No existing UI test covered `SilentDiscoApp`'s wiring. New `SilentDiscoAppWiringTest` (androidTest, 11 tests, all 16 destinations) renders the real app over a `MainViewModel` on recording fakes; 3 consecutive A54 passes. Full Android gate passed.
+- Seams: plain-Kotlin fakes moved to `app/src/sharedTest/java` (compiled into test and androidTest); `SilentDiscoApp(navController = rememberNavController())` parameter.
+- Test lessons: create the `TestNavHostController` with `remember`; gate the fake store's `initialize` until after the first frame, or the startup NavigateHome effect runs before the NavHost sets its graph (possible latent race if real storage ever opened within the first frame); invoke `SemanticsActions.OnClick` directly because snackbars cover bottom-anchored buttons; starting a host stages audio first, so a fake content URI fails visibly before the core is called.
+- Never tap delete actions in app-level instrumented tests: P2ViewModel uses the phone's real trusted-hosts store.

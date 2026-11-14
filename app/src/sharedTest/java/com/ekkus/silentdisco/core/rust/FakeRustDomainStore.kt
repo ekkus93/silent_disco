@@ -20,8 +20,12 @@ class FakeRustDomainStore(
     /** When set, [initialize] throws it, as a failed storage open would. */
     var initializeFailure: Throwable? = null
 
+    /** When set, [initialize] waits for it, as a real storage open takes time. */
+    var initializeGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
     override suspend fun initialize(): RustStoredTuningSettings {
         initializeCallCount += 1
+        initializeGate?.await()
         initializeFailure?.let { throw it }
         return initializeResult
     }

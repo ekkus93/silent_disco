@@ -66,6 +66,9 @@ android {
         getByName("pocDebug").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("debug") })
         getByName("release").jniLibs.srcDir(rustGeneratedJniRoot.map { it.dir("release") })
         getByName("androidTest").assets.srcDir("src/test/resources")
+        // Plain-Kotlin fakes used by both JVM and instrumented tests.
+        getByName("test").java.srcDir("src/sharedTest/java")
+        getByName("androidTest").java.srcDir("src/sharedTest/java")
     }
 
     compileOptions {

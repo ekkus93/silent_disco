@@ -33,6 +33,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import com.ekkus.silentdisco.BuildConfig
 import com.ekkus.silentdisco.core.model.AppRole
@@ -70,12 +71,13 @@ fun SilentDiscoApp(
     workflowViewModel: WorkflowViewModel,
     trustedDevicesViewModel: TrustedDevicesViewModel,
     p2ViewModel: P2ViewModel,
+    /** Injectable so instrumented tests can observe and drive navigation; production uses the default. */
+    navController: NavHostController = rememberNavController(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val captureStatus by viewModel.callbackCaptureStatus.collectAsStateWithLifecycle()
     val trustedDevicesUiState by trustedDevicesViewModel.uiState.collectAsStateWithLifecycle()
     val p2UiState by p2ViewModel.uiState.collectAsStateWithLifecycle()
-    val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val discoveryLifecycleController = remember(context) { DiscoveryLifecycleController(context) }
