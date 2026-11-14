@@ -2,15 +2,10 @@ package com.ekkus.silentdisco.app
 
 import android.os.SystemClock
 import androidx.lifecycle.viewModelScope
-import com.ekkus.silentdisco.core.audio.AudioFormatSpec
 import com.ekkus.silentdisco.core.model.PlaybackState
-import com.ekkus.silentdisco.core.protocol.AudioPacket
-import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
-import com.ekkus.silentdisco.core.uniffi.FfiPlaylistFrame
 import com.ekkus.silentdisco.core.uniffi.FfiPlaylistStreamStart
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackState
-import com.ekkus.silentdisco.core.rust.HostPlaylistStreamController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -60,35 +55,23 @@ internal fun MainViewModel.startHostPlaybackImpl() {
         }
 
         val streamId = StreamId("stream-${SystemClock.elapsedRealtime()}-${java.util.UUID.randomUUID()}")
-        hostPlayback.pendingBoundaries.clear()
-        hostPlayback.streamId = streamId
-        val streamer = try {
-            val sources = withContext(Dispatchers.IO) { stageHostPlaylistSources() }
+        val (streamer, format, firstPacket) = try {
             withContext(Dispatchers.IO) {
-                ensureRustHostCore().openHostPlaylist(
-                    sessionId = sessionId.value,
-                    streamId = streamId.value,
-                    hostStartTimeMs = (SystemClock.elapsedRealtime() + HOST_STREAM_START_LEAD_MS).toULong(),
-                    sources = sources,
-                )
+                hostPlayback.prepareStream(sessionId, streamId) {
+                    val sources = stageHostPlaylistSources()
+                    ensureRustHostCore().openHostPlaylist(
+                        sessionId = sessionId.value,
+                        streamId = streamId.value,
+                        hostStartTimeMs = (SystemClock.elapsedRealtime() + HOST_STREAM_START_LEAD_MS).toULong(),
+                        sources = sources,
+                    )
+                }
             }
         } catch (error: Throwable) {
             handleHostPlaybackPreparationFailure(error)
             return@launchHostPlaybackCommand
         }
-        hostPlayback.streamer = streamer
-        hostPlayback.streamStart = streamer.streamStart
         val streamStart = streamer.streamStart
-        val format = AudioFormatSpec(streamStart.sampleRate.toInt(), streamStart.channels.toInt())
-        hostPlayback.format = format
-        val firstPacket = try {
-            withContext(Dispatchers.IO) { streamer.nextAudioPacket(sessionId, streamId) }
-        } catch (error: Throwable) {
-            clearHostPlaylistStream()
-            handleHostPlaybackPreparationFailure(error)
-            return@launchHostPlaybackCommand
-        }
-        hostPlayback.latestPackets = listOf(firstPacket)
         val packetBudgetSummary = firstPacket.let { packet ->
             "${packet.payload.size + 48}B first packet; native streaming decoder"
         }
@@ -358,31 +341,3 @@ private fun MainViewModel.reportHostPlaybackCommandFailure(action: String, error
 }
 
 private const val HOST_STREAM_START_LEAD_MS = 500L
-
-private suspend fun HostPlaylistStreamController.nextAudioPacket(
-    sessionId: SessionId,
-    streamId: StreamId,
-): AudioPacket {
-    while (true) {
-        when (val frame = nextFrame(2_000uL)) {
-            null -> continue
-            FfiPlaylistFrame.End -> error("Playlist ended before producing audio")
-            is FfiPlaylistFrame.TrackBoundary -> error("Playlist began with an unexpected track boundary")
-            is FfiPlaylistFrame.Audio -> return AudioPacket(
-                version = 3,
-                sessionId = sessionId,
-                streamId = StreamId(frame.streamId),
-                sequenceNumber = frame.sequence.toLong(),
-                codec = "pcm16le",
-                sampleRate = frame.sampleRate.toInt(),
-                channelCount = frame.channels.toInt(),
-                samplesPerPacket = frame.samplesPerPacket.toInt(),
-                firstSampleIndex = frame.firstSampleIndex.toLong(),
-                hostPresentationTimeMs = frame.hostPresentationTimeMs.toLong(),
-                payload = frame.payload,
-            ).also {
-                require(it.streamId == streamId) { "playlist frame belongs to another stream" }
-            }
-        }
-    }
-}

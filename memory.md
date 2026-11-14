@@ -1798,3 +1798,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `MainViewModel.currentStreamId` is gone: the host uses `hostPlayback.streamId`, the listener `listenerPlaybackController.streamId`. Host session teardown (stop advertising, failed start rollback, failed stop cleanup) clears both, keeping spec A.3 item 1.
 - `MainViewModelRustHostNotificationRecoveryTest` now sets the listener stream id first; removing the listener reset fails it. 600 JVM tests and the full Android gate (`--max-workers=2`, 7m16s) passed.
 - Next: move host stream preparation (open playlist, first packet) into `HostPlaybackController`, then check off the item; then `HostSessionController` and the coordinator clean-up.
+
+## 2026-11-14T02:51:50Z - claude-opus-5-5 - God-file refactor §4: HostPlaybackController done
+- Stream preparation moved into `HostPlaybackController.prepareStream` (clears old boundaries, sets the stream id, opens the playlist, reads and checks the first packet; a bad first packet clears the stream before the failure propagates). 2 new tests; removing that clear fails them. 602 JVM tests and the full Android gate (`--max-workers=2`, 2m49s) passed.
+- Item checked off. Play/pause/resume/stop are coordinator orchestration and are placed in the coordinator clean-up.
+- Open finding for the handoff: the Android host still refuses durable listener trust with `LEGACY_V3_DURABLE_TRUST_ERROR` although it now runs v4; behaviour unchanged by the refactor.
