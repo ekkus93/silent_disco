@@ -11,6 +11,7 @@ import com.ekkus.silentdisco.app.controller.DiagnosticsController
 import com.ekkus.silentdisco.app.controller.DiscoveryController
 import com.ekkus.silentdisco.app.controller.HostMonitorController
 import com.ekkus.silentdisco.app.controller.HostPlaybackController
+import com.ekkus.silentdisco.app.controller.HostSessionController
 import com.ekkus.silentdisco.app.controller.HostSourceStaging
 import com.ekkus.silentdisco.app.controller.ListenerPlaybackController
 import com.ekkus.silentdisco.app.controller.ListenerSessionController
@@ -31,7 +32,6 @@ import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.permissions.PermissionCatalogue
 import com.ekkus.silentdisco.core.permissions.AppPermission
 import com.ekkus.silentdisco.core.permissions.PermissionState
-import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
 import com.ekkus.silentdisco.core.rust.HostCoreController
@@ -139,6 +139,16 @@ class MainViewModel @JvmOverloads constructor(
     internal val hostMonitor = controllers.add(
         HostMonitorController(parentScope = viewModelScope, closeOutput = closeHostMonitorOutput),
     )
+    internal val hostSession = controllers.add(
+        HostSessionController(
+            parentScope = viewModelScope,
+            transport = hostTransportController,
+            coreFactory = hostCoreFactory,
+            deviceId = { DeviceIdentityStore.get(application) },
+            logger = logger,
+            callbacks = hostSessionCallbacks(),
+        ),
+    )
     internal val hostPlayback = controllers.add(
         HostPlaybackController(
             parentScope = viewModelScope,
@@ -180,7 +190,11 @@ class MainViewModel @JvmOverloads constructor(
     )
     val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
 
-    @Volatile internal var currentSessionId: SessionId? = null
+    internal var currentSessionId: SessionId?
+        get() = hostSession.sessionId
+        set(value) {
+            hostSession.sessionId = value
+        }
     val callbackCaptureStatus: StateFlow<String> get() = diagnostics.captureStatus
     internal var listenerPlayback: FfiListenerPlaybackHandle?
         get() = listenerPlaybackController.runtime
@@ -195,26 +209,17 @@ class MainViewModel @JvmOverloads constructor(
     internal fun swapHostMonitorPlayback(value: FfiListenerPlaybackHandle?): FfiListenerPlaybackHandle? =
         hostMonitor.swap(value)
     /** Scheduled host queue advances, keyed by the boundary's first sample index. */
-    @Volatile internal var hostCoreController: HostCoreController? = null
+    internal var hostCoreController: HostCoreController?
+        get() = hostSession.core
+        set(value) {
+            hostSession.core = value
+        }
     internal var listenerCoreController: ListenerCoreController?
         get() = listenerSession.core
         set(value) {
             listenerSession.core = value
         }
     internal val listenerHasPendingWifiDirectJoin: Boolean get() = listenerSession.hasPendingWifiDirectJoin
-    @Volatile internal var pendingStartAdvertisingOperationId: String? = null
-    /** Suppress duplicate Wi-Fi callbacks for the same in-flight bind operation. */
-    internal var bindingStartAdvertisingOperationId: String? = null
-    internal var hostTransportEventLoopStarted: Boolean = false
-
-    /**
-     * A listener's sync/audio UDP ports, from its `JoinRequestReceived`
-     * event, kept only until the join is approved or otherwise resolved --
-     * `authorize_listener` needs them, but nothing else does, so they never
-     * belong in Rust-owned join-request state.
-     */
-    internal val pendingListenerDatagramPorts = PendingHostJoinRoutes<FfiHostTransportHandle>()
-    internal val hostRecoveryDispatch = HostRecoveryDispatch()
 
     init {
         cleanupOrphanedAudioReadGrants()

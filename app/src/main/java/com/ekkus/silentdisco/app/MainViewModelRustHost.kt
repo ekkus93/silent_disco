@@ -2,7 +2,6 @@ package com.ekkus.silentdisco.app
 
 import android.os.SystemClock
 import androidx.lifecycle.viewModelScope
-import com.ekkus.silentdisco.core.identity.DeviceIdentityStore
 import com.ekkus.silentdisco.core.model.ApprovalMode
 import com.ekkus.silentdisco.core.model.HostLifecycleState
 import com.ekkus.silentdisco.core.model.JoinApprovalState
@@ -16,155 +15,55 @@ import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.model.TrustState
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
+import com.ekkus.silentdisco.app.controller.HostSessionCallbacks
 import com.ekkus.silentdisco.core.rust.HostCoreController
+import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.uniffi.FfiApprovalMode
 import com.ekkus.silentdisco.core.uniffi.FfiAudioSource
 import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
 import com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot
-import com.ekkus.silentdisco.core.uniffi.FfiDeliveryReport
 import com.ekkus.silentdisco.core.uniffi.FfiHostDraft
 import com.ekkus.silentdisco.core.uniffi.FfiHostLifecycle
-import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
-import com.ekkus.silentdisco.core.uniffi.FfiHostTransportHandle
 import com.ekkus.silentdisco.core.uniffi.FfiQueueEntry
 import com.ekkus.silentdisco.core.uniffi.FfiJoinRequestInput
 import com.ekkus.silentdisco.core.uniffi.FfiListenerSummary
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformCompletion
 import com.ekkus.silentdisco.core.uniffi.FfiPlatformEffect
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackState
-import com.ekkus.silentdisco.core.uniffi.FfiStorageEffect
-import com.ekkus.silentdisco.core.uniffi.FfiTransportEffect
 import com.ekkus.silentdisco.core.uniffi.FfiTransportState
 import com.ekkus.silentdisco.core.uniffi.FfiTrustState
 import com.ekkus.silentdisco.core.uniffi.FfiTuningSettings
 import com.ekkus.silentdisco.core.transport.BleAdvertisement
-import com.ekkus.silentdisco.core.transport.TransportPorts
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-internal fun MainViewModel.ensureRustHostCore(): HostCoreController {
-    hostCoreController?.let { return it }
-    val controller = hostCoreFactory(DeviceIdentityStore.get(getApplication()))
-    hostCoreController = controller
-    viewModelScope.launch {
-        controller.snapshots.filterNotNull().collect(::applyRustHostSnapshot)
-    }
-    viewModelScope.launch {
-        controller.notifications.collect { notification ->
-            try {
-                executeRustHostNotification(controller, notification)
-            } catch (error: kotlinx.coroutines.CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                recoverRustHostNotificationFailure(controller, notification, error)
-            }
-        }
-    }
-    ensureHostTransportEventLoop(controller)
-    return controller
-}
+internal fun MainViewModel.ensureRustHostCore(): HostCoreController = hostSession.ensureCore()
 
-private fun MainViewModel.ensureHostTransportEventLoop(controller: HostCoreController) {
-    if (hostTransportEventLoopStarted) return
-    hostTransportEventLoopStarted = true
-    viewModelScope.launch {
-        hostTransportController.eventsWithGeneration.collect { source ->
-            // Rebind can retire the socket after dequeue but before actor
-            // projection. Never submit a stale join/disconnect to the new host.
-            if (!hostTransportController.isCurrentGeneration(source.handle)) return@collect
-            handleHostTransportEvent(controller, source.event, source.handle)
-        }
-    }
-}
+/** Called from the Wi-Fi Direct snapshot collector; see `HostSessionController.completeAdvertising`. */
+internal suspend fun MainViewModel.completeRustHostAdvertising(snapshot: TransportSnapshot) =
+    hostSession.completeAdvertising(snapshot)
 
-/**
- * Completes a pending `StartAdvertising` platform operation once the Wi-Fi
- * Direct group actually forms and its own address is known -- binding
- * `FfiHostTransportHandle` requires a real local address, which isn't
- * available synchronously when the group is only requested.
- *
- * Confirmed on a physical device: Wi-Fi Direct's connection-changed broadcast
- * can fire fractionally before the OS finishes assigning the group-owner
- * address to its p2p interface, so the first bind attempt right after
- * ADVERTISING can race a transient "Cannot assign requested address"
- * failure. A few short retries absorb that without masking a genuinely
- * permanent bind failure (e.g. port in use), which still surfaces honestly
- * once retries are exhausted.
- */
-private const val HOST_BIND_RETRY_ATTEMPTS = 5
-private const val HOST_BIND_RETRY_DELAY_MS = 200L
-
-internal suspend fun MainViewModel.completeRustHostAdvertising(snapshot: TransportSnapshot) {
-    val operationId = pendingStartAdvertisingOperationId ?: return
-    if (snapshot.state != TransportConnectionState.ADVERTISING) return
-    val address = snapshot.hostAddressHint ?: return
-    val controller = hostCoreController ?: return
-    val sessionId = currentSessionId?.value ?: return
-    // Wi-Fi Direct can report the same group address more than once while
-    // the native bind is suspended. Never launch duplicate binds for one op.
-    if (bindingStartAdvertisingOperationId == operationId) return
-    bindingStartAdvertisingOperationId = operationId
-    val stillRequested = {
-        pendingStartAdvertisingOperationId == operationId &&
-            currentSessionId?.value == sessionId &&
-            hostCoreController === controller
+/** How the host session reads the UI state and hands results back to it. */
+internal fun MainViewModel.hostSessionCallbacks() = object : HostSessionCallbacks {
+    override fun onSnapshot(snapshot: FfiCoreSnapshot) = applyRustHostSnapshot(snapshot)
+    override suspend fun executePlatformEffect(core: HostCoreController, effect: FfiPlatformEffect) =
+        executeRustPlatformEffect(core, effect)
+    override fun onCoreError(message: String) {
+        _uiState.value = _uiState.value.copy(lastError = message)
     }
-    try {
-        val ports = TransportPorts()
-        var lastError: Throwable? = null
-        for (attempt in 1..HOST_BIND_RETRY_ATTEMPTS) {
-            if (!stillRequested()) return
-            val result = runCatching {
-                hostTransportController.bindIfRequested(
-                    scope = viewModelScope,
-                    localAddress = address,
-                    controlPort = ports.control,
-                    syncPort = ports.sync,
-                    audioPort = ports.audio,
-                    sessionId = sessionId,
-                    stillRequested = stillRequested,
-                )
-            }
-            // Stop or a replacement session can arrive while the IO bind is
-            // queued. Never acknowledge the retired operation to the actor.
-            if (!stillRequested()) return
-            result.onSuccess { bound ->
-                if (!bound) return
-                pendingStartAdvertisingOperationId = null
-                pendingListenerDatagramPorts.clear()
-                controller.transportStateChanged(FfiTransportState.ADVERTISING)
-                controller.platformOperationSucceeded(operationId, FfiPlatformCompletion.AdvertisingStarted)
-                return
-            }
-            lastError = result.exceptionOrNull()
-            if (lastError is kotlinx.coroutines.CancellationException) throw lastError
-            logger.w(
-                "rust.host",
-                "Host transport bind attempt $attempt/$HOST_BIND_RETRY_ATTEMPTS at $address failed: ${lastError?.message}",
-            )
-            if (attempt < HOST_BIND_RETRY_ATTEMPTS && stillRequested()) {
-                delay(HOST_BIND_RETRY_DELAY_MS)
-            }
-        }
-        if (stillRequested()) {
-            pendingStartAdvertisingOperationId = null
-            controller.platformOperationFailed(
-                operationId,
-                lastError?.message ?: "Failed to bind host transport",
-                true,
-            )
-        }
-    } finally {
-        if (bindingStartAdvertisingOperationId == operationId) {
-            bindingStartAdvertisingOperationId = null
-        }
-    }
+    override fun recoverNotificationFailure(
+        core: HostCoreController,
+        notification: FfiCoreNotification,
+        error: Exception,
+    ) = recoverRustHostNotificationFailure(core, notification, error)
+    override fun commandFailed(action: String, error: Throwable) = reportRustHostCommandFailure(action, error)
+    override fun pendingJoinDisplayName(listenerId: String): String? =
+        _uiState.value.pendingJoinRequests.firstOrNull { it.listenerId == listenerId }?.listenerName
+    override suspend fun saveTuning(settings: RustStoredTuningSettings) = persistence.saveTuning(settings)
 }
 
 internal fun MainViewModel.createRustHostSession() {
@@ -335,25 +234,6 @@ private fun MainViewModel.applyRustHostSnapshot(snapshot: FfiCoreSnapshot) {
     refreshHostDiagnostics(streamState = playbackState, sessionId = sessionId)
 }
 
-private suspend fun MainViewModel.executeRustHostNotification(
-    controller: HostCoreController,
-    notification: FfiCoreNotification,
-) {
-    when (notification) {
-        is FfiCoreNotification.Snapshot -> applyRustHostSnapshot(notification.snapshot)
-        is FfiCoreNotification.PlatformEffect -> executeRustPlatformEffect(controller, notification.effect)
-        is FfiCoreNotification.TransportEffect -> executeRustTransportEffect(controller, notification.effect)
-        is FfiCoreNotification.StorageEffect -> executeRustStorageEffect(controller, notification.effect)
-        is FfiCoreNotification.Error -> {
-            logger.e("rust.host", notification.error.message)
-            _uiState.value = _uiState.value.copy(lastError = notification.error.message)
-        }
-        is FfiCoreNotification.Diagnostic -> {
-            logger.i("rust.host.${notification.diagnostic.name}", notification.diagnostic.fields.joinToString())
-        }
-    }
-}
-
 private suspend fun MainViewModel.executeRustPlatformEffect(
     controller: HostCoreController,
     effect: FfiPlatformEffect,
@@ -452,7 +332,7 @@ private fun MainViewModel.startAdvertisingForRust(
         )
         return
     }
-    pendingStartAdvertisingOperationId = effect.operationId
+    hostSession.pendingStartAdvertisingOperationId = effect.operationId
     _uiState.value = _uiState.value.copy(
         discoveredSessions = listOf(session),
         lastMessage = "Hosting ${session.name}",
@@ -475,14 +355,14 @@ private suspend fun MainViewModel.stopAdvertisingForRust(
     effect: FfiPlatformEffect.StopAdvertising,
 ) {
     // Invalidate queued native binds before any suspending teardown work.
-    pendingStartAdvertisingOperationId = null
+    hostSession.pendingStartAdvertisingOperationId = null
     hostPlayback.cancelStream()
     listenerPlaybackController.cancelStatusPoll()
     listenerPlaybackController.cancelResync()
     stopHostMonitorPlayback()
     bleService.stop()
     wifiDirectService.stop()
-    pendingListenerDatagramPorts.clear()
+    hostSession.joinRoutes.clear()
     // Native shutdown waits for in-flight UniFFI operations and the poller.
     // Never hold the Compose/main dispatcher while waiting for those threads.
     // Complete retirement even if the notification coroutine is cancelled.
@@ -501,137 +381,6 @@ private suspend fun MainViewModel.stopAdvertisingForRust(
         discoveredSessions = emptyList(),
         lastMessage = "Session ended",
     )
-}
-
-private suspend fun MainViewModel.executeRustTransportEffect(
-    controller: HostCoreController,
-    effect: FfiTransportEffect,
-) {
-    if (effect is FfiTransportEffect.DeliverJoinApproval) {
-        if (effect.trustedForFuture) {
-            // Legacy v3 has no verified key: report a failed delivery to the actor,
-            // not a pending approval or a silently trusted claimed device ID.
-            pendingListenerDatagramPorts.discard(effect.requestId, effect.listenerId)
-            controller.transportDeliveryCompleted(
-                effect.operationId,
-                FfiDeliveryReport(intendedPeers = 1u, successfulPeers = 0u, failedPeers = 1u),
-            )
-            reportRustHostCommandFailure(
-                "approve listener",
-                IllegalStateException(com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR),
-            )
-            return
-        }
-        // Do not send a successful approval without the UDP ports needed to
-        // authorize the SAME peer/session. Approval and route authorization
-        // must not straddle a host close/rebind suspend boundary.
-        val route = pendingListenerDatagramPorts.take(effect.requestId, effect.listenerId)
-        val outcome = route?.let {
-            hostTransportController.approveAndAuthorizeListener(
-                effect.listenerId, effect.trustedForFuture, it.syncPort, it.audioPort,
-                expectedGeneration = it.sourceHandle,
-            )
-        }
-        val authorized = outcome?.authorized == true
-        controller.transportDeliveryCompleted(
-            effect.operationId,
-            if (authorized) {
-                outcome?.delivery.toFfiDeliveryReport()
-            } else {
-                FfiDeliveryReport(intendedPeers = 1u, successfulPeers = 0u, failedPeers = 1u)
-            },
-        )
-        if (!authorized) {
-            val reason = when {
-                route == null -> "Original listener join route missing or retired; approval refused"
-                outcome == null -> "Host session replaced before listener approval"
-                outcome.failure != null -> outcome.failure
-                else -> "Listener approval was not delivered"
-            }
-            reportRustHostCommandFailure("authorize listener", IllegalStateException(reason))
-            return
-        }
-        val displayName = _uiState.value.pendingJoinRequests
-            .firstOrNull { it.listenerId == effect.listenerId }
-            ?.listenerName
-            ?: effect.listenerId
-        controller.submitListenerConnected(
-            FfiListenerSummary(
-                deviceId = effect.listenerId,
-                displayName = displayName,
-                trustState = if (effect.trustedForFuture) {
-                    FfiTrustState.TRUSTED
-                } else {
-                    FfiTrustState.SESSION_ONLY
-                },
-                transportState = FfiTransportState.CONNECTED,
-                synchronization = null,
-                lastContactMs = SystemClock.elapsedRealtime().toULong(),
-                lastError = null,
-            ),
-        )
-        return
-    }
-
-    val delivery = when (effect) {
-        is FfiTransportEffect.DeliverJoinRejection -> {
-            val route = pendingListenerDatagramPorts.take(effect.requestId, effect.listenerId)
-            // A claimed legacy ID can be reused by a newer pending TCP
-            // generation. Refuse only the exact socket that originated this
-            // actor request; an old decision must never reject the replacement.
-            // Routes without a recorded address fail closed, not by ID.
-            route?.controlAddress?.let { address ->
-                hostTransportController.sendJoinRejectionForGeneration(
-                    route.sourceHandle, effect.listenerId, address, effect.reasonCode,
-                )
-            }
-        }
-        is FfiTransportEffect.DisconnectListener -> {
-            pendingListenerDatagramPorts.removeDevice(effect.listenerId)
-            hostTransportController.disconnectPeer(effect.listenerId, effect.reasonCode)
-        }
-        is FfiTransportEffect.DeliverJoinApproval -> error("handled above")
-    }
-    controller.transportDeliveryCompleted(
-        operationId = when (effect) {
-            is FfiTransportEffect.DeliverJoinRejection -> effect.operationId
-            is FfiTransportEffect.DisconnectListener -> effect.operationId
-            is FfiTransportEffect.DeliverJoinApproval -> error("handled above")
-        },
-        report = delivery.toFfiDeliveryReport(),
-    )
-}
-
-private suspend fun MainViewModel.executeRustStorageEffect(
-    controller: HostCoreController,
-    effect: FfiStorageEffect,
-) {
-    when (effect) {
-        is FfiStorageEffect.PersistSettings -> runCatching {
-            persistence.saveTuning(effect.settings.toRustStoredSettings())
-        }.onSuccess {
-            controller.settingsSaved(effect.operationId)
-        }.onFailure { error ->
-            controller.storageOperationFailed(
-                effect.operationId,
-                error.message ?: "Failed to persist settings",
-                true,
-            )
-        }
-        is FfiStorageEffect.PersistTrustedDevice -> {
-            // The current Android production socket is plaintext v3. No
-            // handshake proves possession of a listener key, so persisting
-            // a claimed device ID would silently elevate a spoofable peer.
-            // Fail the Rust actor's storage effect rather than acknowledging
-            // an unverified trust record. Secure v4 must replace this guard
-            // with verified, host-scoped public-key persistence.
-            controller.storageOperationFailed(
-                effect.operationId,
-                com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR,
-                false,
-            )
-        }
-    }
 }
 
 internal fun MainViewModel.reportRustHostCommandFailure(action: String, error: Throwable) {
@@ -670,18 +419,6 @@ private fun TuningSettings.toFfiTuningSettings(): FfiTuningSettings = FfiTuningS
     syncDriftThresholdMs = syncDriftThresholdMs,
     scanWindowMs = scanWindowMs.toULong(),
 )
-
-private fun FfiTuningSettings.toRustStoredSettings() =
-    com.ekkus.silentdisco.core.rust.RustStoredTuningSettings(
-        syncSampleWindow = syncSampleWindow.toInt(),
-        syncCadenceMs = syncCadenceMs.toLong(),
-        startupBufferMs = startupBufferMs.toLong(),
-        latePacketThresholdMs = latePacketThresholdMs.toLong(),
-        hardResyncThresholdMs = hardResyncThresholdMs.toLong(),
-        syncDriftThresholdMs = syncDriftThresholdMs,
-        scanWindowMs = scanWindowMs.toLong(),
-        updatedAtMs = System.currentTimeMillis(),
-    )
 
 internal fun ApprovalMode.toFfiApprovalMode(): FfiApprovalMode = when (this) {
     ApprovalMode.MANUAL -> FfiApprovalMode.MANUAL

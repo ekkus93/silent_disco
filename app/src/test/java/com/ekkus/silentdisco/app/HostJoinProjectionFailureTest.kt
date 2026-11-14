@@ -68,7 +68,7 @@ class HostJoinProjectionFailureTest {
             Mockito.verify(native, Mockito.timeout(2_000))
                 .rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "host_busy")
             assertThat(harness.hostCoreController.submitJoinRequestCalls).isEmpty()
-            assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(0)
+            assertThat(harness.viewModel.hostSession.joinRoutes.size).isEqualTo(0)
             assertThat(harness.viewModel.uiState.value.lastError).contains("actor queue unavailable")
         } finally {
             transport.close()
@@ -97,7 +97,7 @@ class HostJoinProjectionFailureTest {
                 )
             }
             assertThat(harness.hostCoreController.submitJoinRequestCalls).hasSize(128)
-            assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(128)
+            assertThat(harness.viewModel.hostSession.joinRoutes.size).isEqualTo(128)
 
             harness.viewModel.handleHostTransportEvent(
                 harness.hostCoreController, join("overflow-listener"), native,
@@ -105,16 +105,16 @@ class HostJoinProjectionFailureTest {
             Mockito.verify(native, Mockito.timeout(2_000))
                 .rejectPendingPeerAt("127.0.0.1:10001", "overflow-listener", "host_busy")
             assertThat(harness.hostCoreController.submitJoinRequestCalls).hasSize(128)
-            assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(128)
+            assertThat(harness.viewModel.hostSession.joinRoutes.size).isEqualTo(128)
 
             // A terminal event frees capacity; a subsequent distinct join
             // reaches the actor rather than remaining permanently refused.
-            harness.viewModel.pendingListenerDatagramPorts.removeDevice("listener-0")
+            harness.viewModel.hostSession.joinRoutes.removeDevice("listener-0")
             harness.viewModel.handleHostTransportEvent(
                 harness.hostCoreController, join("fresh-listener"), native,
             )
             assertThat(harness.hostCoreController.submitJoinRequestCalls).hasSize(129)
-            assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(128)
+            assertThat(harness.viewModel.hostSession.joinRoutes.size).isEqualTo(128)
         } finally {
             transport.close()
         }
@@ -150,7 +150,7 @@ class HostJoinProjectionFailureTest {
                 Thread.sleep(5)
             }
             assertThat(harness.viewModel.uiState.value.lastError).contains("not delivered")
-            assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(0)
+            assertThat(harness.viewModel.hostSession.joinRoutes.size).isEqualTo(0)
         } finally {
             transport.close()
         }
@@ -176,9 +176,9 @@ class HostJoinProjectionFailureTest {
             ),
             native,
         )
-        assertThat(viewModel.pendingListenerDatagramPorts.take(requests[0].requestId, "listener-1"))
+        assertThat(viewModel.hostSession.joinRoutes.take(requests[0].requestId, "listener-1"))
             .isNull()
-        val replacement = viewModel.pendingListenerDatagramPorts.take(requests[1].requestId, "listener-1")
+        val replacement = viewModel.hostSession.joinRoutes.take(requests[1].requestId, "listener-1")
         assertThat(replacement?.controlAddress).isEqualTo("127.0.0.1:10002")
         assertThat(replacement?.sourceHandle).isSameInstanceAs(native)
     }
@@ -226,7 +226,7 @@ class HostJoinProjectionFailureTest {
                 .rejectPendingPeerAt("127.0.0.1:10001", "listener-1", "denied")
             Mockito.verify(native, Mockito.never()).sendJoinRejection("listener-1", "denied")
             // The newer pending request keeps its own address and route.
-            val newer = harness.viewModel.pendingListenerDatagramPorts.take(
+            val newer = harness.viewModel.hostSession.joinRoutes.take(
                 requests[1].requestId, "listener-1",
             )
             assertThat(newer?.controlAddress).isEqualTo("127.0.0.1:10002")

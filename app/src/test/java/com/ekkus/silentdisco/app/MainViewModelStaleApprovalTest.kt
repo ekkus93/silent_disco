@@ -76,7 +76,7 @@ class MainViewModelStaleApprovalTest {
             // The retired generation's route is gone; the same claimed ID now
             // owns a different pending request.
             assertThat(
-                harness.viewModel.pendingListenerDatagramPorts.record(
+                harness.viewModel.hostSession.joinRoutes.record(
                     "req-2", "listener-1", 101u, 102u, native, controlAddress = "127.0.0.1:10002",
                 ),
             ).isTrue()
@@ -91,7 +91,7 @@ class MainViewModelStaleApprovalTest {
             )
             Mockito.verify(native, Mockito.never()).sendJoinApproval("listener-1", false)
             assertThat(harness.hostCoreController.submitListenerConnectedCalls).isEmpty()
-            assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(1)
+            assertThat(harness.viewModel.hostSession.joinRoutes.size).isEqualTo(1)
 
             // Only the stale request is refused: the current request still
             // approves and authorizes exactly its own recorded ports.
@@ -104,7 +104,7 @@ class MainViewModelStaleApprovalTest {
             Mockito.verify(native).authorizeListener("listener-1", 101u, 102u)
             assertThat(harness.hostCoreController.submitListenerConnectedCalls.single().deviceId)
                 .isEqualTo("listener-1")
-            assertThat(harness.viewModel.pendingListenerDatagramPorts.size).isEqualTo(0)
+            assertThat(harness.viewModel.hostSession.joinRoutes.size).isEqualTo(0)
         } finally {
             transport.close()
         }

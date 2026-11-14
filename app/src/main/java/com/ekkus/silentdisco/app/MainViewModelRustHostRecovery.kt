@@ -85,8 +85,8 @@ internal fun MainViewModel.recoverRustHostNotificationFailure(
 }
 
 private fun MainViewModel.rollbackFailedRustHostStart(): List<String> {
-    pendingStartAdvertisingOperationId = null
-    pendingListenerDatagramPorts.clear()
+    hostSession.pendingStartAdvertisingOperationId = null
+    hostSession.joinRoutes.clear()
     currentSessionId = null
     hostPlayback.streamId = null
     // Ending the host session also ends any stream a listener role followed.
@@ -103,8 +103,8 @@ private fun MainViewModel.finishFailedRustHostStopCleanup(): List<String> {
     hostPlayback.cancelStream()
     listenerPlaybackController.cancelStatusPoll()
     listenerPlaybackController.cancelResync()
-    pendingStartAdvertisingOperationId = null
-    pendingListenerDatagramPorts.clear()
+    hostSession.pendingStartAdvertisingOperationId = null
+    hostSession.joinRoutes.clear()
     currentSessionId = null
     hostPlayback.streamId = null
     // Ending the host session also ends any stream a listener role followed.

@@ -1803,3 +1803,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Stream preparation moved into `HostPlaybackController.prepareStream` (clears old boundaries, sets the stream id, opens the playlist, reads and checks the first packet; a bad first packet clears the stream before the failure propagates). 2 new tests; removing that clear fails them. 602 JVM tests and the full Android gate (`--max-workers=2`, 2m49s) passed.
 - Item checked off. Play/pause/resume/stop are coordinator orchestration and are placed in the coordinator clean-up.
 - Open finding for the handoff: the Android host still refuses durable listener trust with `LEGACY_V3_DURABLE_TRUST_ERROR` although it now runs v4; behaviour unchanged by the refactor.
+
+## 2026-11-14T02:59:39Z - claude-opus-5-5 - God-file refactor §4: HostSessionController part 1
+- `app/controller/HostSessionController.kt` owns the host core and its notification loop (with recovery via callback), the transport event loop, join/sync/resync projection (generation-bound), transport and storage effects, and the advertising bind retry, plus the session id, pending advertising op, join routes and recovery dispatch. `MainViewModelRustHostSync.kt` and `...Resync.kt` deleted; `MainViewModel` forwards `hostCoreController` and `currentSessionId`.
+- 5 new tests; dropping the refused-approval early return fails them and `MainViewModelStaleApprovalTest`. 607 JVM tests and the full Android gate (`--max-workers=2`, 2m52s) passed.
+- Left: start/stop advertising, failed start/stop cleanup, host intents.

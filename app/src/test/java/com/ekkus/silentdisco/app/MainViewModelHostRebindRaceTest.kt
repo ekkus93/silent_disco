@@ -113,7 +113,7 @@ class MainViewModelHostRebindRaceTest {
                 harness.hostCoreController.emit(
                     FfiCoreNotification.PlatformEffect(FfiPlatformEffect.StopAdvertising("op-stop")),
                 )
-                awaitRealDispatchHop { harness.viewModel.pendingStartAdvertisingOperationId == null }
+                awaitRealDispatchHop { harness.viewModel.hostSession.pendingStartAdvertisingOperationId == null }
                 release.countDown()
                 awaitRealDispatchHop { harness.hostCoreController.platformOperationSucceededCalls.isNotEmpty() }
 
