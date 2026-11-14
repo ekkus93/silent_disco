@@ -442,7 +442,7 @@ pub(crate) fn validate_sql_millis(
     i64::try_from(value).map(|_| ()).map_err(|_| error)
 }
 
-fn validate_human_name(value: &str, maximum_bytes: usize) -> Result<(), ()> {
+pub(crate) fn validate_human_name(value: &str, maximum_bytes: usize) -> Result<(), ()> {
     if value.trim().is_empty() || value.len() > maximum_bytes || value.chars().any(char::is_control)
     {
         return Err(());

@@ -88,16 +88,17 @@ fn a_profile_saved_at_schema_3_upgrades_with_secure_transport_off() {
     {
         let raw = Connection::open(test_path.path()).expect("raw open");
         raw.execute_batch(
-            "ALTER TABLE app_settings DROP COLUMN secure_transport;
+            "DROP TABLE verified_listeners;
+             ALTER TABLE app_settings DROP COLUMN secure_transport;
              PRAGMA user_version = 3;",
         )
         .expect("rewind to schema 3");
-        raw.execute("DELETE FROM schema_migrations WHERE version = 4", [])
-            .expect("forget migration 4");
+        raw.execute("DELETE FROM schema_migrations WHERE version >= 4", [])
+            .expect("forget migrations 4 and 5");
     }
 
     let upgraded = DatabaseConnection::open(&config).expect("schema 3 profile upgrades");
-    assert_eq!(upgraded.metadata().schema_version, 4);
+    assert_eq!(upgraded.metadata().schema_version, LATEST_SCHEMA_VERSION);
     let loaded = upgraded
         .load_settings()
         .expect("settings reload")
@@ -147,7 +148,10 @@ fn verifies_durable_connection_policy_and_latest_schema() {
     assert_eq!(u64::from(metadata.busy_timeout_ms), DEFAULT_BUSY_TIMEOUT_MS);
     assert_eq!(metadata.synchronous_policy, SynchronousPolicy::Full);
     assert_eq!(metadata.schema_version, LATEST_SCHEMA_VERSION);
-    assert_eq!(metadata.applied_migrations.len(), 4);
+    assert_eq!(
+        metadata.applied_migrations.len(),
+        LATEST_SCHEMA_VERSION as usize
+    );
     assert_eq!(metadata.integrity_check, "ok");
     assert!(!metadata.owner_thread_name.is_empty());
     connection

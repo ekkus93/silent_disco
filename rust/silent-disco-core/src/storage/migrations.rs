@@ -4,7 +4,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 
 use super::error::{StorageError, StorageErrorKind, StorageOperation, map_sqlite_error};
 
-pub const LATEST_SCHEMA_VERSION: u32 = 4;
+pub const LATEST_SCHEMA_VERSION: u32 = 5;
 
 const MIGRATION_V1_SQL: &str = r"
 CREATE TABLE schema_migrations (
@@ -132,6 +132,32 @@ ALTER TABLE app_settings
     CHECK (secure_transport IN (0, 1));
 ";
 
+// Durable listener trust (remediation F1; owner decision 2026-11-09: stored
+// in Rust-owned SQLite). A row is one listener key the host chose to "Always
+// allow", scoped to the host's own key so a rotated host key starts with no
+// trust. Keys are SHA-256 fingerprints in lowercase hex. A revoked row is
+// kept, so the key stays known as revoked rather than becoming unknown. The
+// legacy `trusted_devices` rows (claimed IDs, no verified key) are not copied:
+// nothing is silently promoted to verified trust.
+const MIGRATION_V5_SQL: &str = r"
+CREATE TABLE verified_listeners (
+    host_key_fingerprint     TEXT NOT NULL CHECK (
+        length(host_key_fingerprint) = 64 AND host_key_fingerprint NOT GLOB '*[^0-9a-f]*'
+    ),
+    listener_key_fingerprint TEXT NOT NULL CHECK (
+        length(listener_key_fingerprint) = 64 AND listener_key_fingerprint NOT GLOB '*[^0-9a-f]*'
+    ),
+    display_name             TEXT NOT NULL CHECK (
+        length(display_name) BETWEEN 1 AND 256 AND trim(display_name) <> ''
+    ),
+    enrolled_at_ms           INTEGER NOT NULL CHECK (enrolled_at_ms >= 0),
+    revoked_at_ms            INTEGER CHECK (
+        revoked_at_ms IS NULL OR revoked_at_ms >= enrolled_at_ms
+    ),
+    PRIMARY KEY (host_key_fingerprint, listener_key_fingerprint)
+) STRICT;
+";
+
 #[derive(Debug, Clone, Copy)]
 struct Migration {
     version: u32,
@@ -160,6 +186,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 4,
         sql: MIGRATION_V4_SQL,
+    },
+    Migration {
+        version: 5,
+        sql: MIGRATION_V5_SQL,
     },
 ];
 
@@ -462,7 +492,7 @@ THIS IS NOT VALID SQL;
         let mut connection = Connection::open(test_path.path()).expect("open temporary database");
         let first = run_migrations(&mut connection).expect("empty database migrates");
         assert_eq!(first.schema_version, LATEST_SCHEMA_VERSION);
-        assert_eq!(first.records.len(), 4);
+        assert_eq!(first.records.len(), LATEST_SCHEMA_VERSION as usize);
         drop(connection);
 
         let mut reopened = Connection::open(test_path.path()).expect("reopen temporary database");

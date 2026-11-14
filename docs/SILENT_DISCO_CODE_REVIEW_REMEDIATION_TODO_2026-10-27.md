@@ -51,7 +51,13 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
   3. A listener whose key changes (reinstall, lost key) is a new, unknown device and must be approved again.
 
   The truthful-UI wiring is the "Always allow / Approve once / revoke" item below.
-- [ ] Implement durable host-side trusted public-key records (versioned storage, migration, revocation and key rotation) with OS-backed private keys and no silent elevation of legacy claimed device IDs. **Decision (owner, 2026-11-09): trust records are stored in Rust-owned SQLite, not the credential store.**
+- [ ] Implement durable host-side trusted public-key records (versioned storage, migration, revocation and key rotation) with OS-backed private keys and no silent elevation of legacy claimed device IDs. **Decision (owner, 2026-11-09): trust records are stored in Rust-owned SQLite, not the credential store.** **Step 1 done (2026-11-14, local gates; box stays open): storage.**
+- Migration v5 adds `verified_listeners`. Each row is one "Always allow" listener key, scoped to the host's own key (both SHA-256 fingerprints in lowercase hex, enforced by the table's CHECKs), with display name, enrolment time and revocation time.
+- `storage/verified_listener.rs` has the model and repository: `enroll` (re-enrolling a revoked key clears its revocation), `revoke` (keeps the row, so the key stays known as revoked; never dated before enrolment), and `list` per host key. These run through `DatabaseConnection` and the worker (`DatabaseClient::{list,enroll,revoke}_verified_listener(s)`).
+- A rotated host key starts with no trust. The legacy claimed-ID `trusted_devices` rows are never read or copied as verified trust.
+- Tests: 9, covering enrol/reopen, host scoping, revoke/re-enrol, revocation ordering, invalid enrolments, no legacy promotion, upgrade from schema 4, the table refusing a malformed fingerprint, and a worker round trip. Mutation (re-enrolment not clearing revocation) killed.
+- Gates: `check-rust.sh` (923), desktop clippy and tests (426), full Android gate.
+- **Open:** loading these records into host admission (`HostVerifiedTrust`) on Android and desktop, and writing them from "Always allow"; key rotation beyond host-key scoping (listener key rotation is a new device by owner decision).
 - [ ] Validate cryptographic proof of listener identity before projecting Trusted/Untrusted. Update Rust FFI admission inputs and Android MainViewModelRustHost join mapping; never hard-code TRUSTED.
 - [ ] Update desktop host_join_projection to resolve verified host-owned trust records instead of unconditional SessionOnly; ensure Android/desktop policy parity.
 - [ ] Wire Always allow / Approve once / revoke, first enrollment, host restart, listener reconnect, profile switch and lost-key re-enrollment with accurate user-visible status.

@@ -5,6 +5,7 @@ use super::{
     SessionStart, SessionUpdate, StorageError, StorageOperation, StoredSettings, TrustedDevice,
     TrySendError, sync_channel,
 };
+use crate::storage::verified_listener::VerifiedListenerRecord;
 
 impl DatabaseClient {
     /// Returns verified `SQLite` diagnostics from the worker-owned connection.
@@ -91,6 +92,61 @@ impl DatabaseClient {
         let device = device.clone();
         self.request(StorageOperation::Transaction, |reply| {
             DatabaseCommand::UpsertTrustedDevice { device, reply }
+        })
+    }
+
+    /// Every verified listener record for the host key, revoked ones included.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible queue, query, corruption, or worker lifecycle error.
+    pub fn list_verified_listeners(
+        &self,
+        host_key_fingerprint: [u8; 32],
+    ) -> Result<Vec<VerifiedListenerRecord>, StorageError> {
+        self.request(StorageOperation::Query, |reply| {
+            DatabaseCommand::ListVerifiedListeners {
+                host_key_fingerprint,
+                reply,
+            }
+        })
+    }
+
+    /// Records "Always allow" for a verified listener key; enrolling a revoked
+    /// key again clears its revocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible validation, queue, transaction, or worker error.
+    pub fn enroll_verified_listener(
+        &self,
+        record: &VerifiedListenerRecord,
+    ) -> Result<(), StorageError> {
+        let record = record.clone();
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::EnrollVerifiedListener { record, reply }
+        })
+    }
+
+    /// Revokes a trusted listener key, keeping its record; reports whether a
+    /// trusted record was revoked.
+    ///
+    /// # Errors
+    ///
+    /// Returns a visible queue, transaction, or worker lifecycle error.
+    pub fn revoke_verified_listener(
+        &self,
+        host_key_fingerprint: [u8; 32],
+        listener_key_fingerprint: [u8; 32],
+        revoked_at_ms: u64,
+    ) -> Result<bool, StorageError> {
+        self.request(StorageOperation::Transaction, |reply| {
+            DatabaseCommand::RevokeVerifiedListener {
+                host_key_fingerprint,
+                listener_key_fingerprint,
+                revoked_at_ms,
+                reply,
+            }
         })
     }
 

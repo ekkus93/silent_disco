@@ -12,6 +12,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
+use super::verified_listener::VerifiedListenerRecord;
 use crate::domain::{DeviceId, SessionId};
 
 use super::{
@@ -51,6 +52,20 @@ enum DatabaseCommand {
     UpsertTrustedDevice {
         device: TrustedDevice,
         reply: DatabaseReply<()>,
+    },
+    ListVerifiedListeners {
+        host_key_fingerprint: [u8; 32],
+        reply: DatabaseReply<Vec<VerifiedListenerRecord>>,
+    },
+    EnrollVerifiedListener {
+        record: VerifiedListenerRecord,
+        reply: DatabaseReply<()>,
+    },
+    RevokeVerifiedListener {
+        host_key_fingerprint: [u8; 32],
+        listener_key_fingerprint: [u8; 32],
+        revoked_at_ms: u64,
+        reply: DatabaseReply<bool>,
     },
     DeleteTrustedDevice {
         device_id: DeviceId,
@@ -213,6 +228,28 @@ fn process_command(
         DatabaseCommand::UpsertTrustedDevice { device, reply } => {
             process_upsert_trusted_device(&reply, &device, connection, version)?;
         }
+        DatabaseCommand::ListVerifiedListeners {
+            host_key_fingerprint,
+            reply,
+        } => process_list_verified_listeners(&reply, &host_key_fingerprint, connection, version)?,
+        DatabaseCommand::EnrollVerifiedListener { record, reply } => {
+            process_enroll_verified_listener(&reply, &record, connection, version)?;
+        }
+        DatabaseCommand::RevokeVerifiedListener {
+            host_key_fingerprint,
+            listener_key_fingerprint,
+            revoked_at_ms,
+            reply,
+        } => process_revoke_verified_listener(
+            &reply,
+            (
+                &host_key_fingerprint,
+                &listener_key_fingerprint,
+                revoked_at_ms,
+            ),
+            connection,
+            version,
+        )?,
         DatabaseCommand::DeleteTrustedDevice { device_id, reply } => {
             process_delete_trusted_device(&reply, &device_id, connection, version)?;
         }
@@ -368,6 +405,59 @@ fn process_upsert_trusted_device(
 ) -> Result<(), StorageError> {
     let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
         .and_then(|database| database.upsert_trusted_device(device));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+fn process_list_verified_listeners(
+    reply: &DatabaseReply<Vec<VerifiedListenerRecord>>,
+    host_key_fingerprint: &[u8; 32],
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_ref(connection.as_ref(), StorageOperation::Query, schema_version)
+        .and_then(|database| database.list_verified_listeners(host_key_fingerprint));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Query,
+        schema_version,
+    )
+}
+
+fn process_enroll_verified_listener(
+    reply: &DatabaseReply<()>,
+    record: &VerifiedListenerRecord,
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.enroll_verified_listener(record));
+    send_reply(
+        reply,
+        result,
+        connection,
+        StorageOperation::Transaction,
+        schema_version,
+    )
+}
+
+/// `revocation` is (host key fingerprint, listener key fingerprint, revoked at).
+fn process_revoke_verified_listener(
+    reply: &DatabaseReply<bool>,
+    revocation: (&[u8; 32], &[u8; 32], u64),
+    connection: &mut Option<DatabaseConnection>,
+    schema_version: u32,
+) -> Result<(), StorageError> {
+    let (host, listener, revoked_at_ms) = revocation;
+    let result = connection_mut(connection, StorageOperation::Transaction, schema_version)
+        .and_then(|database| database.revoke_verified_listener(host, listener, revoked_at_ms));
     send_reply(
         reply,
         result,

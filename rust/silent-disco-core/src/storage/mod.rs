@@ -16,6 +16,7 @@ mod session_read_repository;
 mod session_write_repository;
 mod settings_repository;
 mod trusted_device_repository;
+mod verified_listener;
 mod worker;
 
 #[cfg(test)]
@@ -37,4 +38,5 @@ pub use models::{
     SessionHistory, SessionOutcome, SessionStart, SessionUpdate, StorageModelValidationError,
     StoredSettings, TrustedDevice,
 };
+pub use verified_listener::VerifiedListenerRecord;
 pub use worker::{DatabaseClient, DatabaseWorker};

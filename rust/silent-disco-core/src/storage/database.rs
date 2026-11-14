@@ -13,6 +13,7 @@ use super::{
     },
     session_read_repository, session_write_repository, settings_repository,
     trusted_device_repository,
+    verified_listener::{self, VerifiedListenerRecord},
 };
 use crate::domain::{DeviceId, SessionId};
 
@@ -229,6 +230,39 @@ impl DatabaseConnection {
         trusted_device_repository::upsert(
             &mut self.connection,
             device,
+            self.metadata.schema_version,
+        )
+    }
+
+    pub(crate) fn list_verified_listeners(
+        &self,
+        host_key_fingerprint: &[u8; 32],
+    ) -> Result<Vec<VerifiedListenerRecord>, StorageError> {
+        verified_listener::list(
+            &self.connection,
+            host_key_fingerprint,
+            self.metadata.schema_version,
+        )
+    }
+
+    pub(crate) fn enroll_verified_listener(
+        &mut self,
+        record: &VerifiedListenerRecord,
+    ) -> Result<(), StorageError> {
+        verified_listener::enroll(&mut self.connection, record, self.metadata.schema_version)
+    }
+
+    pub(crate) fn revoke_verified_listener(
+        &mut self,
+        host_key_fingerprint: &[u8; 32],
+        listener_key_fingerprint: &[u8; 32],
+        revoked_at_ms: u64,
+    ) -> Result<bool, StorageError> {
+        verified_listener::revoke(
+            &mut self.connection,
+            host_key_fingerprint,
+            listener_key_fingerprint,
+            revoked_at_ms,
             self.metadata.schema_version,
         )
     }

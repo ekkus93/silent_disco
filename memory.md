@@ -1897,3 +1897,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Owner decisions 2026-11-14: (1) Approved-devices-only mode rejects a never-approved device visibly (listener told the host admits approved devices only; host told one was turned away); enrollment = host once in Manual mode and choose Always allow. (2) Always allow lasts until revoked; a changed listener key is a new unknown device.
 - Remediation F1 item 1 closed: the core policy (`classify_join_request`, `verify_and_classify_join`) already makes Manual/Invite pending and approved-only auto-approve only host-verified Trusted, rejecting unknown/revoked/unverified with `DeviceNotApproved`; six tests cited.
 - Next F1 work: SQLite trust-record storage (owner decision 2026-11-09), Android and desktop host wiring, Always allow / revoke UI.
+
+## 2026-11-14T15:57:32Z - claude-opus-5-5 - F1 durable trust step 1: SQLite storage
+- Schema migration v5 `verified_listeners` (host key fp + listener key fp, display name, enrolled_at, revoked_at; hex CHECKs). `storage/verified_listener.rs` repository (enroll clears revocation, revoke keeps row, list per host key) through DatabaseConnection, worker commands and `DatabaseClient`. No copy from legacy `trusted_devices`. `LATEST_SCHEMA_VERSION` = 5; three tests that pinned 4 updated (incl. the v3->v4 upgrade rewind, which now also drops v5).
+- 9 new tests; mutation killed. `check-rust.sh` 923 passed, desktop 426, full Android gate passed. Worker dispatch handlers extracted to stay under clippy too_many_lines.
+- Next: load records into `HostVerifiedTrust` for host admission (FFI/Android, desktop) and write them from Always allow.

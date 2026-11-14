@@ -567,3 +567,34 @@ fn sample_diagnostic(session_id: &SessionId) -> DiagnosticRunSummary {
         summary_json: r#"{"listeners":3,"quality":"good"}"#.into(),
     }
 }
+
+#[test]
+fn verified_listener_records_round_trip_through_the_worker() {
+    use crate::storage::VerifiedListenerRecord;
+    let test_path = TestDatabasePath::new("worker-verified-listeners");
+    let config = DatabaseConfig::new(test_path.path()).expect("valid worker config");
+    let worker = DatabaseWorker::start(config).expect("worker starts");
+    let client = worker.client();
+    let record = VerifiedListenerRecord {
+        host_key_fingerprint: [1; 32],
+        listener_key_fingerprint: [2; 32],
+        display_name: "Alex".to_owned(),
+        enrolled_at_ms: 10,
+        revoked_at_ms: None,
+    };
+    client.enroll_verified_listener(&record).expect("enrolls");
+    assert_eq!(
+        client.list_verified_listeners([1; 32]).expect("lists"),
+        vec![record]
+    );
+    assert!(
+        client
+            .revoke_verified_listener([1; 32], [2; 32], 20)
+            .expect("revokes")
+    );
+    assert_eq!(
+        client.list_verified_listeners([1; 32]).expect("lists")[0].revoked_at_ms,
+        Some(20)
+    );
+    worker.stop_and_join().expect("worker closes and joins");
+}
