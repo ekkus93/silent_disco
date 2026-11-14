@@ -695,6 +695,10 @@ mod callback_pcm_tests;
 #[path = "callback_late_join_tests.rs"]
 mod callback_late_join_tests;
 
+#[cfg(test)]
+#[path = "transport_cpu_cost_tests.rs"]
+mod transport_cpu_cost_tests;
+
 /// The pinned host and the listener's signer, after checking that the claimed
 /// device ID is the one the signer's key maps to. The host admits a proven
 /// listener only under that ID, so any other is refused before connecting.

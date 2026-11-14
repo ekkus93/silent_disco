@@ -1884,3 +1884,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-14T15:23:53Z - claude-opus-5-5 - Remediation §1 encrypted integration: v4 through the native callback
 - `callback_pcm_tests` now runs the production transport -> FFI -> scheduler -> native callback scenario over both v3 sockets and v4 QUIC (`quic_pcm_callback_is_sample_exact_...`); corrupting one v4 PCM byte in the listener fails only the QUIC variant. New `quic_admission_tests::each_listener_connection_to_one_host_has_its_own_keys`.
 - `check-rust.sh` passed (915 tests). The item stays open only for an unmeasured CPU cost.
+
+## 2026-11-14T15:31:28Z - claude-opus-5-5 - v4 vs v3 CPU cost measured
+- New ignored benchmark `transport_cpu_cost_tests` (FFI): 20 s of 5 ms PCM at real-time pace, host+listener in one process, CPU from `/proc/self/stat`. Release, desktop, two runs: v3 53-56 ms CPU per audio second (5.3-5.6% of a core), v4 88-90 ms (8.75-9.0%), 4000/4000 received. Debug builds read much higher (135 / 300 ms) and are not representative.
+- `callback_pcm_tests::{Wire, transports}` are now `pub(super)` for reuse. FFI fmt, clippy and tests (179, 1 ignored) passed.
+- Awaiting owner: is ~1.6x / ~9% of a core acceptable to close the encrypted-integration item?

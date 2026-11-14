@@ -30,8 +30,8 @@ use std::time::{Duration, Instant};
 const PACKET_FRAMES: u32 = 240;
 const START_MS: u64 = 2_000;
 
-#[derive(Clone, Copy)]
-enum Wire {
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Wire {
     /// Plaintext v3 TCP control and UDP PCM.
     Socket,
     /// Secure v4 QUIC: pinned host key, proven listener key, PCM in DATAGRAMs.
@@ -52,7 +52,7 @@ fn quic_pcm_callback_is_sample_exact_across_track_boundary_and_engine_retirement
 
 /// A bound host and a connected listener for `wire`, with the listener's
 /// device ID (key-bound on v4).
-fn transports(
+pub(super) fn transports(
     wire: Wire,
     session: &SessionId,
     clock: &Arc<ManualTransportClock>,
