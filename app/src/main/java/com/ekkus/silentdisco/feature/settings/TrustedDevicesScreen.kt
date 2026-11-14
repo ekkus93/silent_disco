@@ -32,7 +32,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import com.ekkus.silentdisco.core.rust.RustTrustedDevice
 import com.ekkus.silentdisco.ui.components.ConfirmationSheet
 import com.ekkus.silentdisco.ui.components.EmptyState
 import com.ekkus.silentdisco.ui.components.LoadingState
@@ -50,7 +49,7 @@ fun TrustedDevicesScreen(
     onRefresh: () -> Unit,
     onDelete: (String) -> Unit,
 ) {
-    var pendingDelete by remember { mutableStateOf<RustTrustedDevice?>(null) }
+    var pendingDelete by remember { mutableStateOf<ApprovedListener?>(null) }
 
     Column(
         modifier = Modifier
@@ -130,7 +129,7 @@ fun TrustedDevicesScreen(
             ) {
                 item {
                     Text(
-                        "These phones can join future sessions without asking again. Removing one does not disconnect an active listener.",
+                        "These phones can join your sessions without asking again. Removing one does not disconnect an active listener.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -162,7 +161,7 @@ fun TrustedDevicesScreen(
                     }
                 }
 
-                items(uiState.devices, key = RustTrustedDevice::deviceId) { device ->
+                items(uiState.devices, key = ApprovedListener::deviceId) { device ->
                     TrustedDeviceCard(
                         device = device,
                         deleting = uiState.deletingDeviceId == device.deviceId,
@@ -179,7 +178,7 @@ fun TrustedDevicesScreen(
         visible = device != null,
         title = "Remove this approved device?",
         detail = device?.let {
-            "${trustedDeviceDisplayName(it)} will need approval before joining a future session."
+            "${trustedDeviceDisplayName(it)} will need your approval next time it joins."
         }.orEmpty(),
         safeActionLabel = "Keep approved",
         destructiveActionLabel = "Remove approval",
@@ -194,7 +193,7 @@ fun TrustedDevicesScreen(
 
 @Composable
 private fun TrustedDeviceCard(
-    device: RustTrustedDevice,
+    device: ApprovedListener,
     deleting: Boolean,
     actionsEnabled: Boolean,
     onRemove: () -> Unit,
@@ -214,7 +213,7 @@ private fun TrustedDeviceCard(
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                trustedDeviceLastSeenLabel(device.lastSeenMs),
+                trustedDeviceApprovedLabel(device.approvedAtMs),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -250,7 +249,7 @@ private fun TrustedDeviceCard(
     }
 }
 
-internal fun trustedDeviceDisplayName(device: RustTrustedDevice): String {
+internal fun trustedDeviceDisplayName(device: ApprovedListener): String {
     val displayName = device.displayName.trim()
     return if (displayName.isBlank() || displayName == device.deviceId) {
         "Approved phone"
@@ -259,10 +258,10 @@ internal fun trustedDeviceDisplayName(device: RustTrustedDevice): String {
     }
 }
 
-internal fun trustedDeviceLastSeenLabel(lastSeenMs: Long): String {
-    require(lastSeenMs >= 0L) { "Last-seen time must not be negative" }
+internal fun trustedDeviceApprovedLabel(approvedAtMs: Long): String {
+    require(approvedAtMs >= 0L) { "Approval time must not be negative" }
     val formatted = DateTimeFormatter
         .ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
-        .format(Instant.ofEpochMilli(lastSeenMs).atZone(ZoneId.systemDefault()))
-    return "Last seen $formatted"
+        .format(Instant.ofEpochMilli(approvedAtMs).atZone(ZoneId.systemDefault()))
+    return "Always allowed since $formatted"
 }

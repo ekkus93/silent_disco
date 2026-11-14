@@ -1926,3 +1926,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-14T20:33:39Z - claude-opus-5-5 - F1 step 4: Android Approved-devices mode enabled
 - Removed the TRUSTED_DEVICES_PLACEHOLDER greying in HostAccessSetupScreen and the start refusal in HostReadyScreen; rewrote 3 WorkflowConfigurationStateTest cases to expect the mode to work. Class passed on A54 (7 tests, leaveApksInstalledAfterRun=true); full Android gate passed.
 - Finding for revoke UI: Settings "Approved devices" (TrustedDevicesViewModel) still reads legacy claimed-ID trusted_devices, not verified_listeners.
+
+## 2026-11-14T21:16:12Z - claude-opus-5-5 - F1 step 5: Android list/revoke of remembered listeners
+- FFI top-level `list_verified_listeners_in_database` / `revoke_verified_listener_in_database` (new `silent-disco-ffi/src/verified_listeners.rs` + tests). Settings Approved devices screen now uses them via `KeystoreHostTlsSigner().spkiDer()` + `withDatabaseHandle` (both on IO); store API is `listApprovedListeners`/`revokeApproval`, model `ApprovedListener`.
+- Known limit: revoke does not reach a running host session (trust loaded at start); UI message says it applies from the next session.
+- Gates: check-rust 931, desktop clippy+tests 426, Android gate; A54 screen tests 5/5.

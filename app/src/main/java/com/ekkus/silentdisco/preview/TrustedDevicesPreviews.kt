@@ -2,21 +2,21 @@ package com.ekkus.silentdisco.preview
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
-import com.ekkus.silentdisco.core.rust.RustTrustedDevice
+import com.ekkus.silentdisco.feature.settings.ApprovedListener
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesScreen
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesUiState
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
 
 private val previewTrustedDevices = listOf(
-    RustTrustedDevice(
+    ApprovedListener(
         deviceId = "preview-kitchen-phone",
         displayName = "Kitchen phone",
-        lastSeenMs = 1_750_000_000_000L,
+        approvedAtMs = 1_750_000_000_000L,
     ),
-    RustTrustedDevice(
+    ApprovedListener(
         deviceId = "preview-riley-phone",
         displayName = "Riley's phone",
-        lastSeenMs = 1_750_086_400_000L,
+        approvedAtMs = 1_750_086_400_000L,
     ),
 )
 

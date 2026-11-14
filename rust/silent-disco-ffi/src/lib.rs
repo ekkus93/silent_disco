@@ -54,6 +54,9 @@ mod socket_secondary_pcm_output_tests;
 #[cfg(test)]
 mod socket_stop_prefetch_pcm_tests;
 mod sync;
+mod verified_listeners;
+#[cfg(test)]
+mod verified_listeners_tests;
 
 use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
 

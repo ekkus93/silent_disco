@@ -83,6 +83,13 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 - Gate: full Android gate.
 - Not yet run: a real two-phone Approved-only session (enrol with Always allow, restart host, listener auto-admitted; unknown listener rejected).
 - **Open:** desktop host remembering and Approved-devices mode; revoke UI (the existing Settings "Approved devices" screen still lists legacy claimed-ID rows, not `verified_listeners`).
+**Step 5 done (2026-11-14, local gates + A54; box stays open): Android list and revoke of remembered listeners.**
+- FFI `list_verified_listeners_in_database` (this host key's trusted records, oldest approval first, revoked left out) and `revoke_verified_listener_in_database` (key-bound IDs only; the row is kept, marked revoked; `false` if nothing was trusted). Core `key_bound_device_id` is now public (inverse of `key_bound_fingerprint`).
+- Settings → "Approved devices" now reads these records for the phone's host TLS key ("Always allowed since …") and "Remove approval" revokes. Legacy claimed-ID `trusted_devices` rows are no longer shown there.
+- Limit (shown to the user): a running host session keeps the trust it loaded at start, so a revoke applies from the next session.
+- Tests: 2 FFI tests on a real database worker (host scoping, ordering, revoke keeps the row, repeat/other-host revoke false, claimed ID refused, invalid host key); mutation (list keeps revoked rows) killed. Kotlin VM and screen tests updated; `TrustedDevicesScreenTest` + `TrustedDevicesAdaptiveLayoutTest` (5) passed on the A54.
+- Gates: `check-rust.sh` (931), desktop clippy and tests (426), full Android gate.
+- **Open:** desktop host remembering, Approved-devices mode and revoke; revoke applying to a running session; two-phone run.
 - [ ] Validate cryptographic proof of listener identity before projecting Trusted/Untrusted. Update Rust FFI admission inputs and Android MainViewModelRustHost join mapping; never hard-code TRUSTED.
 - [ ] Update desktop host_join_projection to resolve verified host-owned trust records instead of unconditional SessionOnly; ensure Android/desktop policy parity.
 - [ ] Wire Always allow / Approve once / revoke, first enrollment, host restart, listener reconnect, profile switch and lost-key re-enrollment with accurate user-visible status.

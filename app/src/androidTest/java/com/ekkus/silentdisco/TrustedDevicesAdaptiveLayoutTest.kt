@@ -11,7 +11,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
-import com.ekkus.silentdisco.core.rust.RustTrustedDevice
+import com.ekkus.silentdisco.feature.settings.ApprovedListener
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesScreen
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesUiState
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
@@ -24,10 +24,10 @@ class TrustedDevicesAdaptiveLayoutTest {
 
     @Test
     fun removalActionRemainsReachableAtTwoHundredPercentFontScale() {
-        val device = RustTrustedDevice(
+        val device = ApprovedListener(
             deviceId = "adaptive-approved-phone",
             displayName = "Kitchen phone with a longer accessible name",
-            lastSeenMs = 1_750_000_000_000L,
+            approvedAtMs = 1_750_000_000_000L,
         )
         composeRule.setContent {
             CompositionLocalProvider(

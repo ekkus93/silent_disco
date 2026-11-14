@@ -65,7 +65,7 @@ impl VerifiedListenerKey {
     /// its documented validation rules.
     #[must_use]
     pub fn canonical_device_id(&self) -> DeviceId {
-        device_id_from_fingerprint(&self.fingerprint)
+        key_bound_device_id(&self.fingerprint)
     }
 }
 
@@ -73,7 +73,7 @@ impl VerifiedListenerKey {
 /// ID while presenting this key is refused.
 #[must_use]
 pub fn device_id_for_listener_key(listener_public_key_der: &[u8]) -> DeviceId {
-    device_id_from_fingerprint(&fingerprint(listener_public_key_der))
+    key_bound_device_id(&fingerprint(listener_public_key_der))
 }
 
 /// Prefix of every device ID derived from a verified listener key. Only a
@@ -109,7 +109,14 @@ pub fn claims_key_bound_namespace(device_id: &DeviceId) -> bool {
     device_id.as_str().starts_with(KEY_BOUND_DEVICE_ID_PREFIX)
 }
 
-fn device_id_from_fingerprint(fingerprint: &[u8; 32]) -> DeviceId {
+/// The key-bound device ID for a listener-key fingerprint; the inverse of
+/// [`key_bound_fingerprint`].
+///
+/// # Panics
+/// Only if the domain's `DeviceId` validator rejects the fixed `v4-` prefix
+/// followed by 64 lowercase hexadecimal bytes.
+#[must_use]
+pub fn key_bound_device_id(fingerprint: &[u8; 32]) -> DeviceId {
     use std::fmt::Write;
     let mut value = String::with_capacity(3 + fingerprint.len() * 2);
     value.push_str(KEY_BOUND_DEVICE_ID_PREFIX);

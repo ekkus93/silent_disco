@@ -38,7 +38,7 @@ import com.ekkus.silentdisco.core.rust.FakeListenerCoreController
 import com.ekkus.silentdisco.core.rust.FakeListenerTransport
 import com.ekkus.silentdisco.core.rust.FakeRustDomainStore
 import com.ekkus.silentdisco.core.rust.RustDatabaseException
-import com.ekkus.silentdisco.core.rust.RustTrustedDevice
+import com.ekkus.silentdisco.feature.settings.ApprovedListener
 import com.ekkus.silentdisco.core.transport.FakeBleTransport
 import com.ekkus.silentdisco.core.transport.FakeMdnsTransport
 import com.ekkus.silentdisco.core.transport.FakeSessionTransport
@@ -77,11 +77,11 @@ class SilentDiscoAppWiringTest {
     private class RecordingTrustedDeviceStore : TrustedDeviceStore {
         var listCalls = 0
         override suspend fun initialize() = Unit
-        override suspend fun listTrustedDevices(): List<RustTrustedDevice> {
+        override suspend fun listApprovedListeners(): List<ApprovedListener> {
             listCalls += 1
             return emptyList()
         }
-        override suspend fun deleteTrustedDevice(deviceId: String) = false
+        override suspend fun revokeApproval(deviceId: String) = false
         override suspend fun close() = Unit
     }
 

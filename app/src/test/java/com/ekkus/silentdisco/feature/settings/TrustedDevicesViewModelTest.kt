@@ -1,7 +1,6 @@
 package com.ekkus.silentdisco.feature.settings
 
 import android.app.Application
-import com.ekkus.silentdisco.core.rust.RustTrustedDevice
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +31,7 @@ class TrustedDevicesViewModelTest {
 
     @Test
     fun refreshLoadsAuthoritativeRustList() = runTest(dispatcher) {
-        val device = RustTrustedDevice("listener-1", "Alex's phone", 100L)
+        val device = ApprovedListener("listener-1", "Alex's phone", 100L)
         val store = FakeTrustedDeviceStore(devices = mutableListOf(device))
         val viewModel = TrustedDevicesViewModel(mock<Application>(), store)
 
@@ -61,8 +60,8 @@ class TrustedDevicesViewModelTest {
 
     @Test
     fun deletionReloadsRustListBeforeRemovingRowFromState() = runTest(dispatcher) {
-        val removed = RustTrustedDevice("listener-1", "Alex's phone", 100L)
-        val remaining = RustTrustedDevice("listener-2", "Riley's phone", 200L)
+        val removed = ApprovedListener("listener-1", "Alex's phone", 100L)
+        val remaining = ApprovedListener("listener-2", "Riley's phone", 200L)
         val store = FakeTrustedDeviceStore(devices = mutableListOf(removed, remaining))
         val viewModel = TrustedDevicesViewModel(mock<Application>(), store)
         viewModel.refresh()
@@ -76,12 +75,12 @@ class TrustedDevicesViewModelTest {
 
         assertThat(store.deletedDeviceIds).containsExactly(removed.deviceId)
         assertThat(viewModel.uiState.value.devices).containsExactly(remaining)
-        assertThat(viewModel.uiState.value.message).contains("need approval")
+        assertThat(viewModel.uiState.value.message).contains("need your approval next time it joins")
     }
 
     @Test
     fun deleteFailureRetainsLastAuthoritativeListAndShowsError() = runTest(dispatcher) {
-        val device = RustTrustedDevice("listener-1", "Alex's phone", 100L)
+        val device = ApprovedListener("listener-1", "Alex's phone", 100L)
         val store = FakeTrustedDeviceStore(
             devices = mutableListOf(device),
             deleteFailure = IllegalStateException("database busy"),
@@ -99,7 +98,7 @@ class TrustedDevicesViewModelTest {
     }
 
     private class FakeTrustedDeviceStore(
-        val devices: MutableList<RustTrustedDevice>,
+        val devices: MutableList<ApprovedListener>,
         private val listFailure: Throwable? = null,
         private val deleteFailure: Throwable? = null,
     ) : TrustedDeviceStore {
@@ -111,13 +110,13 @@ class TrustedDevicesViewModelTest {
             initializeCalls += 1
         }
 
-        override suspend fun listTrustedDevices(): List<RustTrustedDevice> {
+        override suspend fun listApprovedListeners(): List<ApprovedListener> {
             listCalls += 1
             listFailure?.let { throw it }
             return devices.toList()
         }
 
-        override suspend fun deleteTrustedDevice(deviceId: String): Boolean {
+        override suspend fun revokeApproval(deviceId: String): Boolean {
             deleteFailure?.let { throw it }
             deletedDeviceIds += deviceId
             return devices.removeAll { it.deviceId == deviceId }

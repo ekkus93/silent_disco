@@ -5,7 +5,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import com.ekkus.silentdisco.core.rust.RustTrustedDevice
+import com.ekkus.silentdisco.feature.settings.ApprovedListener
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesScreen
 import com.ekkus.silentdisco.feature.settings.TrustedDevicesUiState
 import com.ekkus.silentdisco.ui.theme.SilentDiscoTheme
@@ -17,10 +17,10 @@ class TrustedDevicesScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
 
-    private val device = RustTrustedDevice(
+    private val device = ApprovedListener(
         deviceId = "internal-device-123",
         displayName = "Kitchen phone",
-        lastSeenMs = 0L,
+        approvedAtMs = 0L,
     )
 
     @Test
@@ -42,11 +42,11 @@ class TrustedDevicesScreenTest {
     }
 
     @Test
-    fun legacyRecordWhoseNameEqualsItsInternalKeyUsesGenericCopy() {
-        val legacyDevice = RustTrustedDevice(
+    fun recordWhoseNameEqualsItsDeviceIdUsesGenericCopy() {
+        val legacyDevice = ApprovedListener(
             deviceId = "legacy-internal-device-key",
             displayName = "legacy-internal-device-key",
-            lastSeenMs = 0L,
+            approvedAtMs = 0L,
         )
         composeRule.setContent {
             SilentDiscoTheme {
@@ -62,7 +62,7 @@ class TrustedDevicesScreenTest {
         composeRule.onNodeWithText("Approved phone").assertIsDisplayed()
         composeRule.onNodeWithText("legacy-internal-device-key").assertDoesNotExist()
         composeRule.onNodeWithTag("trusted-device-remove-legacy-internal-device-key").performClick()
-        composeRule.onNodeWithText("Approved phone will need approval before joining a future session.")
+        composeRule.onNodeWithText("Approved phone will need your approval next time it joins.")
             .assertIsDisplayed()
     }
 
@@ -82,7 +82,7 @@ class TrustedDevicesScreenTest {
 
         composeRule.onNodeWithTag("trusted-device-remove-internal-device-123").performClick()
         composeRule.onNodeWithTag("remove-trusted-device-confirmation").assertIsDisplayed()
-        composeRule.onNodeWithText("Kitchen phone will need approval before joining a future session.")
+        composeRule.onNodeWithText("Kitchen phone will need your approval next time it joins.")
             .assertIsDisplayed()
         composeRule.onNodeWithTag("remove-trusted-device-confirmation-destructive").performClick()
 
