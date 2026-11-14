@@ -940,3 +940,28 @@ adb drives the phone; a person scans the QR only when the log prints `>>> SCAN T
 - Run 13 failed in the environment, not the transport: the phone's Wi-Fi radio was off (`wifi_on=0`, "Wi-Fi Direct is disabled"), so after the scan it tried to reach the desktop over cellular and no join arrived. Wi-Fi turned back on with `adb shell svc wifi enable`; cause of it being off not established.
 - Run 14 (passed): desktop v4 host at 192.168.87.161 (private LAN, no shared-address opt-in), the A54 on the v4-only debug build (new Keystore key after the reinstall, ID `v4-17dc809d…`). Late join: 3003 frames fully delivered, sync Excellent, RTT 14 ms. 12 s Wi-Fi drop: host showed 0 listeners (3 frames undelivered at the drop). Rejoin under the same key-bound ID: 4006 fully delivered in 20 s, RTT 11.6 ms. Stop then immediate shutdown: the phone logged `Stopped` at 00:26:16.928 and the graceful close 28 ms later; 4002 accepted, 4002 emitted, 0 concealed, 0 late, 0 skipped.
 - Phase 4 is complete for production builds: the desktop hosts v4 only, Android hosts and joins v4 only (joins through the QR), and v3 remains only behind Lab Mode (desktop) and the `legacy-v3` feature (FFI tests). Android host mode on v4 has loopback and on-device instrumented evidence only; a phone-to-phone run needs a second device.
+
+## 54. 2026-11-14 — God-file refactor: pick up here (session pause)
+
+Spec and TODO: `docs/SILENT_DISCO_GOD_FILE_REFACTOR_SPEC_2026-11-13.md` and `docs/SILENT_DISCO_GOD_FILE_REFACTOR_TODO_2026-11-13.md`. Owner decisions: spec approved as written; split `MainViewModel` now and defer all of `SilentDiscoApp` to the UI redesign; Kotlin timing state is logged for later, not moved to Rust; split `runtime/types.rs` only when it next grows. 800 lines per file is a guideline, not a gate (`scripts/check-source-file-line-counts.sh` only reports).
+
+### 54.1 Done (each with its own tests, a mutation check and the full Android gate)
+
+- Controllers under `app/src/main/java/com/ekkus/silentdisco/app/controller/`: `ViewModelController` contract, `DiagnosticsController`, `PersistenceController`, `DiscoveryController`, `HostMonitorController`, `ListenerPlaybackController` (+ `ListenerTrackBoundaries`), `ListenerSessionController`, and `HostPlaybackController` (+ `HostSourceStaging`, `HostStreamLoop`).
+- Controllers never write `AppUiState`: they return results or call a narrow callbacks interface (`ListenerSessionCallbacks`, `ListenerBoundaryContext`, `HostStreamEnvironment`), and `MainViewModel` maps them into the UI as before.
+- `currentStreamId` is split into a host id and a listener id; host session teardown clears both.
+- `MainViewModel.kt` is 769 lines (was over 800); 600 JVM tests pass. Last commit: `dce543e4`.
+
+### 54.2 Next, in order
+
+1. `HostPlaybackController`: move stream preparation (open the Rust playlist, read and check the first packet) out of `MainViewModelHostActions.kt`, then check the item off. Play, pause, resume and stop are coordinator orchestration and are placed in the coordinator clean-up.
+2. `HostSessionController`: host core lifecycle, advertising and bind, approvals, recovery, resync, events (`MainViewModelRustHost*.kt`).
+3. Coordinator clean-up: retire the remaining `MainViewModel*.kt` extension files.
+4. TODO §5: log the Kotlin timing state (T1 boundaries, T2 pre-runtime sync, T3 host pacing) in this handoff, per the owner's decision.
+5. TODO §7: record the Rust near-limit watchlist here.
+6. TODO §8 close-out: full A54 instrumented suite against the baseline (180 tests, the 4 known layout failures), the A54 device run (needs one QR scan from the owner), the final survey, and the closing handoff and `memory.md` entries.
+
+### 54.3 Working notes
+
+- Memory is tight on this machine (Chrome, Slack and Discord hold most of the 7 GB). A full gate was once killed by Claude Code for low memory; running Gradle with `--max-workers=2` has passed every time since (5–10 minutes).
+- On the A54, always pass `-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true` to connected tests, or Gradle uninstalls the app and erases its data.
