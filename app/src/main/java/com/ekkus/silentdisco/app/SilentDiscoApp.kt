@@ -202,53 +202,15 @@ fun SilentDiscoApp(
         }
     }
 
-    LaunchedEffect(
-        p2UiState.validatedInvitation?.sessionId,
-        p2UiState.validatedInvitation?.expiresAtMs,
-    ) {
-        qrJoin.showVerifiedQrDialog = p2UiState.validatedInvitation != null
-    }
-
-    LaunchedEffect(
-        p2UiState.rejoinTarget?.sessionId,
-        p2UiState.recentAvailability,
-        uiState.discoveredSessions,
-    ) {
-        val target = p2UiState.rejoinTarget
-        if (target != null && p2UiState.recentAvailability == RecentAvailability.AVAILABLE) {
-            val live = uiState.discoveredSessions.firstOrNull { it.id == target.sessionId }
-            if (live != null) {
-                p2ViewModel.cancelRecentSessionCheck()
-                viewModel.selectDiscoveredSession(live)
-                navController.navigateSingleTop(AppRoutes.SessionJoin)
-            }
-        }
-    }
-
-    LaunchedEffect(qrJoin.pendingQrJoin, uiState.isScanning, uiState.discoveredSessions) {
-        if (!qrJoin.pendingQrJoin) return@LaunchedEffect
-        if (uiState.isScanning) {
-            qrJoin.qrJoinScanObserved = true
-            return@LaunchedEffect
-        }
-        if (!qrJoin.qrJoinScanObserved) return@LaunchedEffect
-        val invitation = p2UiState.validatedInvitation ?: return@LaunchedEffect
-        qrJoin.qrJoinScanObserved = false
-        val live = uiState.discoveredSessions.firstOrNull { it.id == invitation.sessionId }
-        if (live != null) {
-            qrJoin.pendingQrJoin = false
-            viewModel.selectDiscoveredSession(live)
-            viewModel.updateInviteCode(invitation.inviteCode.orEmpty())
-            p2ViewModel.dismissValidatedInvitation()
-            navController.navigateSingleTop(AppRoutes.SessionJoin)
-        } else {
-            qrJoin.pendingQrJoin = false
-            p2ViewModel.dismissValidatedInvitation()
-            snackbarHostState.showSnackbar(
-                "The signed invitation is valid, but that exact session is not currently nearby.",
-            )
-        }
-    }
+    ListenerFlowEffects(
+        uiState = uiState,
+        p2UiState = p2UiState,
+        qrJoin = qrJoin,
+        viewModel = viewModel,
+        p2ViewModel = p2ViewModel,
+        navController = navController,
+        snackbarHostState = snackbarHostState,
+    )
 
     val nav = AppNavContext(
         viewModel = viewModel,

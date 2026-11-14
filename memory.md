@@ -1844,3 +1844,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-14T11:38:30Z - claude-opus-5-5 - God-file refactor §6.4: flow state holders
 - `QrJoinFlowState` (pending QR join, scan observed, camera rationale/denied, verified-QR dialog) and `SessionConfirmationState` (end/leave confirmations, invite dialog) replace the 8 `rememberSaveable` flags in `SilentDiscoApp`; listSaver-backed.
 - One StateRestorationTester test each (every flag independently); mutation on the Saver killed. A54 runs and the full Android gate passed.
+
+## 2026-11-14T11:47:25Z - claude-opus-5-5 - God-file refactor §6.5: listener flow effects
+- Three listener effects moved verbatim into `ListenerFlowEffects` (same keys, same call point). App-wide effects stay in `SilentDiscoApp` (434 lines, was 769 before §6). `ListenerFlowEffectsTest` 4 tests on the A54; dropping the scan-observed guard fails 2. Full Android gate passed.
+- One A54 run failed only because the phone dropped off USB (`device not found`); the rerun passed.
+- Every item in the God-file refactor TODO is now checked. Next: the full A54 instrumented suite to close out §6.
