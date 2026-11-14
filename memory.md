@@ -1853,3 +1853,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-14T11:56:25Z - claude-opus-5-5 - God-file refactor §6 closed: full A54 suite
 - Full A54 instrumented suite at `c1ce223f`: 200 tests (180 + 20 new), the same 4 known layout failures, 1 skipped; app kept installed. Every item of the God-file refactor TODO is checked.
 - Handoff §57 records §6; CLAUDE.md now says all sections are done.
+
+## 2026-11-14T12:32:05Z - claude-opus-5-5 - v3-worded durable-trust refusal reworded
+- Android host refusal of "Always allow" now says "This phone can't remember listeners yet. Approve this listener once instead." (Kotlin `DURABLE_LISTENER_TRUST_UNAVAILABLE`; FFI host refusals reworded, helper `durable_trust_unavailable`). Listener-side `submit_join_approved(true)` has its own message about a permanent approval. Refusal behaviour unchanged.
+- Watchlisted FFI files did not grow (`host_control/handle.rs` 759, `host_transport/handle.rs` 786).
+- Five Rust matchers and the Kotlin tests now check the new text; a first FFI run failed on matchers keyed to "Legacy v3" / "verified cryptographic identity" until they were updated.
+- Checks: `cargo fmt --check`, clippy `-D warnings` and tests for `silent-disco-ffi` (all features), full Android gate (5m32s) all passed.
+- Not changed: genuine v3 paths (core v3 socket host, listener rejection of a v3 host's permanent trust) and the desktop v4 refusal text (owner to decide).

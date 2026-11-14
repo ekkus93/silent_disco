@@ -189,7 +189,7 @@ impl FfiCoreHandle {
         self.ensure_open()?;
         let draft = self.handle.current_snapshot()?.host_draft;
         if draft.approval_mode == ApprovalMode::TrustedDevices || draft.remember_approved_devices {
-            return Err(legacy_v3_trust_error());
+            return Err(durable_trust_unavailable());
         }
         self.submit_command(expected_revision, CoreCommand::CreateHostSession)
     }
@@ -201,7 +201,7 @@ impl FfiCoreHandle {
         remember_for_future: bool,
     ) -> Result<FfiCommandReceipt, FfiBridgeError> {
         if remember_for_future {
-            return Err(legacy_v3_trust_error());
+            return Err(durable_trust_unavailable());
         }
         self.submit_command(
             expected_revision,
@@ -382,7 +382,8 @@ impl FfiCoreHandle {
     pub fn submit_join_approved(&self, trusted_for_future: bool) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
         if trusted_for_future {
-            return Err(legacy_v3_trust_error());
+            let message = "This phone can't accept a permanent approval yet. Ask the host to approve you once.";
+            return Err(FfiBridgeError::Core(message.to_owned()));
         }
         self.handle
             .submit_transport_event(TransportEvent::JoinApproved { trusted_for_future })?;
@@ -676,13 +677,12 @@ impl Drop for FfiCoreHandle {
     }
 }
 
-// This UniFFI bridge currently receives legacy-v3 plaintext socket facts.
-// A caller-supplied trust enum is NOT proof of public-key possession. The
-// future v4 bridge must use VerifiedJoinAdmission, not bypass these guards.
-fn legacy_v3_trust_error() -> FfiBridgeError {
+// No verified listener key reaches this bridge: a caller-supplied trust enum
+// is NOT proof of public-key possession. Durable trust must arrive through
+// VerifiedJoinAdmission, never by bypassing these guards.
+fn durable_trust_unavailable() -> FfiBridgeError {
     FfiBridgeError::Core(
-        "Legacy v3 transport cannot assert durable trust without verified cryptographic identity"
-            .to_owned(),
+        "This phone can't remember listeners yet. Approve this listener once instead.".to_owned(),
     )
 }
 
@@ -691,7 +691,7 @@ fn reject_legacy_durable_host_draft(
     remember_approved_devices: bool,
 ) -> Result<(), FfiBridgeError> {
     if mode == FfiApprovalMode::TrustedDevices || remember_approved_devices {
-        return Err(legacy_v3_trust_error());
+        return Err(durable_trust_unavailable());
     }
     Ok(())
 }
@@ -704,7 +704,7 @@ fn legacy_v3_unverified_trust(
             Ok(TrustState::SessionOnly)
         }
         super::types::FfiTrustState::Trusted | super::types::FfiTrustState::Revoked => {
-            Err(legacy_v3_trust_error())
+            Err(durable_trust_unavailable())
         }
     }
 }

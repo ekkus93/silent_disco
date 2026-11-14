@@ -1006,6 +1006,15 @@ Rule: the next change that adds lines to any of these splits it by responsibilit
 
 The Android host now runs secure transport v4, but it still refuses durable listener trust. A "trust for future" approval reports a failed delivery, and `PersistTrustedDevice` fails, both with `LEGACY_V3_DURABLE_TRUST_ERROR`. The text still says v3. Proper v4 trust needs verified, host-scoped listener key storage on Android. Until then, the refusal is the safe behaviour, but the message should stop saying v3.
 
+**Fixed 2026-11-14 (message only; the refusal itself is unchanged):**
+- Android host: "Always allow" and `PersistTrustedDevice` now report "This phone can't remember listeners yet. Approve this listener once instead."
+  - Kotlin constant renamed `DURABLE_LISTENER_TRUST_UNAVAILABLE`.
+  - Rust FFI host refusals reworded, helper renamed `durable_trust_unavailable`, in `host_control/handle.rs` and `host_transport/handle.rs`. Neither watchlisted file grew.
+- Android listener: the core's `submit_join_approved(true)` now says "This phone can't accept a permanent approval yet. Ask the host to approve you once." No current host sends a permanent approval.
+- Comments now give the real reason: no store for approved listeners' keys on Android. They no longer say IDs are unverified, which is untrue on v4.
+- Left as v3 wording on purpose, because these are genuine v3 paths: the core v3 TCP socket host (`silent-disco-core/.../socket/host/node.rs`) and the listener's rejection of a v3 host's unverified permanent trust.
+- Still open: the desktop host refuses "Always allow" on v4 as well, with "Legacy v3 cannot remember an unverified listener identity" (`desktop/src-tauri/src/platform/host_transport/effects.rs`). Owner to decide whether to reword it.
+
 ## 56. 2026-11-14 — God-file refactor close-out (TODO §8)
 
 ### 56.1 Full instrumented suite on the A54

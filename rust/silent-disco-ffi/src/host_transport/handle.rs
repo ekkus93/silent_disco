@@ -181,8 +181,8 @@ impl FfiHostTransportHandle {
         )
     }
 
-    /// Sends a session-only join approval to one identified listener.
-    /// Legacy v3 has no verified key identity, so it cannot grant durable trust.
+    /// Sends a session-only join approval to one identified listener. The
+    /// Android host cannot yet store an approved listener's key for later.
     pub fn send_join_approval(
         &self,
         listener_id: String,
@@ -190,7 +190,7 @@ impl FfiHostTransportHandle {
     ) -> Result<FfiHostTransportDelivery, FfiHostTransportError> {
         if trusted_for_future {
             return Err(FfiHostTransportError::Unauthorized(
-                "Legacy v3 transport cannot remember a listener without verified cryptographic identity"
+                "This phone can't remember listeners yet. Approve this listener once instead."
                     .to_owned(),
             ));
         }

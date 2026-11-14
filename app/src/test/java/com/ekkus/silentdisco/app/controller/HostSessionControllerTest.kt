@@ -6,7 +6,7 @@ import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.rust.FakeHostCoreController
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.HostTransportController
-import com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR
+import com.ekkus.silentdisco.core.rust.DURABLE_LISTENER_TRUST_UNAVAILABLE
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiCoreError
@@ -130,7 +130,7 @@ class HostSessionControllerTest {
     fun anApprovalWithoutItsJoinRouteOrAskingForDurableTrustIsReportedAsUndelivered() = runTest {
         val (session, parent) = controller()
         session.ensureCore()
-        listOf(false to "route missing", true to LEGACY_V3_DURABLE_TRUST_ERROR).forEachIndexed { index, (trust, reason) ->
+        listOf(false to "route missing", true to DURABLE_LISTENER_TRUST_UNAVAILABLE).forEachIndexed { index, (trust, reason) ->
             core.emit(
                 FfiCoreNotification.TransportEffect(
                     FfiTransportEffect.DeliverJoinApproval(

@@ -423,7 +423,7 @@ class MainViewModelRustHostEffectTest {
         assertThat(harness.hostCoreController.storageOperationFailedCalls).containsExactly(
             RecordedFailure(
                 "op-trust",
-                com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR,
+                com.ekkus.silentdisco.core.rust.DURABLE_LISTENER_TRUST_UNAVAILABLE,
                 false,
             ),
         )
@@ -453,7 +453,7 @@ class MainViewModelRustHostEffectTest {
         assertThat(harness.hostCoreController.storageOperationFailedCalls).containsExactly(
             RecordedFailure(
                 "op-trust-fail",
-                com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR,
+                com.ekkus.silentdisco.core.rust.DURABLE_LISTENER_TRUST_UNAVAILABLE,
                 false,
             ),
         )

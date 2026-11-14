@@ -172,7 +172,7 @@ mod legacy_v3_trust_boundary_tests {
             };
             assert!(matches!(
                 handle.submit_listener_connected(listener),
-                Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+                Err(FfiBridgeError::Core(message)) if message.contains("can't remember listeners")
             ));
         }
         assert_eq!(
@@ -192,23 +192,23 @@ mod legacy_v3_trust_boundary_tests {
             .expect("open core");
         assert!(matches!(
             handle.submit_join_approved(true),
-            Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+            Err(FfiBridgeError::Core(message)) if message.contains("permanent approval")
         ));
         assert!(matches!(
             handle.approve_join(0, "join-1".to_owned(), true),
-            Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+            Err(FfiBridgeError::Core(message)) if message.contains("can't remember listeners")
         ));
         let mut draft = handle.current_snapshot().expect("snapshot").host_draft;
         draft.approval_mode = FfiApprovalMode::TrustedDevices;
         assert!(matches!(
             handle.update_host_draft(0, draft.clone()),
-            Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+            Err(FfiBridgeError::Core(message)) if message.contains("can't remember listeners")
         ));
         draft.approval_mode = FfiApprovalMode::Manual;
         draft.remember_approved_devices = true;
         assert!(matches!(
             handle.update_host_draft(0, draft),
-            Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+            Err(FfiBridgeError::Core(message)) if message.contains("can't remember listeners")
         ));
         assert!(reject_legacy_durable_host_draft(FfiApprovalMode::Manual, false).is_ok());
         assert!(reject_legacy_durable_host_draft(FfiApprovalMode::InviteCode, false).is_ok());

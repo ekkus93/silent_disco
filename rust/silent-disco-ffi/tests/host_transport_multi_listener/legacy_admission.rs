@@ -54,8 +54,8 @@ fn legacy_admission_rejects_durable_trust_and_isolates_pending_and_rejected_peer
         .send_join_approval(pending_id.clone(), true)
         .expect_err("legacy plaintext must never grant remembered trust");
     assert!(
-        matches!(denied, FfiHostTransportError::Unauthorized(message) if message.contains("verified cryptographic identity")),
-        "permanent trust requires a verified key, not a claimed device ID"
+        matches!(denied, FfiHostTransportError::Unauthorized(message) if message.contains("can't remember listeners")),
+        "the host refuses to remember a listener"
     );
     assert!(
         pending.poll_event(150).expect("pending poll").is_none(),

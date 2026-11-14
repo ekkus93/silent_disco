@@ -19,9 +19,13 @@ import kotlinx.coroutines.withContext
 
 private const val POLL_TIMEOUT_MS: ULong = 500uL
 
-/** Legacy v3 has no handshake-verified listener key; a claimed ID is never durable trust. */
-internal const val LEGACY_V3_DURABLE_TRUST_ERROR =
-    "Legacy v3 transport cannot remember a listener without verified cryptographic identity"
+/**
+ * The Android host has no store for approved listeners' keys yet, so it
+ * cannot remember a listener for future sessions. One-session approval still
+ * works. Shown to the host when they choose "Always allow".
+ */
+internal const val DURABLE_LISTENER_TRUST_UNAVAILABLE =
+    "This phone can't remember listeners yet. Approve this listener once instead."
 
 /**
  * Android-facing wrapper around the shared Rust host transport for one
@@ -140,7 +144,7 @@ class HostTransportController(
     }
 
     suspend fun sendJoinApproval(listenerId: String, trustedForFuture: Boolean): FfiHostTransportDelivery? {
-        check(!trustedForFuture) { LEGACY_V3_DURABLE_TRUST_ERROR }
+        check(!trustedForFuture) { DURABLE_LISTENER_TRUST_UNAVAILABLE }
         return withHandle { it.sendJoinApproval(listenerId, trustedForFuture = false) }
     }
 
@@ -156,9 +160,9 @@ class HostTransportController(
         audioPort: UShort,
         expectedGeneration: FfiHostTransportHandle? = handleGate.currentHandle(),
     ): HostJoinAuthorizationResult<FfiHostTransportDelivery>? {
-        // A manually approved plaintext-v3 listener may join this session, but
-        // must never be promoted to durable trust using a self-claimed ID.
-        check(!trustedForFuture) { LEGACY_V3_DURABLE_TRUST_ERROR }
+        // A manually approved listener may join this session, but nothing on
+        // the Android host can remember its key for later sessions yet.
+        check(!trustedForFuture) { DURABLE_LISTENER_TRUST_UNAVAILABLE }
         val expected = expectedGeneration ?: return null
         return withContext(callDispatcher) {
             handleGate.deliverAndAuthorize(

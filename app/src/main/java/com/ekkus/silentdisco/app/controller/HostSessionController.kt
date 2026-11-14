@@ -10,7 +10,7 @@ import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.HostTransportController
-import com.ekkus.silentdisco.core.rust.LEGACY_V3_DURABLE_TRUST_ERROR
+import com.ekkus.silentdisco.core.rust.DURABLE_LISTENER_TRUST_UNAVAILABLE
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
 import com.ekkus.silentdisco.core.transport.TransportPorts
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
@@ -420,11 +420,12 @@ internal class HostSessionController(
 
     private suspend fun deliverJoinApproval(core: HostCoreController, effect: FfiTransportEffect.DeliverJoinApproval) {
         if (effect.trustedForFuture) {
-            // Legacy v3 has no verified key: report a failed delivery to the actor,
-            // not a pending approval or a silently trusted claimed device ID.
+            // The Android host cannot store an approved listener's key yet:
+            // report a failed delivery to the actor, not a pending approval or
+            // a remembered listener that would be forgotten on restart.
             joinRoutes.discard(effect.requestId, effect.listenerId)
             core.transportDeliveryCompleted(effect.operationId, FAILED_DELIVERY)
-            callbacks.commandFailed("approve listener", IllegalStateException(LEGACY_V3_DURABLE_TRUST_ERROR))
+            callbacks.commandFailed("approve listener", IllegalStateException(DURABLE_LISTENER_TRUST_UNAVAILABLE))
             return
         }
         // Do not send a successful approval without the UDP ports needed to
@@ -474,12 +475,11 @@ internal class HostSessionController(
             }.onFailure { error ->
                 core.storageOperationFailed(effect.operationId, error.message ?: "Failed to persist settings", true)
             }
-            // The Android host has no verified, host-scoped listener key store
-            // yet, so persisting a claimed device ID would silently elevate a
-            // spoofable peer. Fail the effect rather than acknowledge an
-            // unverified trust record.
+            // The Android host has no store for approved listeners' keys yet.
+            // Fail the effect rather than acknowledge a trust record that
+            // holds no key and would not survive a restart.
             is FfiStorageEffect.PersistTrustedDevice ->
-                core.storageOperationFailed(effect.operationId, LEGACY_V3_DURABLE_TRUST_ERROR, false)
+                core.storageOperationFailed(effect.operationId, DURABLE_LISTENER_TRUST_UNAVAILABLE, false)
         }
     }
 

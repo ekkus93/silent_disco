@@ -165,11 +165,11 @@ fn uniffi_handle_drives_listener_join_through_approval() {
         FfiListenerLifecycle::AwaitingApproval
     );
 
-    // Legacy plaintext transport cannot assert permanent trust from a host
-    // approval flag; a forged flag must not mutate the listener actor.
+    // A host approval flag cannot make this phone keep a permanent approval;
+    // a forged flag must not mutate the listener actor.
     assert!(matches!(
         handle.submit_join_approved(true),
-        Err(FfiBridgeError::Core(message)) if message.contains("Legacy v3")
+        Err(FfiBridgeError::Core(message)) if message.contains("permanent approval")
     ));
     handle
         .submit_join_approved(false)
