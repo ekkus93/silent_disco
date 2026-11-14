@@ -1788,3 +1788,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `HostPlaybackController` now owns the stream job, the single playback-command job (busy guard kept: a second non-cancelling command is refused and the coordinator shows "Another host playback command is already pending"), the boundary timers and pending boundaries. Four `MainViewModel` fields removed; `MainViewModel.kt` is 769 lines.
 - 4 new tests; removing the busy guard fails them. 600 JVM tests and the full Android gate (`--max-workers=2`, 5m25s) passed.
 - Left: the stream-loop body, play/pause/stop, and the `currentStreamId` split.
+
+## 2026-11-14T00:20:42Z - claude-opus-5-5 - God-file refactor §4: HostPlaybackController part 3 (stream loop)
+- The host stream loop moved unchanged into `app/controller/HostStreamLoop.kt`; it depends on the playback, monitor and diagnostics controllers, the host transport, a clock and dispatcher, and `HostStreamEnvironment` (UI state reads, host core, broadcasts, boundary scheduling, failure reporting). `MainViewModelHostPlayback.kt` keeps the environment adapter, boundary scheduling and the engine-failure handler.
+- Removing the failure-path `cancelBoundaryTimersFrom` fails `HostStreamFailureStopTest`. 600 JVM tests and the full Android gate (`--max-workers=2`, 6m21s) passed.
+- Left: play/pause/stop/resume and the `currentStreamId` split.
