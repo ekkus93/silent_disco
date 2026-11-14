@@ -155,8 +155,8 @@ export function HostSetupScreen() {
   const lifecycleAllowsSetup =
     snapshot.hostLifecycle === "idle" || snapshot.hostLifecycle === "error";
   const canSubmit = snapshot.selectedRole === "host" && lifecycleAllowsSetup && !pending;
-  // Legacy v3 cannot verify public-key identities. Never offer or silently
-  // persist "always allow" semantics on an unauthenticated control socket.
+  // This host cannot remember listeners yet. Never offer or silently persist
+  // "always allow" semantics it would not honour.
   const unverifiedTrust = draft.approvalMode === "trusted_devices" || draft.rememberApprovedDevices;
   const canCreate =
     canSubmit && !dirty && !unverifiedTrust && snapshot.canCreateHostSession && networkReady;
@@ -409,8 +409,8 @@ export function HostSetupScreen() {
                   className="mt-1 block text-sm text-violet-100/65"
                   id="remember-approved-devices-help"
                 >
-                  Unavailable until encrypted transport verifies device identity. If an old profile
-                  enabled this, uncheck it before continuing.
+                  This host can't remember listeners yet. If an old profile enabled this, uncheck it
+                  before continuing.
                 </span>
               </span>
             </label>
@@ -418,8 +418,8 @@ export function HostSetupScreen() {
 
           {unverifiedTrust && setupStage !== "music" ? (
             <p role="alert" className="rounded-lg border border-amber-300/40 p-3 text-amber-200">
-              This profile requests unverified device trust. Select manual or invite-code approval
-              and turn off remembered devices before continuing.
+              This profile asks to remember approved devices, which this host can't do yet. Select
+              manual or invite-code approval and turn off remembered devices before continuing.
             </p>
           ) : null}
 

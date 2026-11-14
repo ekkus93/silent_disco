@@ -206,7 +206,7 @@ describe("HostSetupScreen", () => {
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Next: Access" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("unverified device trust");
+    expect(screen.getByRole("alert")).toHaveTextContent("remember approved devices");
     expect(screen.getByRole("button", { name: "Review session" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Listener approval"), {
       target: { value: "manual" },

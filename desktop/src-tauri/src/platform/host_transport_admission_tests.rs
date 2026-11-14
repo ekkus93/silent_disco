@@ -296,7 +296,7 @@ fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
             message,
             ControlMessage::JoinRejection(rejection)
                 if rejection.listener_id == listener_id
-                    && rejection.reason.contains("Secure listener identity")
+                    && rejection.reason.contains("can't remember this phone")
         )
     });
     assert!(matches!(
@@ -312,7 +312,7 @@ fn plaintext_desktop_approval_refuses_durable_trust_without_key_proof() {
             .expect("status")
             .last_error
             .as_deref()
-            .is_some_and(|error| error.contains("cannot remember an unverified listener")),
+            .is_some_and(|error| error.contains("can't remember listeners")),
         "host must expose why a plaintext approval was refused"
     );
     assert!(

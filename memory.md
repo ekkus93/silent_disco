@@ -1860,3 +1860,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Five Rust matchers and the Kotlin tests now check the new text; a first FFI run failed on matchers keyed to "Legacy v3" / "verified cryptographic identity" until they were updated.
 - Checks: `cargo fmt --check`, clippy `-D warnings` and tests for `silent-disco-ffi` (all features), full Android gate (5m32s) all passed.
 - Not changed: genuine v3 paths (core v3 socket host, listener rejection of a v3 host's permanent trust) and the desktop v4 refusal text (owner to decide).
+
+## 2026-11-14T13:03:57Z - claude-opus-5-5 - Desktop durable-trust refusal reworded
+- The desktop host's refusal of "Always allow" (v4 too) no longer says v3 or "unverified identity". Host error: "This host can't remember listeners yet. Approve each listener once instead." Listener rejection: "The host can't remember this phone yet. Ask the host to approve you once." Host Setup help text and alert reworded to match; `refuse_legacy_durable_trust` renamed `refuse_durable_trust`. Behaviour unchanged.
+- Two Rust admission tests and one UI test matched old text; the WorkflowGolden accessibility snapshot was updated, and its diff is only the help-text line.
+- Checks: `npm run check` (197 Vitest tests), desktop clippy `-D warnings`, and `cargo test --all-features` (419 passed, 7 ignored) all passed.

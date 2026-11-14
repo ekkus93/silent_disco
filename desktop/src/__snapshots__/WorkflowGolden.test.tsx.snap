@@ -17,7 +17,7 @@ region "Create a silent disco"
     "Enter an invite code."
     checkbox "Remember approved devices" [disabled]
     "Remember approved devices"
-    "Unavailable until encrypted transport verifies device identity. If an old profile enabled this, uncheck it before continuing."
+    "This host can't remember listeners yet. If an old profile enabled this, uncheck it before continuing."
     button "Back to music"
     button "Review session"
     button "Advanced tuning"

@@ -1013,7 +1013,11 @@ The Android host now runs secure transport v4, but it still refuses durable list
 - Android listener: the core's `submit_join_approved(true)` now says "This phone can't accept a permanent approval yet. Ask the host to approve you once." No current host sends a permanent approval.
 - Comments now give the real reason: no store for approved listeners' keys on Android. They no longer say IDs are unverified, which is untrue on v4.
 - Left as v3 wording on purpose, because these are genuine v3 paths: the core v3 TCP socket host (`silent-disco-core/.../socket/host/node.rs`) and the listener's rejection of a v3 host's unverified permanent trust.
-- Still open: the desktop host refuses "Always allow" on v4 as well, with "Legacy v3 cannot remember an unverified listener identity" (`desktop/src-tauri/src/platform/host_transport/effects.rs`). Owner to decide whether to reword it.
+- Desktop, fixed 2026-11-14 at the owner's request; behaviour unchanged:
+  - The host's error now says "This host can't remember listeners yet. Approve each listener once instead."
+  - The listener's rejection reason now says "The host can't remember this phone yet. Ask the host to approve you once."
+  - The function is renamed `refuse_durable_trust`.
+  - On the Host Setup screen, the "Remember approved devices" help text and the warning alert no longer say identity can't be verified.
 
 ## 56. 2026-11-14 — God-file refactor close-out (TODO §8)
 
