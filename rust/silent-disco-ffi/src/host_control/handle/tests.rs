@@ -303,4 +303,70 @@ mod legacy_v3_trust_boundary_tests {
         );
         handle.shutdown().expect("shutdown");
     }
+
+    /// Trust loaded from the host's `SQLite` records (remediation F1): an
+    /// enrolled key is trusted, and after revocation it is not.
+    #[test]
+    fn trust_loaded_from_the_database_follows_enrollment_and_revocation() {
+        use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker, VerifiedListenerRecord};
+        let (host, _listener, verified) = verified_listener();
+        let device = verified.canonical_device_id();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sd-ffi-host-trust-{unique}"));
+        std::fs::create_dir_all(&root).expect("temp dir");
+        let worker =
+            DatabaseWorker::start(DatabaseConfig::new(root.join("trust.sqlite3")).expect("config"))
+                .expect("database worker");
+        let client = worker.client();
+        let handle = FfiCoreHandle::open("trust-host".to_owned(), Arc::new(NoopObserver))
+            .expect("open core");
+
+        assert_eq!(
+            crate::host_control::handle_trust::load_host_trust(&handle, &client, &host)
+                .expect("loads"),
+            0
+        );
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::SessionOnly
+        );
+
+        client
+            .enroll_verified_listener(&VerifiedListenerRecord {
+                host_key_fingerprint: *verified.host_fingerprint(),
+                listener_key_fingerprint: *verified.fingerprint(),
+                display_name: "Kitchen".to_owned(),
+                enrolled_at_ms: 1,
+                revoked_at_ms: None,
+            })
+            .expect("enrolls");
+        assert_eq!(
+            crate::host_control::handle_trust::load_host_trust(&handle, &client, &host)
+                .expect("loads"),
+            1
+        );
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::Trusted
+        );
+
+        assert!(
+            client
+                .revoke_verified_listener(*verified.host_fingerprint(), *verified.fingerprint(), 2)
+                .expect("revokes")
+        );
+        crate::host_control::handle_trust::load_host_trust(&handle, &client, &host)
+            .expect("reloads");
+        assert_eq!(
+            crate::host_control::handle_trust::join_trust_state(&handle, &device).expect("state"),
+            TrustState::SessionOnly,
+            "a revoked key must not be trusted"
+        );
+        handle.shutdown().expect("shutdown");
+        worker.stop_and_join().expect("database closes");
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

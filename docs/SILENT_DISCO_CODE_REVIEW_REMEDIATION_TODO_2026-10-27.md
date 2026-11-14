@@ -57,7 +57,12 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 - A rotated host key starts with no trust. The legacy claimed-ID `trusted_devices` rows are never read or copied as verified trust.
 - Tests: 9, covering enrol/reopen, host scoping, revoke/re-enrol, revocation ordering, invalid enrolments, no legacy promotion, upgrade from schema 4, the table refusing a malformed fingerprint, and a worker round trip. Mutation (re-enrolment not clearing revocation) killed.
 - Gates: `check-rust.sh` (923), desktop clippy and tests (426), full Android gate.
-- **Open:** loading these records into host admission (`HostVerifiedTrust`) on Android and desktop, and writing them from "Always allow"; key rotation beyond host-key scoping (listener key rotation is a new device by owner decision).
+**Step 2a done (2026-11-14, local gates; box stays open): loading.**
+- `HostVerifiedTrust::from_records` builds the host's registry from stored rows. A revoked row stays revoked. It refuses a row for another host key, a bad name, a duplicated key, or too many rows.
+- The FFI method `FfiCoreHandle::load_host_trust_from_database(database_handle, host_public_key_der)` reads the records straight from the app's Rust database (the Android JNI database handle), so no trust data passes through Kotlin. It returns the count loaded.
+- Tests: 2 core tests and 1 FFI test against a real database worker (enrol → Trusted; revoke → SessionOnly). Mutation (loader ignores revocation) killed by both.
+- Gates: `check-rust.sh` (926), full Android gate.
+- **Open:** call the loader at Android host session start with the host TLS key; desktop equivalent; write records from "Always allow"; revoke UI.
 - [ ] Validate cryptographic proof of listener identity before projecting Trusted/Untrusted. Update Rust FFI admission inputs and Android MainViewModelRustHost join mapping; never hard-code TRUSTED.
 - [ ] Update desktop host_join_projection to resolve verified host-owned trust records instead of unconditional SessionOnly; ensure Android/desktop policy parity.
 - [ ] Wire Always allow / Approve once / revoke, first enrollment, host restart, listener reconnect, profile switch and lost-key re-enrollment with accurate user-visible status.

@@ -159,6 +159,21 @@ fn with_database_entry<T>(
     action(&mut entry)
 }
 
+/// A client for the database behind an Android JNI handle, for other FFI
+/// objects in this library (the host core reads its trust records here).
+pub(crate) fn database_client(
+    handle: i64,
+) -> Result<silent_disco_core::storage::DatabaseClient, String> {
+    with_database_entry(handle, |entry| {
+        Ok(entry
+            .worker
+            .as_ref()
+            .ok_or(AndroidDatabaseStatus::InvalidHandle)?
+            .client())
+    })
+    .map_err(|status| format!("{status:?}"))
+}
+
 fn load_trusted_devices(handle: i64) -> Result<(), AndroidDatabaseStatus> {
     with_database_entry(handle, |entry| {
         let devices = entry

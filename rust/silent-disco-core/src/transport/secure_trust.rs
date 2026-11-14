@@ -3,8 +3,9 @@
 //! A record can be enrolled only from a `VerifiedListenerKey`, which is
 //! constructible solely by a successful, single-use, channel-bound signature
 //! proof. This module does not authenticate legacy-v3 sockets or enable their
-//! auto-admission. Platform adapters must protect the serialized records with
-//! the host's OS credential store and retain the private key outside this JSON.
+//! auto-admission. The records are stored in Rust-owned `SQLite`
+//! (`storage::VerifiedListenerRecord`, owner decision 2026-11-09) and loaded
+//! with [`HostVerifiedTrust::from_records`]; private keys never enter them.
 use std::collections::BTreeMap;
 
 use p256::{ecdsa::VerifyingKey, pkcs8::DecodePublicKey};
@@ -259,6 +260,53 @@ impl HostVerifiedTrust {
         }
     }
 
+    /// Builds the registry from the host's stored records (remediation F1;
+    /// stored in Rust-owned `SQLite`, owner decision 2026-11-09). Every record
+    /// must belong to this host key; a revoked record stays revoked.
+    ///
+    /// # Errors
+    /// Rejects an invalid host key, a record for another host, an invalid
+    /// name, a duplicated key, or more records than the registry holds.
+    pub fn from_records(
+        host_public_key_der: &[u8],
+        records: &[crate::storage::VerifiedListenerRecord],
+    ) -> Result<Self, HostTrustError> {
+        let host_fingerprint = host_fingerprint(host_public_key_der)?;
+        if records.len() > MAX_TRUSTED_LISTENERS {
+            return Err(HostTrustError::TooManyListeners);
+        }
+        let mut listeners = BTreeMap::new();
+        for record in records {
+            if record.host_key_fingerprint != host_fingerprint {
+                return Err(HostTrustError::WrongHostIdentity);
+            }
+            if !valid_display_name(&record.display_name) {
+                return Err(HostTrustError::InvalidDisplayName);
+            }
+            let stored = StoredListener {
+                fingerprint: record.listener_key_fingerprint,
+                display_name: record.display_name.clone(),
+                revoked: !record.is_trusted(),
+            };
+            if listeners
+                .insert(record.listener_key_fingerprint, stored)
+                .is_some()
+            {
+                return Err(HostTrustError::InvalidSnapshot);
+            }
+        }
+        Ok(Self {
+            host_fingerprint,
+            listeners,
+        })
+    }
+
+    /// The SHA-256 fingerprint of the host key this registry is scoped to.
+    #[must_use]
+    pub const fn host_fingerprint(&self) -> &[u8; 32] {
+        &self.host_fingerprint
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.listeners.len()
@@ -502,6 +550,79 @@ mod tests {
         assert_eq!(
             store.disposition(&verified),
             VerifiedTrustDisposition::Unknown
+        );
+    }
+
+    fn stored(
+        host: &[u8],
+        listener: u8,
+        name: &str,
+        revoked: bool,
+    ) -> crate::storage::VerifiedListenerRecord {
+        use sha2::{Digest, Sha256};
+        let mut host_fp = [0_u8; 32];
+        host_fp.copy_from_slice(&Sha256::digest(host));
+        crate::storage::VerifiedListenerRecord {
+            host_key_fingerprint: host_fp,
+            listener_key_fingerprint: [listener; 32],
+            display_name: name.to_owned(),
+            enrolled_at_ms: 1,
+            revoked_at_ms: revoked.then_some(2),
+        }
+    }
+
+    #[test]
+    fn stored_records_give_trusted_revoked_and_unknown_dispositions() {
+        let (_, host) = key(41);
+        let trust = HostVerifiedTrust::from_records(
+            &host,
+            &[
+                stored(&host, 1, "Alex", false),
+                stored(&host, 2, "Sam", true),
+            ],
+        )
+        .expect("loads");
+        assert_eq!(
+            trust.disposition_for_fingerprint(&[1; 32]),
+            VerifiedTrustDisposition::Trusted
+        );
+        assert_eq!(
+            trust.disposition_for_fingerprint(&[2; 32]),
+            VerifiedTrustDisposition::Revoked
+        );
+        assert_eq!(
+            trust.disposition_for_fingerprint(&[3; 32]),
+            VerifiedTrustDisposition::Unknown
+        );
+        assert_eq!(trust.len(), 2);
+    }
+
+    #[test]
+    fn stored_records_for_another_host_or_with_bad_data_are_refused() {
+        let (_, host) = key(41);
+        let (_, other) = key(42);
+        assert_eq!(
+            HostVerifiedTrust::from_records(&host, &[stored(&other, 1, "Alex", false)]).err(),
+            Some(HostTrustError::WrongHostIdentity)
+        );
+        assert_eq!(
+            HostVerifiedTrust::from_records(&host, &[stored(&host, 1, " ", false)]).err(),
+            Some(HostTrustError::InvalidDisplayName)
+        );
+        assert_eq!(
+            HostVerifiedTrust::from_records(
+                &host,
+                &[
+                    stored(&host, 1, "Alex", false),
+                    stored(&host, 1, "Alex again", false)
+                ]
+            )
+            .err(),
+            Some(HostTrustError::InvalidSnapshot)
+        );
+        assert_eq!(
+            HostVerifiedTrust::from_records(b"not a key", &[]).err(),
+            Some(HostTrustError::InvalidHostKey)
         );
     }
 }

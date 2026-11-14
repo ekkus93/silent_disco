@@ -1902,3 +1902,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Schema migration v5 `verified_listeners` (host key fp + listener key fp, display name, enrolled_at, revoked_at; hex CHECKs). `storage/verified_listener.rs` repository (enroll clears revocation, revoke keeps row, list per host key) through DatabaseConnection, worker commands and `DatabaseClient`. No copy from legacy `trusted_devices`. `LATEST_SCHEMA_VERSION` = 5; three tests that pinned 4 updated (incl. the v3->v4 upgrade rewind, which now also drops v5).
 - 9 new tests; mutation killed. `check-rust.sh` 923 passed, desktop 426, full Android gate passed. Worker dispatch handlers extracted to stay under clippy too_many_lines.
 - Next: load records into `HostVerifiedTrust` for host admission (FFI/Android, desktop) and write them from Always allow.
+
+## 2026-11-14T16:20:09Z - claude-opus-5-5 - F1 durable trust step 2a: load records into the host core
+- Core `HostVerifiedTrust::from_records`; FFI `load_host_trust_from_database(db_handle, host_key_der)` reads `verified_listeners` via the Android database registry (`android_database_abi::database_client`). 3 tests; mutation killed. check-rust 926, Android gate green.
+- Gradle gotcha: `compile{Debug,PocDebug}UnitTestKotlin` failed with "Cannot access class FakeListenerTransport" (sharedTest source set) on unchanged Kotlin -- stale incremental cache. Fixed by `--rerun-tasks` on the three unit-test compile tasks; not a code defect.
+- FFI flake `shutdown_races_with_concurrent_command_submission_and_notification_delivery` hit again under full-suite load; 5/5 isolated.
