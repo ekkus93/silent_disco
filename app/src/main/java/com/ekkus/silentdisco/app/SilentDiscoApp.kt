@@ -15,12 +15,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -61,14 +58,8 @@ fun SilentDiscoApp(
     val discoveryLifecycleController = remember(context) { DiscoveryLifecycleController(context) }
 
     val permissionRequest = rememberPermissionRequestState()
-    var showEndSessionConfirmation by rememberSaveable { mutableStateOf(false) }
-    var showLeaveSessionConfirmation by rememberSaveable { mutableStateOf(false) }
-    var showInviteDialog by rememberSaveable { mutableStateOf(false) }
-    var showVerifiedQrDialog by rememberSaveable { mutableStateOf(false) }
-    var pendingQrJoin by rememberSaveable { mutableStateOf(false) }
-    var qrJoinScanObserved by rememberSaveable { mutableStateOf(false) }
-    var showCameraRationale by rememberSaveable { mutableStateOf(false) }
-    var showCameraDenied by rememberSaveable { mutableStateOf(false) }
+    val confirmations = rememberSessionConfirmationState()
+    val qrJoin = rememberQrJoinFlowState()
 
     fun sharePlainText(title: String, text: String) {
         val shareIntent = Intent.createChooser(
@@ -106,8 +97,8 @@ fun SilentDiscoApp(
     val qrScanner = rememberQrScanner(
         onScanned = p2ViewModel::validateScannedQr,
         onCancelled = { workflowViewModel.showTransientMessage("QR scanning cancelled") },
-        onRationaleNeeded = { showCameraRationale = true },
-        onCameraDenied = { showCameraDenied = true },
+        onRationaleNeeded = { qrJoin.showCameraRationale = true },
+        onCameraDenied = { qrJoin.showCameraDenied = true },
     )
 
     // ActivityResult callbacks can arrive after recreation; restore an
@@ -144,10 +135,10 @@ fun SilentDiscoApp(
 
     fun startVerifiedQrJoin() {
         val invitation = p2UiState.validatedInvitation ?: return
-        showVerifiedQrDialog = false
+        qrJoin.showVerifiedQrDialog = false
         viewModel.rememberInvitedHostTlsKey(invitation)
-        pendingQrJoin = true
-        qrJoinScanObserved = false
+        qrJoin.pendingQrJoin = true
+        qrJoin.qrJoinScanObserved = false
         viewModel.selectRole(AppRole.LISTENER)
         requestPermissionThen(PermissionAction.QR_LISTENER_DISCOVERY)
         workflowViewModel.showTransientMessage("Looking for ${invitation.sessionName} nearby…")
@@ -162,7 +153,7 @@ fun SilentDiscoApp(
      */
     fun startDirectQrConnect() {
         val invitation = p2UiState.validatedInvitation ?: return
-        showVerifiedQrDialog = false
+        qrJoin.showVerifiedQrDialog = false
         p2ViewModel.dismissValidatedInvitation()
         viewModel.selectRole(AppRole.LISTENER)
         viewModel.rememberInvitedHostTlsKey(invitation)
@@ -186,8 +177,8 @@ fun SilentDiscoApp(
                     }
                 }
                 AppUiEffect.NavigateListenerPlayback -> navController.navigateSingleTop(AppRoutes.ListenerPlayback)
-                AppUiEffect.ShowEndSessionConfirmation -> showEndSessionConfirmation = true
-                AppUiEffect.ShowLeaveSessionConfirmation -> showLeaveSessionConfirmation = true
+                AppUiEffect.ShowEndSessionConfirmation -> confirmations.showEndSessionConfirmation = true
+                AppUiEffect.ShowLeaveSessionConfirmation -> confirmations.showLeaveSessionConfirmation = true
                 is AppUiEffect.ShowTransientMessage -> snackbarHostState.showSnackbar(effect.message)
             }
         }
@@ -215,7 +206,7 @@ fun SilentDiscoApp(
         p2UiState.validatedInvitation?.sessionId,
         p2UiState.validatedInvitation?.expiresAtMs,
     ) {
-        showVerifiedQrDialog = p2UiState.validatedInvitation != null
+        qrJoin.showVerifiedQrDialog = p2UiState.validatedInvitation != null
     }
 
     LaunchedEffect(
@@ -234,24 +225,24 @@ fun SilentDiscoApp(
         }
     }
 
-    LaunchedEffect(pendingQrJoin, uiState.isScanning, uiState.discoveredSessions) {
-        if (!pendingQrJoin) return@LaunchedEffect
+    LaunchedEffect(qrJoin.pendingQrJoin, uiState.isScanning, uiState.discoveredSessions) {
+        if (!qrJoin.pendingQrJoin) return@LaunchedEffect
         if (uiState.isScanning) {
-            qrJoinScanObserved = true
+            qrJoin.qrJoinScanObserved = true
             return@LaunchedEffect
         }
-        if (!qrJoinScanObserved) return@LaunchedEffect
+        if (!qrJoin.qrJoinScanObserved) return@LaunchedEffect
         val invitation = p2UiState.validatedInvitation ?: return@LaunchedEffect
-        qrJoinScanObserved = false
+        qrJoin.qrJoinScanObserved = false
         val live = uiState.discoveredSessions.firstOrNull { it.id == invitation.sessionId }
         if (live != null) {
-            pendingQrJoin = false
+            qrJoin.pendingQrJoin = false
             viewModel.selectDiscoveredSession(live)
             viewModel.updateInviteCode(invitation.inviteCode.orEmpty())
             p2ViewModel.dismissValidatedInvitation()
             navController.navigateSingleTop(AppRoutes.SessionJoin)
         } else {
-            pendingQrJoin = false
+            qrJoin.pendingQrJoin = false
             p2ViewModel.dismissValidatedInvitation()
             snackbarHostState.showSnackbar(
                 "The signed invitation is valid, but that exact session is not currently nearby.",
@@ -274,7 +265,7 @@ fun SilentDiscoApp(
         shareSupportReport = ::shareSupportReport,
         openSystemSettings = ::openSystemSettings,
         launchQrScanner = qrScanner::launch,
-        showInviteDialog = { showInviteDialog = true },
+        showInviteDialog = { confirmations.showInviteDialog = true },
     )
 
     Scaffold(
@@ -348,9 +339,9 @@ fun SilentDiscoApp(
         )
     }
 
-    if (showCameraRationale) {
+    if (qrJoin.showCameraRationale) {
         AlertDialog(
-            onDismissRequest = { showCameraRationale = false },
+            onDismissRequest = { qrJoin.showCameraRationale = false },
             title = { Text("Use the camera to scan a signed invitation") },
             text = {
                 Text(
@@ -358,12 +349,12 @@ fun SilentDiscoApp(
                 )
             },
             dismissButton = {
-                TextButton(onClick = { showCameraRationale = false }) { Text("Not now") }
+                TextButton(onClick = { qrJoin.showCameraRationale = false }) { Text("Not now") }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        showCameraRationale = false
+                        qrJoin.showCameraRationale = false
                         qrScanner.requestCameraPermission()
                     },
                 ) {
@@ -373,20 +364,20 @@ fun SilentDiscoApp(
         )
     }
 
-    if (showCameraDenied) {
+    if (qrJoin.showCameraDenied) {
         AlertDialog(
-            onDismissRequest = { showCameraDenied = false },
+            onDismissRequest = { qrJoin.showCameraDenied = false },
             title = { Text("Camera access is required") },
             text = {
                 Text("Allow camera access in system settings to scan signed QR invitations.")
             },
             dismissButton = {
-                TextButton(onClick = { showCameraDenied = false }) { Text("Cancel") }
+                TextButton(onClick = { qrJoin.showCameraDenied = false }) { Text("Cancel") }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        showCameraDenied = false
+                        qrJoin.showCameraDenied = false
                         openSystemSettings()
                     },
                 ) {
@@ -397,14 +388,14 @@ fun SilentDiscoApp(
     }
 
     ConfirmationSheet(
-        visible = showEndSessionConfirmation,
+        visible = confirmations.showEndSessionConfirmation,
         title = "End this session?",
         detail = "Playback will stop for ${uiState.hostDiagnostics.connectedListenerCount} connected listener(s).",
         safeActionLabel = "Keep hosting",
         destructiveActionLabel = "End session",
-        onDismiss = { showEndSessionConfirmation = false },
+        onDismiss = { confirmations.showEndSessionConfirmation = false },
         onConfirm = {
-            showEndSessionConfirmation = false
+            confirmations.showEndSessionConfirmation = false
             viewModel.endSession()
             workflowViewModel.navigateHome()
         },
@@ -412,14 +403,14 @@ fun SilentDiscoApp(
     )
 
     ConfirmationSheet(
-        visible = showLeaveSessionConfirmation,
+        visible = confirmations.showLeaveSessionConfirmation,
         title = "Leave this session?",
         detail = "Audio playback on this phone will stop.",
         safeActionLabel = "Stay",
         destructiveActionLabel = "Leave session",
-        onDismiss = { showLeaveSessionConfirmation = false },
+        onDismiss = { confirmations.showLeaveSessionConfirmation = false },
         onConfirm = {
-            showLeaveSessionConfirmation = false
+            confirmations.showLeaveSessionConfirmation = false
             if (viewModel.listenerHasPendingWifiDirectJoin) {
                 discoveryLifecycleController.cancelJoinTransport(
                     workflowViewModel::showTransientMessage,
@@ -431,10 +422,10 @@ fun SilentDiscoApp(
         testTag = "leave-session-confirmation",
     )
 
-    if (showInviteDialog) {
+    if (confirmations.showInviteDialog) {
         InviteSessionSheet(
             uiState = uiState,
-            onDismiss = { showInviteDialog = false },
+            onDismiss = { confirmations.showInviteDialog = false },
             onCopyCode = { code ->
                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("Silent Disco invite code", code))
@@ -444,7 +435,7 @@ fun SilentDiscoApp(
                 sharePlainText("Share Silent Disco invitation", instructions)
             },
             onShowSignedQr = {
-                showInviteDialog = false
+                confirmations.showInviteDialog = false
                 p2ViewModel.prepareHostQr(uiState)
             },
         )
@@ -457,13 +448,13 @@ fun SilentDiscoApp(
         )
     }
 
-    if (showVerifiedQrDialog) {
+    if (qrJoin.showVerifiedQrDialog) {
         p2UiState.validatedInvitation?.let { invitation ->
             VerifiedQrInvitationDialog(
                 invitation = invitation,
                 alreadyTrusted = p2UiState.validatedHostIsTrusted(),
                 onDismiss = {
-                    showVerifiedQrDialog = false
+                    qrJoin.showVerifiedQrDialog = false
                     p2ViewModel.dismissValidatedInvitation()
                 },
                 onJoinOnce = ::startVerifiedQrJoin,

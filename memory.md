@@ -1840,3 +1840,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `rememberAudioPicker` (host), `rememberQrScanner` with camera permission (listener), `rememberRuntimePermissionLauncher`; callbacks only. `SilentDiscoApp.kt` 478 lines.
 - `FeatureLaunchersTest` uses a recording `ActivityResultRegistry` via `LocalActivityResultRegistryOwner` (no external app). There is no `androidx.test:rules` dependency, so no `GrantPermissionRule`; the test reads the real camera permission and checks the matching branch instead of changing device state.
 - The first full gate was stopped by Claude Code for low memory; the rerun passed (4m21s). CLAUDE.md now says §6 is being done (owner decision 2026-11-14).
+
+## 2026-11-14T11:38:30Z - claude-opus-5-5 - God-file refactor §6.4: flow state holders
+- `QrJoinFlowState` (pending QR join, scan observed, camera rationale/denied, verified-QR dialog) and `SessionConfirmationState` (end/leave confirmations, invite dialog) replace the 8 `rememberSaveable` flags in `SilentDiscoApp`; listSaver-backed.
+- One StateRestorationTester test each (every flag independently); mutation on the Saver killed. A54 runs and the full Android gate passed.
