@@ -1889,3 +1889,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - New ignored benchmark `transport_cpu_cost_tests` (FFI): 20 s of 5 ms PCM at real-time pace, host+listener in one process, CPU from `/proc/self/stat`. Release, desktop, two runs: v3 53-56 ms CPU per audio second (5.3-5.6% of a core), v4 88-90 ms (8.75-9.0%), 4000/4000 received. Debug builds read much higher (135 / 300 ms) and are not representative.
 - `callback_pcm_tests::{Wire, transports}` are now `pub(super)` for reuse. FFI fmt, clippy and tests (179, 1 ignored) passed.
 - Awaiting owner: is ~1.6x / ~9% of a core acceptable to close the encrypted-integration item?
+
+## 2026-11-14T15:36:02Z - claude-opus-5-5 - Remediation §1 encrypted integration closed
+- Owner accepted the measured v4 CPU cost (~1.6x v3, ~9% of one desktop core for host+listener). Item checked off; per-listener cost on a phone host remains unmeasured (noted in the TODO).
