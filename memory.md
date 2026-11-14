@@ -1875,3 +1875,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - New `quic_stalled_peer_tests` (raw admitted client, 2 KiB window, never reads); unbounded-write mutation fails it. `check-rust.sh` (911 tests), desktop clippy+tests (426), full Android gate passed.
 - Flake seen once under full-suite load: FFI `shutdown_races_with_concurrent_command_submission_and_notification_delivery` (actor=failed); 30/30 isolated passes; logged in handoff §58.
 - Remediation TODO §1 UDP PCM item stays open only for the two-listener v4 test and the phone-to-phone Android host run.
+
+## 2026-11-14T15:16:56Z - claude-opus-5-5 - Remediation §1 negative tests closed
+- New `quic_on_wire_tests` (UDP relay between real v4 listener and host workers): tampered packets (byte flipped in the AEAD tag) never deliver anything and the connection ends; duplicated packets deliver each control frame once in order and no datagram twice. Sanity check: a relay that does not tamper fails the tamper test.
+- Closed the §1 negative-test item with existing evidence mapped per category; nonce/sequence wrap on v4 is QUIC's (62-bit packet numbers), stated as such.
+- Gates: core fmt, clippy -D warnings, all core tests (732) passed; only test code changed.
