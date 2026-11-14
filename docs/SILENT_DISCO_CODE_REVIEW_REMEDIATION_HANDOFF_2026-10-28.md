@@ -1110,3 +1110,27 @@ The owner chose to do §6 now, overriding the earlier deferral to the UI redesig
 **Test cautions:**
 - App-level instrumented tests must not tap delete actions: `P2ViewModel` uses the phone's real trusted-hosts store.
 - There is no `androidx.test:rules` dependency, so the camera test reads the phone's real permission instead of granting it.
+
+## 58. 2026-11-14 — v4 host no longer stalls on a listener that stops reading
+
+**Defect (open since §53.3).** `QuicHostNode::broadcast_control` holds the control-ordering lock and writes to each approved peer in turn through `QuicHostWorker::send_control`, which waits until the frame is written, with no deadline. A listener that stops reading its control stream fills its QUIC flow-control window, so that write never finishes. The broadcast then never returns, and Stop, Pause and track boundaries stop reaching every other listener. Inside the worker, `handle_command` also awaited a peer's 256-slot queue on the main loop, so a full queue would freeze every command, including Shutdown.
+
+**Fix (`rust/silent-disco-core/src/transport/quic_host_worker.rs`).**
+- Each control write has a 2 s deadline (`CONTROL_WRITE_TIMEOUT`, matching the Android bridge's critical backpressure bound). On timeout the writer reports "listener stopped reading its control stream" and closes the connection. The existing reader path then removes the peer and reports `Closed`.
+- `handle_command` no longer waits on any peer:
+  - `SendControl`, `Close` and the shutdown close use `try_send`.
+  - A full queue means a stalled peer, so its connection is closed directly.
+  - `handle_command` is now a plain function.
+
+**Test.** `quic_stalled_peer_tests::a_listener_that_stops_reading_is_disconnected_and_others_still_get_control` uses a real loopback host with one healthy `QuicListenerWorker`. It adds a raw client on its own runtime thread that passes the v4 admission with a 2 KiB stream receive window, then never reads. The test checks that:
+- the stalled peer's writes fail within the bound;
+- the peer is reported closed and is then unknown;
+- the healthy listener still receives a control frame sent afterwards.
+
+Mutation: putting back the unbounded write fails the test with "the host froze on a listener that stopped reading".
+
+**Gates (local; hosted CI left to the owner).**
+- `scripts/check-rust.sh` passed: 911 tests, fmt and clippy clean.
+- Desktop: `cargo clippy --all-targets --all-features -D warnings` and `cargo test --all-features` passed (426).
+- The full Android gate passed.
+- One earlier `check-rust.sh` run failed only `host_control::handle::tests::concurrency_tests::shutdown_races_with_concurrent_command_submission_and_notification_delivery` ("actor=failed"). That test does not touch the QUIC worker. It passed 30 of 30 isolated runs and the rerun gate, so it is treated as a pre-existing load-dependent flake (compare §26). Open finding.

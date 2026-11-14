@@ -28,6 +28,8 @@ mod quic_listener_transport_tests;
 pub mod quic_listener_worker;
 #[cfg(all(test, feature = "quic"))]
 mod quic_reconnect_tests;
+#[cfg(all(test, feature = "quic"))]
+mod quic_stalled_peer_tests;
 #[cfg(feature = "quic")]
 pub mod quic_transport_factory;
 #[cfg(all(test, feature = "quic"))]

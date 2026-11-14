@@ -162,6 +162,12 @@ const EVENT_BACKOFF: Duration = Duration::from_millis(2);
 /// is closed anyway. Closing a QUIC connection discards unacknowledged
 /// stream data, so the close waits for the acknowledgement first.
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
+/// Longest one control frame may wait to be written. A peer that stops
+/// reading its control stream fills its flow-control window, and an
+/// unbounded write would hold every caller (a Stop broadcast included).
+pub(super) const CONTROL_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Why a peer that stopped reading its control stream was disconnected.
+const STALLED_REASON: &str = "listener stopped reading its control stream";
 /// Extra time on top of [`CLOSE_GRACE`] for the writers to run before a
 /// shutdown closes whatever is still open.
 const SHUTDOWN_SLACK: Duration = Duration::from_millis(500);
@@ -419,7 +425,7 @@ async fn run_host(
             command = commands.recv() => {
                 match command {
                     None | Some(Command::Shutdown) => break,
-                    Some(command) => handle_command(command, &shared).await,
+                    Some(command) => handle_command(command, &shared),
                 }
             }
         }
@@ -433,8 +439,7 @@ async fn run_host(
     for peer in &peers {
         if peer
             .control
-            .send(ControlWrite::Close("host shutting down".to_owned()))
-            .await
+            .try_send(ControlWrite::Close("host shutting down".to_owned()))
             .is_err()
         {
             peer.connection.close(0_u32.into(), b"host shutting down");
@@ -450,19 +455,31 @@ async fn run_host(
     endpoint.wait_idle().await;
 }
 
-async fn handle_command(command: Command, shared: &Shared) {
+fn handle_command(command: Command, shared: &Shared) {
     match command {
         Command::SendControl { peer, frame, reply } => {
-            let sender = shared.peers().get(&peer).map(|entry| entry.control.clone());
-            match sender {
-                Some(sender) => {
-                    if let Err(mpsc::error::SendError(ControlWrite::Frame(_, reply))) =
-                        sender.send(ControlWrite::Frame(frame, reply)).await
-                    {
-                        let _ = reply.send(Err(QuicHostError::UnknownPeer(peer)));
-                    }
+            let entry = shared
+                .peers()
+                .get(&peer)
+                .map(|entry| (entry.control.clone(), entry.connection.clone()));
+            let Some((sender, connection)) = entry else {
+                let _ = reply.send(Err(QuicHostError::UnknownPeer(peer)));
+                return;
+            };
+            // Never wait on one peer's queue here: this loop serves every
+            // peer. A full queue means the peer has stopped reading.
+            match sender.try_send(ControlWrite::Frame(frame, reply)) {
+                // Only a frame is queued here; a `Close` cannot come back.
+                Ok(())
+                | Err(
+                    mpsc::error::TrySendError::Full(ControlWrite::Close(_))
+                    | mpsc::error::TrySendError::Closed(ControlWrite::Close(_)),
+                ) => {}
+                Err(mpsc::error::TrySendError::Full(ControlWrite::Frame(_, reply))) => {
+                    connection.close(1_u32.into(), STALLED_REASON.as_bytes());
+                    let _ = reply.send(Err(QuicHostError::Send(STALLED_REASON.to_owned())));
                 }
-                None => {
+                Err(mpsc::error::TrySendError::Closed(ControlWrite::Frame(_, reply))) => {
                     let _ = reply.send(Err(QuicHostError::UnknownPeer(peer)));
                 }
             }
@@ -519,11 +536,11 @@ async fn handle_command(command: Command, shared: &Shared) {
             let entry = shared.peers().remove(&peer);
             if let Some(entry) = entry {
                 // The writer drains earlier frames, then closes. If its queue
-                // is gone the writer already failed; close directly.
+                // is full (the peer stopped reading) or gone (the writer
+                // already failed), close directly rather than wait here.
                 if entry
                     .control
-                    .send(ControlWrite::Close(reason.clone()))
-                    .await
+                    .try_send(ControlWrite::Close(reason.clone()))
                     .is_err()
                 {
                     entry.connection.close(0_u32.into(), reason.as_bytes());
@@ -608,9 +625,14 @@ async fn write_control(
     while let Some(write) = queue.recv().await {
         match write {
             ControlWrite::Frame(frame, reply) => {
-                let result = write_frame(&mut send, &frame)
-                    .await
-                    .map_err(|error| QuicHostError::Send(error.to_string()));
+                let write =
+                    tokio::time::timeout(CONTROL_WRITE_TIMEOUT, write_frame(&mut send, &frame));
+                let result = if let Ok(written) = write.await {
+                    written.map_err(|error| QuicHostError::Send(error.to_string()))
+                } else {
+                    connection.close(1_u32.into(), STALLED_REASON.as_bytes());
+                    Err(QuicHostError::Send(STALLED_REASON.to_owned()))
+                };
                 let failed = result.is_err();
                 let _ = reply.send(result);
                 if failed {
