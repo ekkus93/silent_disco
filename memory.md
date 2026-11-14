@@ -1922,3 +1922,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-14T20:14:29Z - claude-opus-5-5 - F1 step 3 gates passed
 - Owner approved rerunning gates one at a time. `CARGO_BUILD_JOBS=2 check-rust.sh` passed (929 tests, 0 failed); full Android gate with `--max-workers=2` passed (6m15s). Desktop not rerun: desktop depends only on silent-disco-core, unchanged in step 3.
 - TODO F1 trust-records item has step 3 evidence; box stays open.
+
+## 2026-11-14T20:33:39Z - claude-opus-5-5 - F1 step 4: Android Approved-devices mode enabled
+- Removed the TRUSTED_DEVICES_PLACEHOLDER greying in HostAccessSetupScreen and the start refusal in HostReadyScreen; rewrote 3 WorkflowConfigurationStateTest cases to expect the mode to work. Class passed on A54 (7 tests, leaveApksInstalledAfterRun=true); full Android gate passed.
+- Finding for revoke UI: Settings "Approved devices" (TrustedDevicesViewModel) still reads legacy claimed-ID trusted_devices, not verified_listeners.

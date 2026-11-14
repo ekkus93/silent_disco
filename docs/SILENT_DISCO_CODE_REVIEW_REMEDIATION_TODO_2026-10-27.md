@@ -76,7 +76,13 @@ This is the ACTIVE remediation checklist for the six findings of the 2026-10-27 
 - Tests: FFI enrol (claimed ID refused; record reloads as Trusted; mutation skipping the reload killed), a real QUIC host→listener remembered approval, listener mapping over v4, the legacy v3 refusal, and rewritten Kotlin session/effect/transport tests.
 - Gates: `check-rust.sh` (929 passed), full Android gate. Desktop not rerun (it depends only on core, which is unchanged).
 - Not yet run: on-device test.
-- **Open:** Android setup screen still greys out Approved-devices mode; desktop host remembering; revoke UI.
+- **Open:** desktop host remembering; revoke UI.
+**Step 4 done (2026-11-14, local gates + A54; box stays open): Android Approved-devices mode selectable.**
+- `HostAccessSetupScreen` enables "Approved devices only" ("Only phones you marked Always allow can join. Anyone else is turned away."); `HostReadyScreen` no longer refuses to start a restored Approved-only draft. Unknown listeners are rejected by the core's TrustedDevices admission (owner decision: reject visibly).
+- Instrumented `WorkflowConfigurationStateTest` (7) passed on the A54 (SM-A546E, Android 16): the option selects and continues, a restored Approved-only draft submits, and the ready screen starts it.
+- Gate: full Android gate.
+- Not yet run: a real two-phone Approved-only session (enrol with Always allow, restart host, listener auto-admitted; unknown listener rejected).
+- **Open:** desktop host remembering and Approved-devices mode; revoke UI (the existing Settings "Approved devices" screen still lists legacy claimed-ID rows, not `verified_listeners`).
 - [ ] Validate cryptographic proof of listener identity before projecting Trusted/Untrusted. Update Rust FFI admission inputs and Android MainViewModelRustHost join mapping; never hard-code TRUSTED.
 - [ ] Update desktop host_join_projection to resolve verified host-owned trust records instead of unconditional SessionOnly; ensure Android/desktop policy parity.
 - [ ] Wire Always allow / Approve once / revoke, first enrollment, host restart, listener reconnect, profile switch and lost-key re-enrollment with accurate user-visible status.
