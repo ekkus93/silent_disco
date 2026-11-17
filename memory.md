@@ -1955,3 +1955,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-17T06:34:25Z - claude-opus-5-5 - F1: FFI admission flow tests through the real actor
 - New `silent-disco-ffi/src/host_control/admission_flow_tests.rs` (2 tests): approved-only (remembered admitted+connected Trusted; unknown, claimed, revoked-mid-session rejected) and manual Always allow (storage effect -> enrol -> completion -> remembered approval -> connected Trusted; restart admits). Both fail with the pre-af8d3982 refusal.
 - Gate: check-rust 937. TODO F1 test-matrix item gets partial evidence; still missing Android JVM/API29 real-FFI, desktop actor-level revoked/unknown, approval timeout.
+
+## 2026-11-17T06:37:41Z - claude-opus-5-5 - F1: refused-listener isolation over real QUIC; item closed
+- New core test `a_refused_listener_receives_no_stream_controls_audio_or_clock_replies` (approved + refused listener on one host). Note: after a rejection the listener worker is Stopped, so `assert_quiet` errors; assert `recv_event(..).is_err()` instead.
+- Closed TODO F1 'prove join success/failure on real loopback authenticated sockets'. Gate: check-rust 938.

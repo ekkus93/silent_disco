@@ -544,3 +544,87 @@ fn an_approved_listener_stays_connected_while_waiting_longer_than_the_idle_timeo
         ControlMessage::StreamStart(_)
     ));
 }
+
+/// Remediation F1: once refused, a listener receives nothing of the session.
+/// An approved listener on the same host gets `StreamStart`, `TrackBoundary`,
+/// audio and its clock reply; the refused one gets only its rejection and
+/// the close, and cannot be sent a clock reply.
+#[test]
+fn a_refused_listener_receives_no_stream_controls_audio_or_clock_replies() {
+    let identity = identity();
+    let mut host = host(&identity);
+    let approved = admit(&mut host, &identity, 30);
+    let refused = connect(&host, &identity, 31);
+    let address = wait_accepted(&mut host);
+    refused.join();
+    wait_join(&mut host, &refused.device);
+    host.reject_pending_peer_at(
+        address,
+        &refused.device,
+        &ControlMessage::JoinRejection(JoinRejection {
+            session_id: session(),
+            listener_id: refused.device.clone(),
+            reason: "not approved".to_owned(),
+        }),
+    )
+    .expect("rejection sent");
+    assert!(matches!(
+        refused.next_control(),
+        ControlMessage::JoinRejection(_)
+    ));
+    assert!(matches!(refused.next(), QuicListenerEvent::Closed(_)));
+    wait_disconnected(&mut host);
+
+    let start = stream_start(&session(), 2_000);
+    let started = host.broadcast_control(&start).expect("start sent");
+    assert_eq!(
+        (
+            started.report.intended_peers,
+            started.report.successful_peers
+        ),
+        (1, 1),
+        "only the approved listener is a recipient"
+    );
+    assert!(matches!(
+        approved.next_control(),
+        ControlMessage::StreamStart(_)
+    ));
+    let boundary = ControlMessage::TrackBoundary(crate::protocol::TrackBoundary {
+        session_id: session(),
+        stream_id: crate::domain::StreamId::new("stream-1").expect("stream"),
+        first_sample_index: crate::domain::SampleIndex::new(48_000),
+        entry_id: "entry-two".to_owned(),
+        display_name: "Second".to_owned(),
+    });
+    let bounded = host.broadcast_control(&boundary).expect("boundary sent");
+    assert_eq!(bounded.report.intended_peers, 1);
+    assert!(matches!(
+        approved.next_control(),
+        ControlMessage::TrackBoundary(_)
+    ));
+    let audio = host
+        .broadcast_audio(&audio_frame(&session(), 1))
+        .expect("audio sent");
+    assert_eq!(audio.report.intended_peers, 1);
+    assert!(matches!(approved.next(), QuicListenerEvent::Datagram(_)));
+    exchange_clock_probe(&mut host, &approved);
+
+    let reply = ProtocolFrame::SyncResponse(SyncResponse {
+        session_id: session(),
+        correlation_id: 9,
+        t1_listener_send_elapsed_ms: MonotonicMillis::new(5),
+        t2_host_receive_elapsed_ms: MonotonicMillis::new(6),
+        t3_host_send_elapsed_ms: MonotonicMillis::new(7),
+    });
+    assert!(
+        host.send_sync_to_peer(&refused.device, &reply).is_err(),
+        "no clock reply can be addressed to a refused listener"
+    );
+    assert!(
+        refused
+            .worker
+            .recv_event(Duration::from_millis(300))
+            .is_err(),
+        "the refused connection is closed, so nothing more can arrive"
+    );
+}
