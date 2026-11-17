@@ -694,3 +694,54 @@ fn remembered_listeners_survive_reopen_and_can_be_revoked() {
     );
     state.close_sync().expect("close again");
 }
+
+/// Remediation F1: each desktop profile has its own host key and records, so
+/// a listener remembered in one profile is unknown in another.
+#[test]
+fn a_listener_remembered_in_one_profile_is_unknown_in_another() {
+    use crate::trust_commands::list;
+    use silent_disco_core::domain::TrustState;
+    use silent_disco_core::transport::secure_identity::key_bound_device_id;
+    let root = TestDirectory::new();
+    let (main_id, main_paths) = profile(&root);
+    let other_id = ProfileId::parse("other").expect("valid profile ID");
+    let other_paths = DesktopProfilePaths::from_trusted_app_local_data_root(&root.0, &other_id)
+        .expect("valid profile paths");
+    let listener = key_bound_device_id(&[0xa1; 32]);
+    let state = DesktopAppState::new();
+
+    state
+        .open_profile_sync(
+            &main_paths,
+            main_id,
+            &FixedIdentityProvider([12; 32]),
+            &FixedSigningIdentityProvider(12),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect("open main");
+    state
+        .ready_verified_trust()
+        .expect("trust")
+        .remember(&listener, "Kitchen laptop", 42)
+        .expect("remember");
+    state.close_sync().expect("close main");
+
+    state
+        .open_profile_sync(
+            &other_paths,
+            other_id,
+            &FixedIdentityProvider([13; 32]),
+            &FixedSigningIdentityProvider(13),
+            Arc::new(DesktopNotificationBuffer::new()),
+        )
+        .expect("open other");
+    assert!(list(&state).expect("list").is_empty());
+    assert_eq!(
+        state
+            .ready_verified_trust()
+            .expect("trust")
+            .join_trust_state(&listener),
+        TrustState::SessionOnly
+    );
+    state.close_sync().expect("close other");
+}

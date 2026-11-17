@@ -1959,3 +1959,6 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-17T06:37:41Z - claude-opus-5-5 - F1: refused-listener isolation over real QUIC; item closed
 - New core test `a_refused_listener_receives_no_stream_controls_audio_or_clock_replies` (approved + refused listener on one host). Note: after a rejection the listener worker is Stopped, so `assert_quiet` errors; assert `recv_event(..).is_err()` instead.
 - Closed TODO F1 'prove join success/failure on real loopback authenticated sockets'. Gate: check-rust 938.
+
+## 2026-11-17T06:50:06Z - claude-opus-5-5 - F1: reconnect, lost key, profile switch tests; wiring item closed
+- FFI `a_remembered_listener_reconnects_and_a_new_key_is_a_new_device`; desktop `a_listener_remembered_in_one_profile_is_unknown_in_another`. Closed TODO F1 'Wire Always allow / Approve once / revoke ...'. Gates: check-rust 939, desktop clippy + 431.

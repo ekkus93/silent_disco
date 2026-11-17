@@ -323,3 +323,84 @@ fn always_allow_stores_the_record_then_admits_it_after_a_host_restart() {
     worker.stop_and_join().expect("database closes");
     let _ = std::fs::remove_dir_all(directory);
 }
+
+#[test]
+fn a_remembered_listener_reconnects_and_a_new_key_is_a_new_device() {
+    let (directory, worker) = database("reconnect-flow");
+    let client = worker.client();
+    let host = host_key();
+    let phone = key_bound_device_id(&[0xd4; 32]);
+    // The same phone after losing its key (reinstall, data cleared): a new
+    // key, so a new key-bound ID (owner decision: a changed key is a new device).
+    let reinstalled = key_bound_device_id(&[0xe5; 32]);
+    silent_disco_core::transport::secure_trust_store::enroll_listener(
+        &client, &host, &phone, "Phone", 1,
+    )
+    .expect("remembered earlier");
+
+    let (recorder, handle) = hosting("reconnect-flow", FfiApprovalMode::TrustedDevices);
+    load_host_trust(&handle, &client, &host).expect("host start loads trust");
+    join(&handle, "first-1", phone.as_str());
+    let (operation, _) = recorder.decision("first-1").expect("admitted");
+    deliver_and_connect(&recorder, &handle, operation, phone.as_str(), true);
+
+    // The connection drops and the phone joins again with the same key.
+    handle
+        .submit_listener_disconnected(phone.as_str().to_owned(), None)
+        .expect("disconnect reported");
+    recorder.snapshot_where(|snapshot| {
+        snapshot.listeners.iter().all(|listener| {
+            listener.device_id != phone.as_str()
+                || listener.transport_state != FfiTransportState::Connected
+        })
+    });
+    join(&handle, "rejoin-1", phone.as_str());
+    let (operation, trusted) = recorder
+        .decision("rejoin-1")
+        .expect("a reconnect is admitted without asking");
+    assert!(trusted);
+    deliver_and_connect(&recorder, &handle, operation, phone.as_str(), true);
+
+    // After losing its key the phone is unknown until approved again.
+    join(&handle, "reinstalled-1", reinstalled.as_str());
+    assert!(
+        recorder.decision("reinstalled-1").is_err(),
+        "a new key is not trusted through the old record"
+    );
+    handle.shutdown().expect("shutdown");
+
+    // Re-enrolling it in manual mode with Always allow trusts the new key;
+    // the old key stays trusted until it is removed in Settings.
+    let (recorder, handle) = hosting("reenrol-flow", FfiApprovalMode::Manual);
+    load_host_trust(&handle, &client, &host).expect("host start loads trust");
+    join(&handle, "reenrol-1", reinstalled.as_str());
+    let pending = recorder.snapshot_where(|snapshot| !snapshot.pending_join_requests.is_empty());
+    handle
+        .approve_join(pending.revision, "reenrol-1".to_owned(), true)
+        .expect("Always allow");
+    let storage = recorder.remember_effect(reinstalled.as_str());
+    enroll_verified_listener(&handle, &client, &host, reinstalled.as_str(), "Phone", 5)
+        .expect("stored");
+    handle
+        .trusted_device_updated(storage, reinstalled.as_str().to_owned())
+        .expect("storage completion");
+    let (operation, trusted) = recorder.decision("reenrol-1").expect("approved");
+    assert!(trusted);
+    deliver_and_connect(&recorder, &handle, operation, reinstalled.as_str(), true);
+    let remembered: Vec<String> =
+        crate::verified_listeners::list_verified_listeners(&client, &host)
+            .expect("list")
+            .into_iter()
+            .map(|listener| listener.device_id)
+            .collect();
+    assert_eq!(
+        remembered,
+        vec![phone.as_str().to_owned(), reinstalled.as_str().to_owned()],
+        "Settings shows both keys, so the old one can be removed"
+    );
+
+    handle.shutdown().expect("shutdown");
+    drop(client);
+    worker.stop_and_join().expect("database closes");
+    let _ = std::fs::remove_dir_all(directory);
+}
