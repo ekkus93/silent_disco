@@ -1962,3 +1962,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 
 ## 2026-11-17T06:50:06Z - claude-opus-5-5 - F1: reconnect, lost key, profile switch tests; wiring item closed
 - FFI `a_remembered_listener_reconnects_and_a_new_key_is_a_new_device`; desktop `a_listener_remembered_in_one_profile_is_unknown_in_another`. Closed TODO F1 'Wire Always allow / Approve once / revoke ...'. Gates: check-rust 939, desktop clippy + 431.
+
+## 2026-11-17T07:03:15Z - claude-opus-5-5 - F1: Android device test through the real Rust core; test-matrix item closed
+- New `app/src/androidTest/.../app/controller/HostVerifiedTrustDeviceTest.kt` (2 tests, A54 2/2): real HostSessionController + UniFfiHostCoreController + HostTransportController (QUIC on 127.0.0.1:41000, test Keystore aliases `silent-disco-test-*`, deleted in @After) + real v4 listeners + test-only RustDatabase in cacheDir. Never touches app stores.
+- Device mutation (Rust connected-trust refusal restored, native rebuilt via Gradle) failed both tests with the bug message; restored, gate + device rerun pass.
+- Closed TODO F1 test-matrix item. Remaining F1: trust-records item (two-device run, owner hardware).
