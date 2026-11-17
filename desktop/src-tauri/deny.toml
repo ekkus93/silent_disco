@@ -1,0 +1,45 @@
+# cargo-deny policy for desktop/src-tauri (rust/deny.toml is its twin),
+# run by scripts/check-supply-chain.sh (remediation TODO §7).
+#
+# Severity triage policy:
+# - A vulnerability or unsound advisory fails the gate. Fix it by updating the
+#   crate. Only when no fixed release is reachable may it be listed under
+#   `ignore`, with the reason it does not apply here, its dependency path, and
+#   a review date. A listed entry that no longer matches anything fails the
+#   gate (`unused-ignored-advisory`), so stale exceptions cannot linger.
+# - An unmaintained advisory has no known flaw. It also fails the gate unless
+#   listed below with the upstream crate that pulls it in; replace the crate
+#   when that upstream offers a maintained alternative.
+# - A yanked crate fails the gate.
+# - Only crates.io is an allowed source; any git or other registry source fails.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+unmaintained = "all"
+unused-ignored-advisory = "deny"
+ignore = [
+    # Review all entries below by 2027-02-17.
+    # Desktop only: netdev 0.45 -> netlink-packet-core -> paste (proc-macro).
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained paste proc-macro via netdev; compile-time only" },
+    # Desktop only: tauri 2 -> gtk 0.18 -> glib-macros -> proc-macro-error.
+    { id = "RUSTSEC-2024-0370", reason = "unmaintained proc-macro-error via Tauri's GTK 0.18 bindings; compile-time only" },
+    # Desktop only: tauri-utils -> urlpattern 0.3 -> unic-* (Unicode tables).
+    { id = "RUSTSEC-2025-0081", reason = "unmaintained unic-char-property via Tauri's urlpattern" },
+    { id = "RUSTSEC-2025-0075", reason = "unmaintained unic-char-range via Tauri's urlpattern" },
+    { id = "RUSTSEC-2025-0080", reason = "unmaintained unic-common via Tauri's urlpattern" },
+    { id = "RUSTSEC-2025-0100", reason = "unmaintained unic-ucd-ident via Tauri's urlpattern" },
+    { id = "RUSTSEC-2025-0098", reason = "unmaintained unic-ucd-version via Tauri's urlpattern" },
+    # Desktop only: keyring 4 -> secret-service 5 -> zbus 5. These crates were
+    # merged into zbus 6; keyring has no zbus 6 release yet.
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names merged into zbus 6; pulled by keyring's secret-service store on zbus 5" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant merged into zbus 6; pulled by keyring's secret-service store on zbus 5" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive merged into zbus 6; pulled by keyring's secret-service store on zbus 5" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

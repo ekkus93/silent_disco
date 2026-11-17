@@ -1,0 +1,7 @@
+[
+  {
+    "advisory": "GHSA-fc5q-39xc-vjpf",
+    "until": "2027-02-17",
+    "reason": "picomatch ReDoS on repeated extglobs; every release up to 4.0.7 is affected and none is fixed. Dev and build tooling only (vite, vitest, tinyglobby, fdir): it matches glob patterns from this repository's own config, never untrusted input, and is not in the production bundle (npm audit --omit=dev is clean). Remove when a fixed picomatch is released."
+  }
+]

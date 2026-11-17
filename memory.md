@@ -1976,3 +1976,18 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 ## 2026-11-17T07:59:15Z - claude-opus-5-5 - F3 busy retry step 2 (manual/desktop-QR path); §3 item closed
 - FFI `busy_join.rs`: `next_busy_join_retry` -> `FfiBusyJoinRetry{attempt,max_attempts,delay_ms}`. Kotlin `core/rust/BusyJoinRetries.kt`; `ManualListenerTransportController` busy retry (`scheduleBusyRetry`, `busyRetryPending`, `lastConnect`); `ManualConnectUiState.RetryingBusyHost` (in progress). Gates: check-rust 944, Android gate, A54 ManualEndpointScreenTest 11/11.
 - Closed TODO §3 'Replace drop-on-full ... finite client retry'. §3 now fully checked.
+
+## 2026-11-17T10:37:14Z - claude-opus-5-5 - §7 supply-chain audit started; blocked on running downloaded scanners
+- Repo has no dependency/SBOM/secret scanning in CI (no deny.toml, dependabot, gitleaks, cargo-audit workflow). Only the one-off Block 43 audit (2026-08-10).
+- Pinned candidates (all release-checksum verified, in session scratchpad only): cargo-deny 0.20.2, gitleaks 8.30.1, cargo-cyclonedx 0.5.9, osv-scanner v2.7.0 (not downloaded). Running the downloaded binaries was refused by the auto-mode permission check; awaiting owner decision.
+- `npm audit` (desktop, real run): production deps 0 findings; dev deps 5 (vite high direct, vitest moderate direct, undici high, source-map-js high, @vitest/mocker moderate). Not fixed; needs a dev-tool upgrade decision.
+- Android Gradle deps have no lockfile, so osv-scanner cannot scan them without enabling Gradle dependency locking.
+
+## 2026-11-17T19:53:58Z - claude-opus-5-5 - §7 supply-chain gate done; dependency security fixes
+- Owner approved (2026-11-17): run downloaded pinned scanners, upgrade vite/vitest, turn on Gradle dependency locking.
+- Commits: `6537a061` (rusqlite 0.41.1, rustix 1.1.6, rustls-webpki 0.103.17, async-executor), `de98291e` (vite 8.1.7, vitest 4.1.12, undici, source-map-js), `26c0f583` (p256 0.14: crypto-bigint timing fix; only change `to_encoded_point` -> `to_sec1_point`), `0e48274a` (Gradle locks + constraints), then the gate commit.
+- Gate: `scripts/check-supply-chain.sh` + `.github/workflows/supply-chain.yml`. Tools must be on PATH at exact versions: cargo-deny 0.20.2, cargo-cyclonedx 0.5.9 (version check is `cargo-cyclonedx cyclonedx --version`), osv-scanner 2.7.0, gitleaks 8.30.1. cargo-deny 0.20 has no `check --config`; it reads the deny.toml beside each manifest.
+- Exceptions (all expire 2027-02-17): rust/deny.toml, desktop/src-tauri/deny.toml, desktop/npm-audit-exceptions.json (picomatch GHSA-fc5q-39xc-vjpf, appeared the same day, no fix), osv-scanner.toml (kotlin-gradle-plugin GHSA-r937-wjx7-w2jp).
+- After changing an Android dependency, refresh locks with the full Android gate plus `--write-locks` (about 17 min), or for one module `--update-locks group:name`.
+- Disk filled (1.1 GB free) mid-run; deleted only rust/target/debug/incremental and desktop/src-tauri/target/debug/incremental (18 GB). desktop/src-tauri/target holds A54 evidence screenshots: do not clean that folder wholesale.
+- A54: HostVerifiedTrustDeviceTest 2/2 with p256 0.14 (real Keystore signatures). Hosted Supply chain workflow not yet observed.

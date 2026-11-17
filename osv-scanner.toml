@@ -1,0 +1,9 @@
+# osv-scanner exceptions for the Android Gradle lockfiles, read by
+# scripts/check-supply-chain.sh (remediation TODO §7). Same policy as the Rust
+# deny.toml files: an entry needs a reason and expires, after which the
+# finding fails the gate again.
+
+[[IgnoredVulns]]
+id = "GHSA-r937-wjx7-w2jp"
+ignoreUntil = 2027-02-17
+reason = "kotlin-gradle-plugin 2.0.21: unsafe deserialization in the Kotlin build cache. Fixed only in 2.4.20-Beta1 (pre-release). Build-time only; this project configures no shared or remote Gradle build cache, and the CI Gradle cache is written only by this repository's own workflow runs, so no untrusted cache entries are read. Upgrade Kotlin when a stable fixed release exists."

@@ -1,0 +1,33 @@
+# cargo-deny policy for the rust/ workspace (desktop/src-tauri/deny.toml is its twin),
+# run by scripts/check-supply-chain.sh (remediation TODO §7).
+#
+# Severity triage policy:
+# - A vulnerability or unsound advisory fails the gate. Fix it by updating the
+#   crate. Only when no fixed release is reachable may it be listed under
+#   `ignore`, with the reason it does not apply here, its dependency path, and
+#   a review date. A listed entry that no longer matches anything fails the
+#   gate (`unused-ignored-advisory`), so stale exceptions cannot linger.
+# - An unmaintained advisory has no known flaw. It also fails the gate unless
+#   listed below with the upstream crate that pulls it in; replace the crate
+#   when that upstream offers a maintained alternative.
+# - A yanked crate fails the gate.
+# - Only crates.io is an allowed source; any git or other registry source fails.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+unmaintained = "all"
+unused-ignored-advisory = "deny"
+ignore = [
+    # Review all entries below by 2027-02-17.
+    # uniffi_bindgen 0.31 -> askama 0.14 -> askama_derive -> basic-toml.
+    # Build-time binding generation only; not in the shipped core.
+    { id = "RUSTSEC-2026-0374", reason = "unmaintained basic-toml, build-time only via uniffi_bindgen/askama; no maintained uniffi release drops it" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
