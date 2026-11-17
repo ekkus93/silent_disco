@@ -47,7 +47,7 @@ pub fn host_tls_identity_from_external_key(
         .map_err(|error| ExternalKeyError(format!("SPKI unavailable: {error:?}")))?;
     let verifying = VerifyingKey::from_public_key_der(&spki)
         .map_err(|_| ExternalKeyError("SPKI is not a P-256 public key".to_owned()))?;
-    let public_point = verifying.to_encoded_point(false).as_bytes().to_vec();
+    let public_point = verifying.to_sec1_point(false).as_bytes().to_vec();
     let remote = ExternalCertificateKey {
         signer: Arc::clone(&signer),
         public_point,
