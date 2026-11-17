@@ -56,6 +56,11 @@ pub async fn write_frame(send: &mut quinn::SendStream, frame: &[u8]) -> Result<(
 
 /// Reads one length-prefixed frame.
 ///
+/// Cancel-safe only between frames: dropping the future while it waits for
+/// the first length byte loses nothing, but dropping it part-way through a
+/// frame discards the bytes already read and desynchronizes the stream. Run it
+/// in a task that is only ever stopped as a whole, never inside `select!`.
+///
 /// # Errors
 /// Returns [`QuicFrameError::Finished`] when the stream ends cleanly before a
 /// new frame, [`QuicFrameError::Oversized`] for a bad length, or

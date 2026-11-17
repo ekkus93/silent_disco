@@ -1991,3 +1991,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - After changing an Android dependency, refresh locks with the full Android gate plus `--write-locks` (about 17 min), or for one module `--update-locks group:name`.
 - Disk filled (1.1 GB free) mid-run; deleted only rust/target/debug/incremental and desktop/src-tauri/target/debug/incremental (18 GB). desktop/src-tauri/target holds A54 evidence screenshots: do not clean that folder wholesale.
 - A54: HostVerifiedTrustDeviceTest 2/2 with p256 0.14 (real Keystore signatures). Hosted Supply chain workflow not yet observed.
+
+## 2026-11-17T22:03:25Z - claude-opus-5-5 - §7 orchestration race tests and framing fuzz; §7 fully closed
+- `beaa3b50` fix(android): race tests found a real bug from the same-day F3 work: a busy retry waiting 1-4 s was not cancelled on ReleaseNetwork or a new EstablishNetwork, so it could reconnect and re-join a host the person left. New `core/rust/PendingBusyRetry.kt` (generation per schedule, atomic claim vs cancel; `cancel()` returns whether it dropped a waiting retry), used by `ListenerSessionController` and `ManualListenerTransportController` (also cancelled in `disconnect()`).
+- `HostSessionController` stale-generation guard was untested (full JVM suite passed with it removed); now `projectDequeuedEvent` with a test that rebinds a real `HostTransportController` over mocked native handles.
+- Gap: manual controller's `disconnect()` cancel wiring has no JVM test (real native handles).
+- Framing fuzz: `transport/quic_framing_fuzz_tests.rs` (hostile chunking, hostile lengths, truncation/reset, cancel between frames). `read_frame` is cancel-safe only between frames; both workers run it in a dedicated task (never in `select!`). Do not mutation-test by removing the length limit: `u32::MAX` would try a 4 GB allocation.
+- Item 153 closed by reference to the God-file refactor. All of §7 is now checked. Gates: Android full gate (625 debug unit tests), check-rust.sh 948 passed.

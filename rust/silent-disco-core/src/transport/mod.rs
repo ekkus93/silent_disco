@@ -12,6 +12,8 @@ pub mod quic_datagram;
 mod quic_datagram_tests;
 #[cfg(feature = "quic")]
 pub mod quic_framing;
+#[cfg(all(test, feature = "quic"))]
+mod quic_framing_fuzz_tests;
 #[cfg(feature = "quic")]
 mod quic_host_node;
 #[cfg(feature = "quic")]
