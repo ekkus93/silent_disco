@@ -3,6 +3,7 @@ package com.ekkus.silentdisco.app
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.core.rust.RustDatabaseException
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.uniffi.FfiPlaybackState
@@ -12,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.job
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -53,6 +55,21 @@ class MainViewModelRefactorSafetyNetTest {
             Thread.sleep(10)
         }
         check(condition()) { "Condition was not met within the bounded wait" }
+    }
+
+    /**
+     * Runs [action] and waits until every coroutine it launched on the
+     * view-model scope has completed, including resuming on Main after a hop
+     * to the real Dispatchers.IO. Otherwise that resume can land after
+     * resetMain() and fail whichever test runs next.
+     */
+    private fun TestScope.awaitLaunchedWork(viewModel: MainViewModel, action: () -> Unit) {
+        val scopeJob = viewModel.viewModelScope.coroutineContext.job
+        val before = scopeJob.children.toSet()
+        action()
+        val launched = scopeJob.children.toSet() - before
+        check(launched.isNotEmpty()) { "the action launched nothing on the view-model scope" }
+        awaitCondition { launched.all { it.isCompleted } }
     }
 
     /** Clears the view-model the way the framework does, through its store. */
@@ -165,6 +182,10 @@ class MainViewModelRefactorSafetyNetTest {
 
         viewModel.stopHostPlayback()
         awaitCondition { stream!!.isCancelled && playback!!.isCancelled && resync!!.isCancelled }
+        // The stop finishes on the real Dispatchers.IO and then resumes on Main.
+        // Wait for that resume, or it lands after resetMain() and fails
+        // whichever test runs next (seen in CI).
+        awaitCondition { viewModel.uiState.value.lastMessage == "Host stopped the stream" }
 
         assertThat(harness.hostCoreController.transitionPlaybackStateCalls)
             .containsExactly(FfiPlaybackState.STOPPED)
@@ -180,8 +201,8 @@ class MainViewModelRefactorSafetyNetTest {
         val staged = File.createTempFile("staged-source", ".wav")
         viewModel.hostPlayback.staging.putStaged("source-1", staged)
 
-        viewModel.endSession()
-        awaitCondition { viewModel.hostPlayback.staging.stagedSourceIds.isEmpty() }
+        awaitLaunchedWork(viewModel) { viewModel.endSession() }
+        assertThat(viewModel.hostPlayback.staging.stagedSourceIds).isEmpty()
 
         assertThat(harness.hostCoreController.endHostSessionCallCount).isEqualTo(1)
         assertThat(staged.exists()).isFalse()
