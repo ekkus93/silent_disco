@@ -104,3 +104,9 @@ for scene in expected:
 
 print(f"Validated {len(expected)} Android workflow scenes twice across cold processes with identical pixels")
 PY
+
+# Compare with the approved baselines (remediation §8). A mismatch writes the
+# capture and a diff image to android-golden-diffs/ (uploaded as an artifact)
+# and fails; scenes without an approved baseline are listed as unreviewed.
+python3 scripts/android_goldens.py check \
+  android-workflow-screenshots app/src/androidTest/goldens android-golden-diffs

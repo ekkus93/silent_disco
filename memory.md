@@ -1998,3 +1998,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Gap: manual controller's `disconnect()` cancel wiring has no JVM test (real native handles).
 - Framing fuzz: `transport/quic_framing_fuzz_tests.rs` (hostile chunking, hostile lengths, truncation/reset, cancel between frames). `read_frame` is cancel-safe only between frames; both workers run it in a dedicated task (never in `select!`). Do not mutation-test by removing the length limit: `u32::MAX` would try a 4 GB allocation.
 - Item 153 closed by reference to the God-file refactor. All of §7 is now checked. Gates: Android full gate (625 debug unit tests), check-rust.sh 948 passed.
+
+## 2026-11-17T22:38:09Z - claude-opus-5-5 - CI fixes after supply-chain work; §8 golden tooling
+- Owner decision 2026-11-17: §8 tooling only now; baselines and screen-specific a11y/restoration tests wait for the UI redesign.
+- Hosted CI was red on 1360ddbe/d7c87db3 from my own changes: (1) desktop lockfile written by local npm 11 (Node 24) lacked optional @emnapi entries, so CI npm 10 `npm ci` refused it. ALWAYS regenerate desktop lockfiles with `~/.nvm/versions/node/v22.16.0/bin` on PATH (npm 10.9.2). Fixed `d7e45816`. (2) `npm sbom` needs node_modules unless `--package-lock-only`; fixed `d393a052`, verified in a clean worktree.
+- Flaky `MainViewModelRefactorSafetyNetTest.aRecoverableStorageFailure...` (CI 24bfa9d2 and d7c87db3): leaked withContext(IO) resume from the previous stop-playback test landing between resetMain/setMain. Fixed in `9552617b` by waiting for completion; could not reproduce the gap locally.
+- `scripts/android_goldens.py` (check/approve, stdlib PNG codec) + `app/src/androidTest/goldens/approved.tsv` (header only). Instrumentation artifact retention 1 -> 7 days. Desktop pixel capture already existed (145af4b5); §8.2 closed.

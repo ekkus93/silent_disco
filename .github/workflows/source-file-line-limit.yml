@@ -36,3 +36,6 @@ jobs:
 
       - name: Test objective listener PCM capture comparison
         run: python3 scripts/test_compare_pcm_capture.py
+
+      - name: Test Android screenshot golden check and approval
+        run: python3 scripts/test_android_goldens.py

@@ -1,0 +1,6 @@
+# Approved Android screenshot baselines, checked by scripts/android_goldens.py.
+# Baselines come only from the CI API 29 emulator captures (the
+# android-instrumentation-diagnostics artifact) and change only through
+# `scripts/android_goldens.py approve ... --approver NAME`.
+# None are approved yet: the owner will approve them after the UI redesign.
+scene	width_px	height_px	sha256	approved_by	approved_on

@@ -325,7 +325,9 @@ jobs:
             android-screenshot-capture.log
             android-screenshot-capture-repeat.log
             android-workflow-screenshots/
+            android-golden-diffs/
             app/build/outputs/androidTest-results/connected/
             app/build/reports/androidTests/connected/
           if-no-files-found: warn
-          retention-days: 1
+          # Seven days: baselines are approved from these captures.
+          retention-days: 7
