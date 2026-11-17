@@ -1951,3 +1951,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Fix: `connected_listener_trust(recorded, claimed)` — trust is the host record; Trusted accepted only when the record agrees. Test `an_always_allowed_listener_connects_as_trusted_only_while_the_record_holds`.
 - Closed TODO F1 items 'validate proof before projecting' and 'desktop projection uses verified records'. Gates: check-rust 935, Android gate.
 - Lesson: FFI boundary checks need a test through the real handle, not only Kotlin fakes.
+
+## 2026-11-17T06:34:25Z - claude-opus-5-5 - F1: FFI admission flow tests through the real actor
+- New `silent-disco-ffi/src/host_control/admission_flow_tests.rs` (2 tests): approved-only (remembered admitted+connected Trusted; unknown, claimed, revoked-mid-session rejected) and manual Always allow (storage effect -> enrol -> completion -> remembered approval -> connected Trusted; restart admits). Both fail with the pre-af8d3982 refusal.
+- Gate: check-rust 937. TODO F1 test-matrix item gets partial evidence; still missing Android JVM/API29 real-FFI, desktop actor-level revoked/unknown, approval timeout.

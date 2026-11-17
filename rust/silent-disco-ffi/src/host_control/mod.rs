@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod admission_flow_tests;
 mod conversions;
 mod handle;
 mod handle_trust;
