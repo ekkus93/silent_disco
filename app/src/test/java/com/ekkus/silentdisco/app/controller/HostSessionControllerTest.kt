@@ -7,6 +7,7 @@ import com.ekkus.silentdisco.core.rust.FakeHostCoreController
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.HostTransportController
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
+import com.ekkus.silentdisco.core.rust.TransportGenerationEvent
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiCoreError
 import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
@@ -20,6 +21,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiTransportEffect
 import com.ekkus.silentdisco.core.uniffi.FfiTuningSettings
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -28,6 +30,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
+import org.mockito.Mockito
 import org.mockito.Mockito.mock
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -74,7 +77,9 @@ class HostSessionControllerTest {
         }
     }
 
-    private fun TestScope.controller(): Pair<HostSessionController, CoroutineScope> {
+    private fun TestScope.controller(
+        transport: HostTransportController = this@HostSessionControllerTest.transport,
+    ): Pair<HostSessionController, CoroutineScope> {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val parent = CoroutineScope(SupervisorJob() + dispatcher)
         val session = HostSessionController(
@@ -129,6 +134,59 @@ class HostSessionControllerTest {
         assertThat(session.joinRoutes.size).isEqualTo(0)
         assertThat(core.submitListenerDisconnectedCalls).containsExactly("listener-1")
         parent.cancel()
+    }
+
+    private fun join(deviceId: String) = FfiHostTransportEvent.JoinRequestReceived(
+        controlAddress = "127.0.0.1:10001",
+        deviceId = deviceId,
+        displayName = deviceId,
+        inviteCode = null,
+        syncPort = 101u,
+        audioPort = 102u,
+    )
+
+    /** A mocked native host whose poll stays bounded while the real controller binds and rebinds. */
+    private fun nativeHost(): FfiHostTransportHandle {
+        val handle = mock(FfiHostTransportHandle::class.java)
+        Mockito.doAnswer {
+            Thread.sleep(10)
+            null
+        }.`when`(handle).pollEvent(500uL)
+        return handle
+    }
+
+    @Test
+    fun anEventDequeuedBeforeARebindIsNeverProjectedIntoTheReplacementHost() = runTest {
+        val old = nativeHost()
+        val replacement = nativeHost()
+        val opened = ArrayDeque(listOf(old, replacement))
+        val rebinding = HostTransportController(
+            callDispatcher = Dispatchers.Unconfined,
+            bindHandle = { _, _, _, _, _ -> opened.removeFirst() },
+        )
+        val (session, parent) = controller(rebinding)
+        try {
+            rebinding.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "old-session")
+            session.projectDequeuedEvent(core, TransportGenerationEvent(old, join("listener-old")))
+            assertThat(core.submitJoinRequestCalls.map { it.deviceId }).containsExactly("listener-old")
+
+            // The rebind retires `old` after the queue dequeued these two.
+            rebinding.bind(backgroundScope, "127.0.0.1", 1, 2, 3, "new-session")
+            session.projectDequeuedEvent(core, TransportGenerationEvent(old, join("listener-stale")))
+            session.projectDequeuedEvent(
+                core,
+                TransportGenerationEvent(old, FfiHostTransportEvent.PeerDisconnected("listener-old", null)),
+            )
+            assertThat(core.submitJoinRequestCalls.map { it.deviceId }).containsExactly("listener-old")
+            assertThat(core.submitListenerDisconnectedCalls).isEmpty()
+
+            session.projectDequeuedEvent(core, TransportGenerationEvent(replacement, join("listener-new")))
+            assertThat(core.submitJoinRequestCalls.map { it.deviceId })
+                .containsExactly("listener-old", "listener-new").inOrder()
+        } finally {
+            rebinding.close()
+            parent.cancel()
+        }
     }
 
     @Test

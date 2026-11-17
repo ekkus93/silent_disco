@@ -5,6 +5,7 @@ import com.ekkus.silentdisco.core.model.SessionInfo
 import com.ekkus.silentdisco.core.model.TransportConnectionState
 import com.ekkus.silentdisco.core.rust.ListenerCoreController
 import com.ekkus.silentdisco.core.rust.ListenerTransport
+import com.ekkus.silentdisco.core.rust.PendingBusyRetry
 import com.ekkus.silentdisco.core.transport.SessionTransport
 import com.ekkus.silentdisco.core.transport.TransportPorts
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
@@ -18,7 +19,6 @@ import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -126,6 +126,17 @@ internal class ListenerSessionController(
     private var lastEndpoint: ResolvedEndpoint? = null
 
     /**
+     * The one pending busy retry. A release or any new establishment cancels
+     * it, so a retry still waiting cannot reconnect to a host the person left
+     * or race a newer join (remediation §7 race test).
+     */
+    private val busyRetry = PendingBusyRetry()
+
+    private fun cancelBusyRetry() {
+        busyRetry.cancel()
+    }
+
+    /**
      * Set when the host refused the join as busy: the close of that refused
      * connection is expected and must not end the retry Rust schedules.
      * Cleared once that close arrives or a new connection opens.
@@ -196,6 +207,7 @@ internal class ListenerSessionController(
         core.platformOperationFailed(operationId, "Platform effect is outside Android listener Block 13", false)
 
     private fun establishNetwork(core: ListenerCoreController, effect: FfiPlatformEffect.EstablishNetwork) {
+        cancelBusyRetry()
         transportConnected = false
         val retryDelayMs = effect.busyRetryDelayMs
         val endpoint = lastEndpoint?.takeIf { it.session.id == effect.sessionId }
@@ -256,9 +268,11 @@ internal class ListenerSessionController(
         endpoint: ResolvedEndpoint,
     ) {
         logger.i("listener.join_busy_retry", "Host busy; retry $attempt in ${delayMs}ms")
-        scope.launch {
-            runCatching { transport.disconnect("Host busy; retrying") }
-            delay(delayMs.toLong())
+        busyRetry.schedule(
+            scope = scope,
+            delayMs = delayMs.toLong(),
+            beforeWait = { runCatching { transport.disconnect("Host busy; retrying") } },
+        ) {
             connectEndpoint(
                 core = core,
                 operationId = operationId,
@@ -273,6 +287,7 @@ internal class ListenerSessionController(
     }
 
     private fun releaseNetwork(core: ListenerCoreController, effect: FfiPlatformEffect.ReleaseNetwork) {
+        cancelBusyRetry()
         pendingEstablishOperationId = null
         ridesWifiDirect = false
         transportConnected = false

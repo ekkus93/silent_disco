@@ -11,6 +11,7 @@ import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.rust.HostCoreController
 import com.ekkus.silentdisco.core.rust.HostTransportController
 import com.ekkus.silentdisco.core.rust.RustStoredTuningSettings
+import com.ekkus.silentdisco.core.rust.TransportGenerationEvent
 import com.ekkus.silentdisco.core.transport.TransportPorts
 import com.ekkus.silentdisco.core.transport.TransportSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiCoreNotification
@@ -154,13 +155,21 @@ internal class HostSessionController(
         if (eventLoopStarted) return
         eventLoopStarted = true
         scope.launch {
-            transport.eventsWithGeneration.collect { source ->
-                // Rebind can retire the socket after dequeue but before actor
-                // projection. Never submit a stale join/disconnect to the new host.
-                if (!transport.isCurrentGeneration(source.handle)) return@collect
-                handleTransportEvent(core, source.event, source.handle)
-            }
+            transport.eventsWithGeneration.collect { source -> projectDequeuedEvent(core, source) }
         }
+    }
+
+    /**
+     * Rebind can retire the socket after the queue dequeued an event but
+     * before actor projection. Never submit a stale join/disconnect to the
+     * new host.
+     */
+    internal fun projectDequeuedEvent(
+        core: HostCoreController,
+        source: TransportGenerationEvent<FfiHostTransportHandle, FfiHostTransportEvent>,
+    ) {
+        if (!transport.isCurrentGeneration(source.handle)) return
+        handleTransportEvent(core, source.event, source.handle)
     }
 
     /**

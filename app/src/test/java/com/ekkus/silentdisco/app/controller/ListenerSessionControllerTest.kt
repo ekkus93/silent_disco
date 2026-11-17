@@ -146,6 +146,67 @@ class ListenerSessionControllerTest {
         parent.cancel()
     }
 
+    /** Joins over Wi-Fi Direct, then lets Rust schedule busy retry 1 after [delayMs]. */
+    private fun TestScope.joinThenScheduleBusyRetry(listener: ListenerSessionController, delayMs: ULong) {
+        core.emit(establish("op-wd", address = null))
+        advanceUntilIdle()
+        listener.completeWifiDirectEstablishment(
+            TransportSnapshot(state = TransportConnectionState.CONNECTED, hostAddressHint = "192.168.49.1"),
+        )
+        advanceUntilIdle()
+        listener.awaitingBusyRefusalClose = true
+        core.emit(
+            FfiCoreNotification.PlatformEffect(
+                FfiPlatformEffect.EstablishNetwork(
+                    operationId = "op-retry-1",
+                    sessionId = "session-1",
+                    address = null,
+                    controlPort = null,
+                    syncPort = null,
+                    audioPort = null,
+                    busyRetryAttempt = 1u,
+                    busyRetryDelayMs = delayMs,
+                ),
+            ),
+        )
+        testScheduler.advanceTimeBy(delayMs.toLong() / 2)
+        testScheduler.runCurrent()
+        assertThat(transport.connectCalls).hasSize(1)
+    }
+
+    @Test
+    fun leavingDuringABusyRetryWaitCancelsTheReconnect() = runTest {
+        val (listener, parent) = controller()
+        joinThenScheduleBusyRetry(listener, delayMs = 4_000uL)
+
+        core.emit(FfiCoreNotification.PlatformEffect(FfiPlatformEffect.ReleaseNetwork(operationId = "op-release")))
+        advanceUntilIdle()
+
+        // The person left: the host they left must not get another join.
+        assertThat(transport.connectCalls).hasSize(1)
+        assertThat(transport.joinRequestCalls).hasSize(1)
+        assertThat(core.platformOperationSucceededCalls.map { it.operationId }).doesNotContain("op-retry-1")
+        assertThat(core.platformOperationSucceededCalls.last().completion)
+            .isEqualTo(FfiPlatformCompletion.NetworkReleased)
+        parent.cancel()
+    }
+
+    @Test
+    fun aNewJoinDuringABusyRetryWaitReplacesTheRetry() = runTest {
+        val (listener, parent) = controller()
+        joinThenScheduleBusyRetry(listener, delayMs = 4_000uL)
+
+        core.emit(establish("op-2", address = "192.168.1.60"))
+        advanceUntilIdle()
+
+        // Only the new join connects; the old retry never reopens the old endpoint.
+        assertThat(transport.connectCalls).hasSize(2)
+        assertThat(transport.connectCalls.last().rawEndpoint).contains("192.168.1.60")
+        assertThat(core.platformOperationSucceededCalls.map { it.operationId }).doesNotContain("op-retry-1")
+        assertThat(core.platformOperationSucceededCalls.last().operationId).isEqualTo("op-2")
+        parent.cancel()
+    }
+
     @Test
     fun aFailedJoinSendDisconnectsAndReportsARetryableFailure() = runTest {
         val (listener, parent) = controller()

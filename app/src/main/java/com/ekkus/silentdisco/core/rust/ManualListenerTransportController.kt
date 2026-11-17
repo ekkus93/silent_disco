@@ -18,7 +18,6 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -118,11 +117,12 @@ class ManualListenerTransportController(
     private var lastConnect: ConnectRequest? = null
 
     /**
-     * True from a busy refusal until the retry connects: the refused
-     * connection's close is expected then and must not end the retry.
+     * The waiting busy retry. Pending from a busy refusal until the retry
+     * connects: the refused connection's close is expected then and must not
+     * end the retry.
      */
-    @Volatile private var busyRetryPending = false
-    private var busyRetryJob: Job? = null
+    private val busyRetry = PendingBusyRetry()
+    private val busyRetryPending: Boolean get() = busyRetry.isPending
     internal var syncProbeJob: Job? = null
     internal var diagnosticsSampleJob: Job? = null
     private val playbackRuntimeRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
@@ -197,7 +197,6 @@ class ManualListenerTransportController(
         val inviteCode = request.inviteCode
         val hostTlsPublicKeyDer = request.hostTlsPublicKeyDer
         lastConnect = request
-        busyRetryPending = false
         lifetime.ensureOpen()
         withContext(Dispatchers.IO) {
             // A queued connect must not resurrect a native socket after close.
@@ -270,6 +269,8 @@ class ManualListenerTransportController(
     }
 
     suspend fun disconnect(reason: String) {
+        // Leaving ends any busy retry first, even if the disconnect send fails.
+        busyRetry.cancel()
         withContext(Dispatchers.IO) {
             val expected = handleGate.currentHandle() ?: return@withContext
             try {
@@ -318,21 +319,20 @@ class ManualListenerTransportController(
      */
     private fun scheduleBusyRetry(decision: BusyJoinRetries.Decision.Retry) {
         val request = lastConnect ?: return
-        busyRetryPending = true
         _connectState.value = ManualConnectUiState.RetryingBusyHost(decision.attempt, decision.maxAttempts)
         logger.i("manual.join_busy_retry", "Host busy; retry ${decision.attempt} in ${decision.delayMs}ms")
-        busyRetryJob?.cancel()
-        busyRetryJob = request.scope.launch(Dispatchers.IO) {
-            closeExistingHandle()
-            delay(decision.delayMs)
-            if (lifetime.isOpen() && busyRetryPending) open(request)
+        busyRetry.schedule(
+            scope = request.scope,
+            delayMs = decision.delayMs,
+            context = Dispatchers.IO,
+            beforeWait = { closeExistingHandle() },
+        ) {
+            if (lifetime.isOpen()) open(request)
         }
     }
 
     private fun cancelBusyRetry() {
-        busyRetryPending = false
-        busyRetryJob?.cancel()
-        busyRetryJob = null
+        busyRetry.cancel()
     }
 
     private fun startEventLoop(scope: CoroutineScope, handle: FfiListenerTransportHandle) {
