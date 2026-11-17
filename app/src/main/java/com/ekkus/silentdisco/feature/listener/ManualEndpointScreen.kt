@@ -127,6 +127,11 @@ fun ManualEndpointScreen(
 
                 ManualConnectUiState.Connecting -> ManualConnectProgress("Connecting to host…")
 
+                is ManualConnectUiState.RetryingBusyHost -> ManualConnectProgress(
+                    "The host is busy. Trying again " +
+                        "(${connectState.attempt} of ${connectState.maxAttempts})…",
+                )
+
                 is ManualConnectUiState.AwaitingApproval -> ManualConnectProgress(
                     "Waiting for ${connectState.hostName} to approve " +
                         "\"${connectState.sessionName}\"…",

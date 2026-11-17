@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,6 +92,8 @@ class ManualListenerTransportController(
      * it; they cannot load the Oboe library.
      */
     internal val closeNativeOutput: () -> Unit = OboeBridge::nativeOboeClose,
+    /** Rust's busy-refusal retry policy; JVM tests replace it (no native library). */
+    private val busyRetries: BusyJoinRetries = BusyJoinRetries(),
 ) : AutoCloseable {
     private val lifetime = ManualListenerLifetime()
     internal val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
@@ -101,6 +104,25 @@ class ManualListenerTransportController(
     internal fun <T> withCurrentManualHandle(action: (FfiListenerTransportHandle) -> T): T? =
         handleGate.withCurrent(action)
     private var eventLoop: Job? = null
+
+    /** What the last connect asked for, so a busy retry can connect again the same way. */
+    private class ConnectRequest(
+        val scope: CoroutineScope,
+        val rawInput: String,
+        val localDeviceId: String,
+        val displayName: String,
+        val inviteCode: String?,
+        val hostTlsPublicKeyDer: ByteArray?,
+    )
+
+    private var lastConnect: ConnectRequest? = null
+
+    /**
+     * True from a busy refusal until the retry connects: the refused
+     * connection's close is expected then and must not end the retry.
+     */
+    @Volatile private var busyRetryPending = false
+    private var busyRetryJob: Job? = null
     internal var syncProbeJob: Job? = null
     internal var diagnosticsSampleJob: Job? = null
     private val playbackRuntimeRef = AtomicReference<FfiListenerPlaybackHandle?>(null)
@@ -161,6 +183,21 @@ class ManualListenerTransportController(
         inviteCode: String?,
         hostTlsPublicKeyDer: ByteArray? = null,
     ) {
+        // A connection the user asked for starts with no busy retries used.
+        cancelBusyRetry()
+        busyRetries.reset()
+        open(ConnectRequest(scope, rawInput, localDeviceId, displayName, inviteCode, hostTlsPublicKeyDer))
+    }
+
+    private suspend fun open(request: ConnectRequest) {
+        val scope = request.scope
+        val rawInput = request.rawInput
+        val localDeviceId = request.localDeviceId
+        val displayName = request.displayName
+        val inviteCode = request.inviteCode
+        val hostTlsPublicKeyDer = request.hostTlsPublicKeyDer
+        lastConnect = request
+        busyRetryPending = false
         lifetime.ensureOpen()
         withContext(Dispatchers.IO) {
             // A queued connect must not resurrect a native socket after close.
@@ -248,6 +285,7 @@ class ManualListenerTransportController(
 
     fun reset() {
         if (!lifetime.isOpen()) return
+        cancelBusyRetry()
         eventLoop?.cancel()
         eventLoop = null
         val playbackFailure = stopPlayback()
@@ -261,6 +299,7 @@ class ManualListenerTransportController(
         // Terminal even when native cleanup fails; repeated close cannot
         // reopen output or retry releasing an already-retired UniFFI handle.
         if (!lifetime.closeOnce()) return
+        cancelBusyRetry()
         eventLoop?.cancel()
         eventLoop = null
         val playbackFailure = stopPlayback()
@@ -272,6 +311,30 @@ class ManualListenerTransportController(
         if (failure != null) throw failure
     }
 
+    /**
+     * The host refused the join as busy and Rust allows another try
+     * (remediation F3): show it, retire the refused connection, wait Rust's
+     * delay and connect again with the same request.
+     */
+    private fun scheduleBusyRetry(decision: BusyJoinRetries.Decision.Retry) {
+        val request = lastConnect ?: return
+        busyRetryPending = true
+        _connectState.value = ManualConnectUiState.RetryingBusyHost(decision.attempt, decision.maxAttempts)
+        logger.i("manual.join_busy_retry", "Host busy; retry ${decision.attempt} in ${decision.delayMs}ms")
+        busyRetryJob?.cancel()
+        busyRetryJob = request.scope.launch(Dispatchers.IO) {
+            closeExistingHandle()
+            delay(decision.delayMs)
+            if (lifetime.isOpen() && busyRetryPending) open(request)
+        }
+    }
+
+    private fun cancelBusyRetry() {
+        busyRetryPending = false
+        busyRetryJob?.cancel()
+        busyRetryJob = null
+    }
+
     private fun startEventLoop(scope: CoroutineScope, handle: FfiListenerTransportHandle) {
         eventLoop?.cancel()
         eventLoop = scope.launch(Dispatchers.IO) {
@@ -281,6 +344,7 @@ class ManualListenerTransportController(
                     handleGate.withExpectedPoll(handle) { it.pollEvent(POLL_TIMEOUT_MS) }
                 } catch (error: FfiListenerTransportException) {
                     if (!isActive || handleGate.currentHandle() !== handle) break
+                    if (busyRetryPending) break // the refused connection closing
                     logger.i(
                         "manual.control",
                         "event loop ended: ${error::class.simpleName} ${error.message.orEmpty()}",
@@ -318,17 +382,21 @@ class ManualListenerTransportController(
                 _connectState.value = ManualConnectUiState.Approved(trustedForFuture)
                 startSyncProbeLoop(scope, handle)
             }
-            is FfiListenerTransportEvent.JoinRejected -> {
-                if (stopPlayback() == null) {
-                    _connectState.value = ManualConnectUiState.Rejected(event.reason)
+            is FfiListenerTransportEvent.JoinRejected ->
+                when (val decision = busyRetries.onRejected(event.reason)) {
+                    is BusyJoinRetries.Decision.Retry -> scheduleBusyRetry(decision)
+                    is BusyJoinRetries.Decision.Final -> if (stopPlayback() == null) {
+                        _connectState.value = ManualConnectUiState.Rejected(decision.reason)
+                    }
                 }
-            }
             is FfiListenerTransportEvent.HostDisconnected -> {
+                if (busyRetryPending) return
                 if (stopPlayback() == null) {
                     _connectState.value = ManualConnectUiState.Disconnected(event.reason)
                 }
             }
             is FfiListenerTransportEvent.ConnectionClosed -> {
+                if (busyRetryPending) return
                 if (stopPlayback() == null) {
                     _connectState.value = ManualConnectUiState.Disconnected(event.message)
                 }

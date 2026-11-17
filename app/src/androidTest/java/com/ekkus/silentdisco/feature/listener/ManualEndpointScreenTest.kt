@@ -147,6 +147,23 @@ class ManualEndpointScreenTest {
     }
 
     @Test
+    fun aBusyHostRetryShowsTheAttemptAndKeepsCancelAvailable() {
+        setContent(
+            AppUiState(
+                manualEndpointForm = ManualEndpointFormState(
+                    hostAddress = "192.168.1.50",
+                    sessionId = "session-1",
+                ),
+                manualConnectState = ManualConnectUiState.RetryingBusyHost(attempt = 2, maxAttempts = 3),
+            ),
+        )
+
+        composeRule.onNodeWithText("The host is busy. Trying again (2 of 3)…").assertIsDisplayed()
+        composeRule.onNodeWithTag("manual-endpoint-connect").assertIsNotDisplayed()
+        composeRule.onNodeWithTag("manual-endpoint-cancel").assertIsDisplayed()
+    }
+
+    @Test
     fun awaitingApprovalShowsHostAndSessionName() {
         setContent(
             AppUiState(

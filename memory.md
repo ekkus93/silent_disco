@@ -1972,3 +1972,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Core `runtime/busy_join_retry.rs`; actor `busy_join_retries`, `retry_busy_join`, transport-failure guard while Retrying; `NetworkEstablishmentRequest.busy_retry`; FFI `EstablishNetwork.busy_retry_attempt/delay_ms`, export `is_host_busy_rejection`. Android `ListenerSessionController.retryBusyJoin` + `awaitingBusyRefusalClose`; `ListenerCoreController.isHostBusyRejection` (fake overrides for JVM).
 - Fixed the recurring ffi flake `final_diagnostics_survive_the_teardown_that_produced_them` (accounting instead of exact accepted count) in its own commit.
 - Next: manual/desktop-QR path retry (ManualListenerTransportController + new ManualConnectUiState).
+
+## 2026-11-17T07:59:15Z - claude-opus-5-5 - F3 busy retry step 2 (manual/desktop-QR path); §3 item closed
+- FFI `busy_join.rs`: `next_busy_join_retry` -> `FfiBusyJoinRetry{attempt,max_attempts,delay_ms}`. Kotlin `core/rust/BusyJoinRetries.kt`; `ManualListenerTransportController` busy retry (`scheduleBusyRetry`, `busyRetryPending`, `lastConnect`); `ManualConnectUiState.RetryingBusyHost` (in progress). Gates: check-rust 944, Android gate, A54 ManualEndpointScreenTest 11/11.
+- Closed TODO §3 'Replace drop-on-full ... finite client retry'. §3 now fully checked.

@@ -30,6 +30,9 @@ sealed interface ManualConnectUiState {
         val syncStatus: String? = null,
     ) : ManualConnectUiState
 
+    /** The host was busy; connecting again (retry [attempt] of [maxAttempts]). */
+    data class RetryingBusyHost(val attempt: Int, val maxAttempts: Int) : ManualConnectUiState
+
     data class Rejected(val reason: String) : ManualConnectUiState
 
     data class Disconnected(val message: String?) : ManualConnectUiState
@@ -43,4 +46,5 @@ fun ManualEndpointFormState.canConnect(): Boolean =
         (!inviteCodeRequired || inviteCode.isNotBlank())
 
 fun ManualConnectUiState.isInProgress(): Boolean = this is ManualConnectUiState.Connecting ||
-    this is ManualConnectUiState.AwaitingApproval
+    this is ManualConnectUiState.AwaitingApproval ||
+    this is ManualConnectUiState.RetryingBusyHost
