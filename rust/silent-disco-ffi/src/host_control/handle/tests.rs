@@ -177,12 +177,18 @@ mod legacy_v3_trust_boundary_tests {
             ));
         }
         assert_eq!(
-            legacy_v3_unverified_trust(FfiTrustState::Unknown).expect("unverified"),
+            connected_listener_trust(TrustState::SessionOnly, FfiTrustState::Unknown)
+                .expect("unverified"),
             TrustState::SessionOnly
         );
         assert_eq!(
-            legacy_v3_unverified_trust(FfiTrustState::SessionOnly).expect("manual session"),
+            connected_listener_trust(TrustState::SessionOnly, FfiTrustState::SessionOnly)
+                .expect("manual session"),
             TrustState::SessionOnly
+        );
+        assert!(
+            connected_listener_trust(TrustState::Trusted, FfiTrustState::Revoked).is_err(),
+            "the app never reports a revocation"
         );
         handle.shutdown().expect("shutdown");
     }
@@ -359,6 +365,72 @@ mod legacy_v3_trust_boundary_tests {
 
     /// "Always allow" for a verified listener writes its record and trusts its
     /// next join; a claimed legacy ID is refused and nothing is stored.
+    #[test]
+    fn an_always_allowed_listener_connects_as_trusted_only_while_the_record_holds() {
+        use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};
+        let (host, _listener, verified) = verified_listener();
+        let device = verified.canonical_device_id();
+        let directory = std::env::temp_dir().join(format!(
+            "sd-ffi-connected-trust-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).expect("temp dir");
+        let worker = DatabaseWorker::start(
+            DatabaseConfig::new(directory.join("trust.sqlite3")).expect("config"),
+        )
+        .expect("database worker");
+        let handle = FfiCoreHandle::open("connected-trust-host".to_owned(), Arc::new(NoopObserver))
+            .expect("open core");
+        let connected = |state| FfiListenerSummary {
+            device_id: device.as_str().to_owned(),
+            display_name: "Kitchen".to_owned(),
+            trust_state: state,
+            transport_state: FfiTransportState::Connected,
+            synchronization: None,
+            last_contact_ms: None,
+            last_error: None,
+        };
+        assert!(
+            handle
+                .submit_listener_connected(connected(FfiTrustState::Trusted))
+                .is_err(),
+            "no record yet: a Trusted report is a claim"
+        );
+        crate::host_control::handle_trust::enroll_verified_listener(
+            &handle,
+            &worker.client(),
+            &host,
+            device.as_str(),
+            "Kitchen",
+            5,
+        )
+        .expect("Always allow stores the record");
+        handle
+            .submit_listener_connected(connected(FfiTrustState::Trusted))
+            .expect("the record backs the Trusted report after Always allow");
+        assert!(
+            crate::verified_listeners::revoke_verified_listener(
+                &worker.client(),
+                &host,
+                device.as_str(),
+                9
+            )
+            .expect("revokes")
+        );
+        assert!(
+            handle
+                .submit_listener_connected(connected(FfiTrustState::Trusted))
+                .is_err(),
+            "a revoked record no longer backs it"
+        );
+        handle.shutdown().expect("shutdown");
+        worker.stop_and_join().expect("database closes");
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
     #[test]
     fn a_revoke_elsewhere_reaches_a_running_host_at_its_next_join() {
         use silent_disco_core::storage::{DatabaseConfig, DatabaseWorker};

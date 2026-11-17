@@ -421,9 +421,11 @@ impl FfiCoreHandle {
         listener: FfiListenerSummary,
     ) -> Result<(), FfiBridgeError> {
         self.ensure_open()?;
-        let trust_state = legacy_v3_unverified_trust(listener.trust_state)?;
+        let device_id = device_id_from_string(listener.device_id)?;
+        let recorded = super::handle_trust::join_trust_state(self, &device_id)?;
+        let trust_state = connected_listener_trust(recorded, listener.trust_state)?;
         let mut summary = ListenerSummary::new(
-            device_id_from_string(listener.device_id)?,
+            device_id,
             listener.display_name,
             trust_state,
             TransportState::from(listener.transport_state),
@@ -679,12 +681,19 @@ fn claimed_trust_refused() -> FfiBridgeError {
     )
 }
 
-fn legacy_v3_unverified_trust(
-    input: super::types::FfiTrustState,
+/// A connected listener's trust is the host's own record (`recorded`). The app
+/// may report Trusted only when that record agrees (after "Always allow" or an
+/// approved-devices admission); any other claim of trust is refused.
+fn connected_listener_trust(
+    recorded: TrustState,
+    claimed: super::types::FfiTrustState,
 ) -> Result<TrustState, FfiBridgeError> {
-    match input {
+    match claimed {
         super::types::FfiTrustState::Unknown | super::types::FfiTrustState::SessionOnly => {
-            Ok(TrustState::SessionOnly)
+            Ok(recorded)
+        }
+        super::types::FfiTrustState::Trusted if recorded == TrustState::Trusted => {
+            Ok(TrustState::Trusted)
         }
         super::types::FfiTrustState::Trusted | super::types::FfiTrustState::Revoked => {
             Err(claimed_trust_refused())

@@ -1945,3 +1945,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - FFI `handle_trust.rs`: `LoadedHostTrust {trust, source: Option<TrustSource{client, host der, generation}>}`, static `TRUST_RECORDS_GENERATION` bumped by `trust_records_changed()` (enrol + revoke); `join_trust_state` refreshes when stale, fails closed on read error.
 - Flake seen once under load: ffi `listener_playback::tests::final_diagnostics_survive_the_teardown_that_produced_them` (packets_accepted 5 != 10, asserts before the pump drains). Passed 5/5 isolated and in a full rerun. Not fixed; candidate for §7 test debt.
 - Gates: check-rust 934 (rerun), Android gate.
+
+## 2026-11-17T06:30:35Z - claude-opus-5-5 - F1: connected-listener trust from records (real Android break fixed)
+- Found: FFI `submit_listener_connected` refused any app-reported Trusted, but Android reports Trusted after Always allow and approved-devices auto-admit (`HostSessionController` trustedForFuture -> TRUSTED), so both would fail at the last step. Unit tests used fakes, so gates missed it.
+- Fix: `connected_listener_trust(recorded, claimed)` — trust is the host record; Trusted accepted only when the record agrees. Test `an_always_allowed_listener_connects_as_trusted_only_while_the_record_holds`.
+- Closed TODO F1 items 'validate proof before projecting' and 'desktop projection uses verified records'. Gates: check-rust 935, Android gate.
+- Lesson: FFI boundary checks need a test through the real handle, not only Kotlin fakes.
