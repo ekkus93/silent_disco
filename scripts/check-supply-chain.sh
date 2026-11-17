@@ -103,7 +103,8 @@ for workspace in rust desktop/src-tauri; do
   done < <(find "$workspace" -path "$workspace/target" -prune -o \
     -name '*.cdx.json' -print0)
 done
-if ! (cd desktop && npm sbom --sbom-format cyclonedx >"$out_dir/sbom/desktop-npm.cdx.json"); then
+# From the lockfile, as CI has no node_modules installed.
+if ! (cd desktop && npm sbom --sbom-format cyclonedx --package-lock-only >"$out_dir/sbom/desktop-npm.cdx.json"); then
   failures+=("npm sbom")
 fi
 if ! osv-scanner scan source --config osv-scanner.toml --lockfile app/gradle.lockfile \
