@@ -199,6 +199,13 @@ tasks.matching { it.name == "clean" }.configureEach {
 }
 
 
+// Pins every resolved dependency in app/gradle.lockfile so the supply-chain
+// gate can scan exact versions (remediation §7). After changing a dependency,
+// refresh with: ./gradlew <the full Android gate tasks> --write-locks
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
 
@@ -238,4 +245,11 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    // Truth pulls Guava 33.2.1 onto the test classpaths; 33.7.2 fixes
+    // GHSA-xxph-c9ww-hj94 (osv-scanner, remediation §7). Tests only.
+    constraints {
+        testImplementation("com.google.guava:guava:33.7.2-android")
+        androidTestImplementation("com.google.guava:guava:33.7.2-android")
+    }
 }
