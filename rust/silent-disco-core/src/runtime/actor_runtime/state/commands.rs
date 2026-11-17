@@ -524,9 +524,11 @@ impl ActorState {
             PlatformEffectRequest::EstablishNetwork(NetworkEstablishmentRequest {
                 session_id: session_id.clone(),
                 endpoint,
+                busy_retry: None,
             }),
             PendingPlatformOperation::EstablishNetwork { session_id },
         )?;
+        self.busy_join_retries = 0;
         self.snapshot.listener_lifecycle = ListenerLifecycle::JoinRequested;
         self.snapshot.transport_state = TransportState::Connecting;
         self.snapshot.discovery_active = false;

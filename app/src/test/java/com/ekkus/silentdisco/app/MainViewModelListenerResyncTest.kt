@@ -275,6 +275,42 @@ class MainViewModelListenerResyncTest {
     }
 
     @Test
+    fun theCloseAfterABusyRefusalDoesNotEndTheRetry() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.viewModel.ensureRustListenerCore()
+
+        harness.viewModel.handleListenerTransportEvent(
+            harness.listenerCoreController,
+            FfiListenerTransportEvent.JoinRejected(reason = "host_busy"),
+        )
+        harness.viewModel.handleListenerTransportEvent(
+            harness.listenerCoreController,
+            FfiListenerTransportEvent.ConnectionClosed(message = null),
+        )
+
+        assertThat(harness.listenerCoreController.submitJoinRejectedCalls).containsExactly("host_busy")
+        assertThat(harness.listenerCoreController.cancelJoinCallCount).isEqualTo(0)
+        assertThat(harness.listenerCoreController.transportFailedCalls).isEmpty()
+    }
+
+    @Test
+    fun theCloseAfterAFinalRefusalStillLeavesTheSession() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.viewModel.ensureRustListenerCore()
+
+        harness.viewModel.handleListenerTransportEvent(
+            harness.listenerCoreController,
+            FfiListenerTransportEvent.JoinRejected(reason = "device_not_approved"),
+        )
+        harness.viewModel.handleListenerTransportEvent(
+            harness.listenerCoreController,
+            FfiListenerTransportEvent.ConnectionClosed(message = null),
+        )
+
+        assertThat(harness.listenerCoreController.cancelJoinCallCount).isEqualTo(1)
+    }
+
+    @Test
     fun discoveredListenerRelaysItsSyncSummaryToTheHostTransport() = runTest(dispatcher) {
         val harness = newTestMainViewModelHarness()
 

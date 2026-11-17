@@ -238,6 +238,8 @@ class MainViewModelRustHostEffectTest {
                 controlPort = null,
                 syncPort = null,
                 audioPort = null,
+                busyRetryAttempt = null,
+                busyRetryDelayMs = null,
             ),
             "op-release" to FfiPlatformEffect.ReleaseNetwork(operationId = "op-release"),
             "op-prepare-audio" to FfiPlatformEffect.PrepareAudioSource(

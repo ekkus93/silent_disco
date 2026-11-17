@@ -104,6 +104,9 @@ class FakeListenerCoreController : ListenerCoreController {
         submitJoinRejectedCalls += reason
     }
 
+    // JVM tests cannot load the native rule; the shared reason code is enough here.
+    override fun isHostBusyRejection(reason: String): Boolean = reason == "host_busy"
+
     override fun transportFailed(message: String, retryable: Boolean) {
         transportFailedCalls += message to retryable
     }

@@ -17,6 +17,7 @@ mod audio_abi;
 #[cfg(test)]
 mod audio_callback_capture_tests;
 mod audio_output;
+mod busy_join;
 mod callback_capture;
 #[cfg(test)]
 mod encoded_playlist_pcm_tests;

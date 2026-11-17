@@ -160,11 +160,19 @@ internal fun MainViewModel.handleListenerTransportEvent(
     when (event) {
         is FfiListenerTransportEvent.Hello -> controller.submitAwaitingApproval()
         is FfiListenerTransportEvent.JoinApproved -> controller.submitJoinApproved(event.trustedForFuture)
-        is FfiListenerTransportEvent.JoinRejected -> controller.submitJoinRejected(event.reason)
+        is FfiListenerTransportEvent.JoinRejected -> {
+            // A busy refusal is retried by Rust (remediation F3); the host then
+            // closes this connection, and that close must not end the retry.
+            listenerSession.awaitingBusyRefusalClose = controller.isHostBusyRejection(event.reason)
+            controller.submitJoinRejected(event.reason)
+        }
         is FfiListenerTransportEvent.HostDisconnected -> leaveSession()
         is FfiListenerTransportEvent.ConnectionClosed -> {
             val message = event.message
-            if (message == null) {
+            if (listenerSession.awaitingBusyRefusalClose) {
+                listenerSession.awaitingBusyRefusalClose = false
+                logger.i("listener.busy_refused_connection_closed", message ?: "closed by host")
+            } else if (message == null) {
                 // A clean peer close is the normal result when a host ends its
                 // session. Release the listener network and return to the
                 // nearby-session flow instead of presenting a recoverable

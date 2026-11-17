@@ -298,6 +298,11 @@ pub enum FfiPlatformEffect {
         control_port: Option<u16>,
         sync_port: Option<u16>,
         audio_port: Option<u16>,
+        /// Set when connecting again after the host refused the join as busy
+        /// (1 to 3): wait `busy_retry_delay_ms`, reuse the endpoint already
+        /// resolved and send the join again.
+        busy_retry_attempt: Option<u8>,
+        busy_retry_delay_ms: Option<u64>,
     },
     ReleaseNetwork {
         operation_id: String,

@@ -1,4 +1,5 @@
 mod actor_runtime;
+mod busy_join_retry;
 mod effects;
 mod host_admission;
 mod playlist;
@@ -14,6 +15,10 @@ mod types;
 pub use actor_runtime::{
     CoreActorConfig, CoreActorHandle, CoreActorRuntime, CoreObserver, DEFAULT_ACTOR_QUEUE_CAPACITY,
     DEFAULT_NOTIFICATION_QUEUE_CAPACITY, MAX_ACTOR_QUEUE_CAPACITY, MAX_NOTIFICATION_QUEUE_CAPACITY,
+};
+pub use busy_join_retry::{
+    BusyJoinRetry, HOST_BUSY_REJECTION_REASON, MAX_BUSY_JOIN_RETRIES, is_host_busy_rejection,
+    next_busy_join_retry,
 };
 pub use effects::{
     EffectContractError, StorageEffect, StorageEffectRequest, TransportEffect,

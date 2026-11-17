@@ -58,6 +58,8 @@ pub(super) struct ActorState {
     next_session_sequence: u64,
     next_export_sequence: u64,
     session_id_namespace: Option<String>,
+    // Busy refusals retried in the current join attempt (remediation F3).
+    busy_join_retries: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +162,7 @@ impl ActorState {
             next_session_sequence: 1,
             next_export_sequence: 1,
             session_id_namespace,
+            busy_join_retries: 0,
         }
     }
 

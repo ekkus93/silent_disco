@@ -18,6 +18,7 @@ import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -112,6 +113,25 @@ internal class ListenerSessionController(
 
     private var eventLoopStarted = false
 
+    /** The endpoint the last join connected to, reused by a busy retry. */
+    private data class ResolvedEndpoint(
+        val session: SessionInfo,
+        val address: String,
+        val controlPort: UShort,
+        val syncPort: UShort,
+        val audioPort: UShort,
+        val protocolVersion: Int,
+    )
+
+    private var lastEndpoint: ResolvedEndpoint? = null
+
+    /**
+     * Set when the host refused the join as busy: the close of that refused
+     * connection is expected and must not end the retry Rust schedules.
+     * Cleared once that close arrives or a new connection opens.
+     */
+    @Volatile var awaitingBusyRefusalClose: Boolean = false
+
     /** TLS keys signed into verified invitations, by session id; a join of that session pins to it. */
     private val invitedHostTlsKeys = mutableMapOf<String, ByteArray>()
 
@@ -177,6 +197,12 @@ internal class ListenerSessionController(
 
     private fun establishNetwork(core: ListenerCoreController, effect: FfiPlatformEffect.EstablishNetwork) {
         transportConnected = false
+        val retryDelayMs = effect.busyRetryDelayMs
+        val endpoint = lastEndpoint?.takeIf { it.session.id == effect.sessionId }
+        if (effect.busyRetryAttempt != null && retryDelayMs != null && endpoint != null) {
+            retryBusyJoin(core, effect.operationId, effect.busyRetryAttempt.toInt(), retryDelayMs, endpoint)
+            return
+        }
         val address = effect.address
         val controlPort = effect.controlPort
         val syncPort = effect.syncPort
@@ -215,10 +241,42 @@ internal class ListenerSessionController(
         wifiDirect.connectToSession(session)
     }
 
+    /**
+     * The host refused the join as busy and Rust asked to try again (remediation
+     * F3, at most 3 times). The refused connection is retired at once, so its
+     * close cannot end the retry; after the delay Rust chose, the listener
+     * reconnects to the endpoint it already resolved (no new Wi-Fi Direct
+     * group) and sends the join again.
+     */
+    private fun retryBusyJoin(
+        core: ListenerCoreController,
+        operationId: String,
+        attempt: Int,
+        delayMs: ULong,
+        endpoint: ResolvedEndpoint,
+    ) {
+        logger.i("listener.join_busy_retry", "Host busy; retry $attempt in ${delayMs}ms")
+        scope.launch {
+            runCatching { transport.disconnect("Host busy; retrying") }
+            delay(delayMs.toLong())
+            connectEndpoint(
+                core = core,
+                operationId = operationId,
+                session = endpoint.session,
+                address = endpoint.address,
+                controlPort = endpoint.controlPort,
+                syncPort = endpoint.syncPort,
+                audioPort = endpoint.audioPort,
+                protocolVersion = endpoint.protocolVersion,
+            )
+        }
+    }
+
     private fun releaseNetwork(core: ListenerCoreController, effect: FfiPlatformEffect.ReleaseNetwork) {
         pendingEstablishOperationId = null
         ridesWifiDirect = false
         transportConnected = false
+        lastEndpoint = null
         scope.launch {
             var firstFailure: Throwable? = null
             try {
@@ -297,6 +355,8 @@ internal class ListenerSessionController(
         audioPort: UShort,
         protocolVersion: Int = SECURE_TRANSPORT_ENDPOINT_VERSION,
     ) {
+        lastEndpoint = ResolvedEndpoint(session, address, controlPort, syncPort, audioPort, protocolVersion)
+        awaitingBusyRefusalClose = false
         logger.i(
             "listener.endpoint_connect",
             "Opening listener endpoint for session ${session.id} (Wi-Fi Direct=$ridesWifiDirect)",

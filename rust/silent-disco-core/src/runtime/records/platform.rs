@@ -43,6 +43,10 @@ impl DiscoveryRequest {
 pub struct NetworkEstablishmentRequest {
     pub session_id: SessionId,
     pub endpoint: Option<NetworkEndpoint>,
+    /// Set when this connects again after the host refused the join as busy:
+    /// the platform waits `delay_ms`, reuses the endpoint it already
+    /// resolved, and sends the join again.
+    pub busy_retry: Option<crate::runtime::BusyJoinRetry>,
 }
 
 /// Shared audio-output format request. It contains no native device handle.

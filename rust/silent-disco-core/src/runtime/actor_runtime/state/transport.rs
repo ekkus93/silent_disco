@@ -96,6 +96,7 @@ impl ActorState {
             ));
         }
         self.snapshot.listener_lifecycle = ListenerLifecycle::Approved;
+        self.busy_join_retries = 0;
         self.clear_failure();
         Ok(ApplyOutcome::changed())
     }
@@ -114,6 +115,21 @@ impl ActorState {
                 None,
             ));
         }
+        if crate::runtime::is_host_busy_rejection(&reason)
+            && let Some(retry) = crate::runtime::next_busy_join_retry(self.busy_join_retries)
+            && let Some(outcome) = self.retry_busy_join(retry)?
+        {
+            return Ok(outcome);
+        }
+        let reason = if crate::runtime::is_host_busy_rejection(&reason) {
+            format!(
+                "the host is busy (tried {} more times); try again later",
+                self.busy_join_retries
+            )
+        } else {
+            reason
+        };
+        self.busy_join_retries = 0;
         let error = join_rejected(reason);
         self.snapshot.last_error = Some(error.clone());
         self.snapshot.listener_lifecycle = ListenerLifecycle::Error;
@@ -124,6 +140,52 @@ impl ActorState {
             changed: true,
             stop_requested: false,
         })
+    }
+
+    /// Connects again after a busy refusal, if the selected session is still
+    /// known: the platform waits `retry.delay_ms`, reuses the endpoint it
+    /// resolved and resends the join. `None` when there is nothing to retry.
+    fn retry_busy_join(
+        &mut self,
+        retry: crate::runtime::BusyJoinRetry,
+    ) -> Result<Option<ApplyOutcome>, CoreError> {
+        let Some(selected_id) = self.snapshot.selected_session.clone() else {
+            return Ok(None);
+        };
+        let Some(endpoint) = self
+            .snapshot
+            .discovered_sessions
+            .iter()
+            .find(|session| session.session_id == selected_id)
+            .map(|session| session.endpoint)
+        else {
+            return Ok(None);
+        };
+        let effect = self.start_platform_operation(
+            crate::runtime::PlatformEffectRequest::EstablishNetwork(
+                crate::runtime::NetworkEstablishmentRequest {
+                    session_id: selected_id.clone(),
+                    endpoint,
+                    busy_retry: Some(retry),
+                },
+            ),
+            super::PendingPlatformOperation::EstablishNetwork {
+                session_id: selected_id,
+            },
+        )?;
+        self.busy_join_retries = retry.attempt;
+        self.snapshot.listener_lifecycle = ListenerLifecycle::JoinRequested;
+        self.snapshot.transport_state = crate::domain::TransportState::Retrying;
+        let mut outcome = ApplyOutcome::effect(effect);
+        let diagnostic = self.diagnostic(
+            "listener.join_busy_retry",
+            vec![
+                Self::field("attempt", &retry.attempt.to_string())?,
+                Self::field("delay_ms", &retry.delay_ms.to_string())?,
+            ],
+        )?;
+        outcome.notifications.extend(diagnostic.notifications);
+        Ok(Some(outcome))
     }
 
     pub(super) fn record_join_request(
@@ -224,6 +286,19 @@ impl ActorState {
         &mut self,
         error: CoreError,
     ) -> Result<ApplyOutcome, CoreError> {
+        // While a busy retry waits to reconnect, the only connection that can
+        // fail is the one the host just refused and closed. Its close must not
+        // end the retry; the reconnect's own failures arrive after it is ready.
+        if self.snapshot.selected_role == Some(AppRole::Listener)
+            && self.snapshot.listener_lifecycle == ListenerLifecycle::JoinRequested
+            && self.snapshot.transport_state == TransportState::Retrying
+            && self.busy_join_retries > 0
+        {
+            return self.diagnostic(
+                "listener.busy_refused_connection_closed",
+                vec![Self::field("message", &error.message)?],
+            );
+        }
         self.snapshot.last_error = Some(error.clone());
         self.snapshot.transport_state = TransportState::Failed;
         // Forcing transport_state to Failed unconditionally means

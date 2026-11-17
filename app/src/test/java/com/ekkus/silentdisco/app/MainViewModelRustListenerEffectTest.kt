@@ -201,6 +201,8 @@ class MainViewModelRustListenerEffectTest {
                     controlPort = 41_000u,
                     syncPort = 41_001u,
                     audioPort = 41_002u,
+                    busyRetryAttempt = null,
+                    busyRetryDelayMs = null,
                 ),
             ),
         )
@@ -294,6 +296,8 @@ class MainViewModelRustListenerEffectTest {
             controlPort = 41_000u,
             syncPort = 41_001u,
             audioPort = 41_002u,
+            busyRetryAttempt = null,
+            busyRetryDelayMs = null,
         ),
     )
 
@@ -312,6 +316,8 @@ class MainViewModelRustListenerEffectTest {
                     controlPort = null,
                     syncPort = null,
                     audioPort = null,
+                    busyRetryAttempt = null,
+                    busyRetryDelayMs = null,
                 ),
             ),
         )
@@ -345,6 +351,8 @@ class MainViewModelRustListenerEffectTest {
                     controlPort = null,
                     syncPort = null,
                     audioPort = null,
+                    busyRetryAttempt = null,
+                    busyRetryDelayMs = null,
                 ),
             ),
         )
@@ -402,6 +410,8 @@ class MainViewModelRustListenerEffectTest {
                         controlPort = 41_000u,
                         syncPort = 41_001u,
                         audioPort = 41_002u,
+                        busyRetryAttempt = null,
+                        busyRetryDelayMs = null,
                     ),
                 ),
             )

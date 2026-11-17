@@ -79,6 +79,8 @@ class ListenerSessionControllerTest {
                 controlPort = address?.let { 41_000u },
                 syncPort = address?.let { 41_001u },
                 audioPort = address?.let { 41_002u },
+                busyRetryAttempt = null,
+                busyRetryDelayMs = null,
             ),
         )
 
@@ -100,6 +102,47 @@ class ListenerSessionControllerTest {
         assertThat(transport.joinRequestCalls.single().second).isEqualTo("1234")
         assertThat(listener.transportConnected).isTrue()
         assertThat(listener.ridesWifiDirect).isFalse()
+        parent.cancel()
+    }
+
+    @Test
+    fun aBusyRetryWaitsThenReconnectsToTheSameEndpointWithoutANewWifiDirectGroup() = runTest {
+        val (listener, parent) = controller()
+        core.emit(establish("op-wd", address = null))
+        advanceUntilIdle()
+        listener.completeWifiDirectEstablishment(
+            TransportSnapshot(state = TransportConnectionState.CONNECTED, hostAddressHint = "192.168.49.1"),
+        )
+        advanceUntilIdle()
+        assertThat(transport.connectCalls).hasSize(1)
+        listener.awaitingBusyRefusalClose = true
+
+        core.emit(
+            FfiCoreNotification.PlatformEffect(
+                FfiPlatformEffect.EstablishNetwork(
+                    operationId = "op-retry-1",
+                    sessionId = "session-1",
+                    address = null,
+                    controlPort = null,
+                    syncPort = null,
+                    audioPort = null,
+                    busyRetryAttempt = 1u,
+                    busyRetryDelayMs = 1_000uL,
+                ),
+            ),
+        )
+        testScheduler.advanceTimeBy(500)
+        testScheduler.runCurrent()
+        assertThat(transport.disconnectCalls).containsExactly("Host busy; retrying")
+        assertThat(transport.connectCalls).hasSize(1)
+
+        advanceUntilIdle()
+        assertThat(wifiDirect.connectToSessionCalls).containsExactly(session)
+        assertThat(transport.connectCalls).hasSize(2)
+        assertThat(transport.connectCalls.last().rawEndpoint).contains("192.168.49.1")
+        assertThat(core.platformOperationSucceededCalls.last().operationId).isEqualTo("op-retry-1")
+        assertThat(transport.joinRequestCalls).hasSize(2)
+        assertThat(listener.awaitingBusyRefusalClose).isFalse()
         parent.cancel()
     }
 

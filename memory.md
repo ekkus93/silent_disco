@@ -1967,3 +1967,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - New `app/src/androidTest/.../app/controller/HostVerifiedTrustDeviceTest.kt` (2 tests, A54 2/2): real HostSessionController + UniFfiHostCoreController + HostTransportController (QUIC on 127.0.0.1:41000, test Keystore aliases `silent-disco-test-*`, deleted in @After) + real v4 listeners + test-only RustDatabase in cacheDir. Never touches app stores.
 - Device mutation (Rust connected-trust refusal restored, native rebuilt via Gradle) failed both tests with the bug message; restored, gate + device rerun pass.
 - Closed TODO F1 test-matrix item. Remaining F1: trust-records item (two-device run, owner hardware).
+
+## 2026-11-17T07:40:13Z - claude-opus-5-5 - F3 busy retry step 1 (core + Android nearby/invite listener)
+- Core `runtime/busy_join_retry.rs`; actor `busy_join_retries`, `retry_busy_join`, transport-failure guard while Retrying; `NetworkEstablishmentRequest.busy_retry`; FFI `EstablishNetwork.busy_retry_attempt/delay_ms`, export `is_host_busy_rejection`. Android `ListenerSessionController.retryBusyJoin` + `awaitingBusyRefusalClose`; `ListenerCoreController.isHostBusyRejection` (fake overrides for JVM).
+- Fixed the recurring ffi flake `final_diagnostics_survive_the_teardown_that_produced_them` (accounting instead of exact accepted count) in its own commit.
+- Next: manual/desktop-QR path retry (ManualListenerTransportController + new ManualConnectUiState).

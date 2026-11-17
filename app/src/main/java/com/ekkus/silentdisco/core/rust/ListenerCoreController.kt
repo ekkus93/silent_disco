@@ -36,6 +36,11 @@ interface ListenerCoreController : AutoCloseable {
     fun submitAwaitingApproval()
     fun submitJoinApproved(trustedForFuture: Boolean)
     fun submitJoinRejected(reason: String)
+
+    /** Rust's rule for a rejection the listener retries (host busy; remediation F3). */
+    fun isHostBusyRejection(reason: String): Boolean =
+        com.ekkus.silentdisco.core.uniffi.isHostBusyRejection(reason)
+
     fun transportFailed(message: String, retryable: Boolean)
     fun platformOperationSucceeded(operationId: String, completion: FfiPlatformCompletion)
     fun platformOperationFailed(operationId: String, message: String, retryable: Boolean)

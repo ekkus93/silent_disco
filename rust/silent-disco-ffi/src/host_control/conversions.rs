@@ -513,6 +513,8 @@ impl From<PlatformEffect> for FfiPlatformEffect {
                 control_port: request.endpoint.map(|endpoint| endpoint.control_port),
                 sync_port: request.endpoint.map(|endpoint| endpoint.sync_port),
                 audio_port: request.endpoint.map(|endpoint| endpoint.audio_port),
+                busy_retry_attempt: request.busy_retry.map(|retry| retry.attempt),
+                busy_retry_delay_ms: request.busy_retry.map(|retry| retry.delay_ms),
             },
             PlatformEffectRequest::ReleaseNetwork => Self::ReleaseNetwork { operation_id },
             PlatformEffectRequest::PrepareAudioSource(source) => Self::PrepareAudioSource {

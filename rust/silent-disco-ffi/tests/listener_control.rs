@@ -294,3 +294,104 @@ fn uniffi_handle_surfaces_listener_join_rejection() {
 
     handle.shutdown().expect("explicit UniFFI shutdown");
 }
+
+/// The `EstablishNetwork` for busy retry `attempt`: its operation and delay.
+fn busy_retry_effect(observer: &RecordingObserver, attempt: u8) -> (String, u64) {
+    observer.wait_for_effect(|effect| match effect {
+        FfiPlatformEffect::EstablishNetwork {
+            operation_id,
+            busy_retry_attempt: Some(found),
+            busy_retry_delay_ms: Some(delay),
+            ..
+        } if *found == attempt => Some((operation_id.clone(), *delay)),
+        _ => None,
+    })
+}
+
+/// Remediation F3 (owner decision 2026-11-09): a busy refusal is retried at
+/// most 3 times, each time reconnecting after a longer delay; the fourth busy
+/// refusal is final and says so. Any other refusal is final at once.
+#[test]
+fn a_busy_host_refusal_is_retried_three_times_then_reported() {
+    let observer = Arc::new(RecordingObserver::default());
+    let handle = FfiCoreHandle::open("ffi-listener-busy".to_owned(), observer.clone())
+        .expect("open UniFFI core handle");
+    let mut current = reach_connecting(&handle, &observer);
+
+    for (attempt, expected_delay) in [(1_u8, 1_000_u64), (2, 2_000), (3, 4_000)] {
+        handle
+            .submit_join_rejected("host_busy".to_owned())
+            .expect("busy refusal");
+        let retrying = observer.wait_for_snapshot_revision(current.revision + 1);
+        assert_eq!(
+            retrying.listener_lifecycle,
+            FfiListenerLifecycle::JoinRequested,
+            "retry {attempt} reconnects instead of failing"
+        );
+        assert!(retrying.selected_session.is_some());
+        // The refused connection closing while the retry waits does not end it.
+        handle
+            .transport_failed("connection closed by host".to_owned(), true)
+            .expect("old connection closes");
+        let (operation_id, delay) = busy_retry_effect(&observer, attempt);
+        assert_eq!(delay, expected_delay);
+        handle
+            .platform_operation_succeeded(
+                operation_id,
+                FfiPlatformCompletion::NetworkEndpointReady {
+                    address: "127.0.0.1".to_owned(),
+                    control_port: 41_201,
+                    sync_port: 41_202,
+                    audio_port: 41_203,
+                },
+            )
+            .expect("reconnected");
+        current = observer.wait_for_snapshot_revision(retrying.revision + 1);
+        assert_eq!(current.listener_lifecycle, FfiListenerLifecycle::Connecting);
+    }
+
+    handle
+        .submit_join_rejected("host_busy".to_owned())
+        .expect("fourth busy refusal");
+    let failed = observer.wait_for_snapshot_revision(current.revision + 1);
+    assert_eq!(failed.listener_lifecycle, FfiListenerLifecycle::Error);
+    let error = failed.last_error.expect("visible failure");
+    assert!(
+        error.message.contains("busy (tried 3 more times)"),
+        "{}",
+        error.message
+    );
+    handle.shutdown().expect("explicit UniFFI shutdown");
+}
+
+#[test]
+fn a_listener_approved_after_a_busy_retry_shows_no_error() {
+    let observer = Arc::new(RecordingObserver::default());
+    let handle = FfiCoreHandle::open("ffi-listener-busy-reset".to_owned(), observer.clone())
+        .expect("open UniFFI core handle");
+    let connecting = reach_connecting(&handle, &observer);
+    handle
+        .submit_join_rejected("host_busy".to_owned())
+        .expect("busy refusal");
+    let retrying = observer.wait_for_snapshot_revision(connecting.revision + 1);
+    let (operation_id, _) = busy_retry_effect(&observer, 1);
+    handle
+        .platform_operation_succeeded(
+            operation_id,
+            FfiPlatformCompletion::NetworkEndpointReady {
+                address: "127.0.0.1".to_owned(),
+                control_port: 41_201,
+                sync_port: 41_202,
+                audio_port: 41_203,
+            },
+        )
+        .expect("reconnected");
+    let reconnected = observer.wait_for_snapshot_revision(retrying.revision + 1);
+    handle.submit_awaiting_approval().expect("awaiting");
+    let awaiting = observer.wait_for_snapshot_revision(reconnected.revision + 1);
+    handle.submit_join_approved(false).expect("approved");
+    let approved = observer.wait_for_snapshot_revision(awaiting.revision + 1);
+    assert_eq!(approved.listener_lifecycle, FfiListenerLifecycle::Approved);
+    assert!(approved.last_error.is_none());
+    handle.shutdown().expect("explicit UniFFI shutdown");
+}
