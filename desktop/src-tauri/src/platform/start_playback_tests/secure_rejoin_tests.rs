@@ -7,8 +7,8 @@
 
 use super::fixtures::stage_long_source;
 use super::harness::{
-    TEST_TIMEOUT, real_private_lan_address, start_host_session_configured, submit,
-    wait_for_control, wait_snapshot,
+    TEST_TIMEOUT, real_private_lan_address, start_host_session_configured, submit, wait_for_audio,
+    wait_for_control, wait_for_stream_start, wait_snapshot,
 };
 use crate::platform::invitation_identity::tests_support::fixed_identity_for_tests;
 use crate::platform::network::DesktopHostNetworkControl;
@@ -257,4 +257,47 @@ fn a_host_shut_down_straight_after_stopping_still_delivers_the_stop() {
         "the listener saw the host close without receiving Stop"
     );
     host.actor.shutdown().expect("actor shutdown");
+}
+
+/// Stop then Play again over v4 through the real desktop host (remediation
+/// TODO §1, stop/replay; until now covered only over v3): the listener gets
+/// the Stop for the first stream, then a fresh `StreamStart` whose audio
+/// restarts at sequence 0 and never belongs to the stopped stream.
+#[test]
+fn a_v4_listener_gets_the_stop_then_a_fresh_stream_when_the_host_plays_again() {
+    let Some(host) = start_v4_host() else { return };
+    let mut listener = join_and_approve_v4(&host);
+    start_playback::start(&host.handle, &host.network, &host.registry).expect("start playback");
+    let first = wait_for_stream_start(&mut *listener);
+    assert_eq!(wait_for_audio(&mut *listener).stream_id, first.stream_id);
+
+    host.network.stop_playback().expect("stop playback");
+    wait_snapshot(&host.handle, |s| {
+        s.playback_state == silent_disco_core::domain::PlaybackState::Stopped
+    });
+    wait_for_control(
+        &mut *listener,
+        |m| matches!(m, ControlMessage::Stop(stop) if stop.stream_id == first.stream_id),
+    );
+    // Drain what was already in flight before the Stop; the next StreamStart
+    // is the boundary after which no old audio may appear.
+    while listener.recv_event(Duration::from_millis(25)).is_ok() {}
+
+    start_playback::start(&host.handle, &host.network, &host.registry).expect("play again");
+    let second = wait_for_stream_start(&mut *listener);
+    assert_ne!(
+        second.stream_id, first.stream_id,
+        "playing again starts a new stream"
+    );
+    let audio = wait_for_audio(&mut *listener);
+    assert_eq!(
+        audio.stream_id, second.stream_id,
+        "no audio from the stopped stream"
+    );
+    assert_eq!(
+        audio.sequence.get(),
+        0,
+        "the new stream starts at sequence 0"
+    );
+    stop_and_shut_down(host, listener);
 }
