@@ -119,6 +119,11 @@ impl P2Store {
         if already_used {
             return Err(P2Error::ReplayedQr);
         }
+        // The invitation validates until `exp + QR_CLOCK_SKEW_MS` (phone
+        // clocks differ), so its nonce must stay consumed until then: kept
+        // only until `exp`, a scan in that window failed the
+        // `expires_at_ms >= consumed_at_ms` check, and once pruned the same
+        // QR could be replayed.
         transaction
             .execute(
                 "INSERT INTO consumed_qr_nonces(nonce, consumed_at_ms, expires_at_ms)
@@ -126,7 +131,7 @@ impl P2Store {
                 params![
                     unsigned.nonce,
                     to_sql_millis(now_ms)?,
-                    to_sql_millis(unsigned.exp)?,
+                    to_sql_millis(unsigned.exp.saturating_add(crate::p2::QR_CLOCK_SKEW_MS))?,
                 ],
             )
             .map_err(|error| storage_error(&error))?;

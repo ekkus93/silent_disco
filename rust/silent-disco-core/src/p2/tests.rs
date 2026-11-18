@@ -167,6 +167,58 @@ mod tests {
         remove_database(&path);
     }
 
+    /// Phone clocks differ, so an invitation stays valid for
+    /// `QR_CLOCK_SKEW_MS` after its expiry. A scan in that window must
+    /// validate (it failed with a storage error: the consumed nonce was
+    /// recorded as expiring before it was consumed), and its nonce must stay
+    /// consumed for the whole window so the same QR cannot be replayed in it.
+    #[test]
+    fn a_qr_scanned_in_the_clock_skew_window_validates_once_and_cannot_be_replayed() {
+        let path = test_path("qr-skew-window");
+        let now = 2_000_000_000_u64;
+        let (payload, _) = signed_payload(now);
+        let expires = now + 300_000;
+        let mut store = P2Store::open(&path).expect("open");
+
+        assert!(
+            store
+                .validate_and_consume_qr(&payload, expires + QR_CLOCK_SKEW_MS / 2)
+                .is_ok(),
+            "valid inside the skew window after its expiry"
+        );
+        assert_eq!(
+            store.validate_and_consume_qr(&payload, expires + QR_CLOCK_SKEW_MS),
+            Err(P2Error::ReplayedQr),
+            "still consumed at the very end of the window"
+        );
+        assert_eq!(
+            store.validate_and_consume_qr(&payload, expires + QR_CLOCK_SKEW_MS + 1),
+            Err(P2Error::ExpiredQr)
+        );
+        drop(store);
+        remove_database(&path);
+    }
+
+    #[test]
+    fn a_qr_consumed_before_its_expiry_cannot_be_replayed_in_the_skew_window() {
+        let path = test_path("qr-skew-replay");
+        let now = 2_000_000_000_u64;
+        let (payload, _) = signed_payload(now);
+        let expires = now + 300_000;
+        let mut store = P2Store::open(&path).expect("open");
+
+        store
+            .validate_and_consume_qr(&payload, now + 1_000)
+            .expect("first scan");
+        assert_eq!(
+            store.validate_and_consume_qr(&payload, expires + QR_CLOCK_SKEW_MS / 2),
+            Err(P2Error::ReplayedQr),
+            "the nonce must outlive the invitation's expiry by the skew window"
+        );
+        drop(store);
+        remove_database(&path);
+    }
+
     /// Block 31.1/31.3: a desktop host's invitation carries a real
     /// connection endpoint, embedded verbatim and validated/round-tripped
     /// through the signed envelope exactly like every other field.
