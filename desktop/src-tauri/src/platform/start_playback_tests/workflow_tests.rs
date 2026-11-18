@@ -5,17 +5,13 @@
 
 use super::fixtures::{corrupt_wav_bytes, long_pcm_wav, pcm_wav, truncated_body_full_header_wav};
 use super::harness::{TEST_TIMEOUT, wait_for_audio, wait_for_stream_start};
-use super::workflow_harness::HostWorkflow;
+use super::workflow_harness::{HostWorkflow, receive_until_stop};
 use crate::host_workflow_ops;
 use crate::runtime_dto::{
     AppendHostQueueRequest, AudioSourceSummaryDto, HostQueueEntryCommandRequest, HostQueueEntryDto,
     ReorderHostQueueRequest, RevisionCommandRequest,
 };
 use silent_disco_core::domain::{HostLifecycle, PlaybackState};
-use silent_disco_core::protocol::{ControlMessage, ProtocolFrame};
-use silent_disco_core::transport::{
-    ListenerTransportNode, TransportChannel, TransportErrorKind, TransportEvent,
-};
 use std::net::{TcpListener, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -573,99 +569,4 @@ fn append_without_validation(
     host_workflow_ops::append_host_queue(&workflow.state, &workflow.registry, request)
         .expect("append damaged source");
     workflow.wait(|snapshot| snapshot.host_queue.entries().len() == before + 1);
-}
-
-/// What one listener heard of a stream, from its first audio to `Stop`.
-struct ReceivedStream {
-    /// `(first_sample_index, samples_per_packet, sequence)` per datagram.
-    audio: Vec<(u64, u64, u64)>,
-    boundaries: Vec<(String, u64)>,
-    start_entry: Option<String>,
-    /// The first `StreamStart`'s host start time, before any pause.
-    start_time_ms: Option<u64>,
-    last_audio_end_ms: u64,
-    stop_time_ms: u64,
-}
-
-impl ReceivedStream {
-    fn assert_contiguous(&self) {
-        for pair in self.audio.windows(2) {
-            let ((first, length, sequence), (next, _, next_sequence)) = (pair[0], pair[1]);
-            assert_eq!(next, first + length, "no gap or overlap between packets");
-            assert_eq!(next_sequence, sequence + 1, "packet sequence is continuous");
-        }
-    }
-
-    fn total_samples(&self) -> u64 {
-        self.audio.iter().map(|packet| packet.1).sum()
-    }
-}
-
-/// Collects audio and track boundaries until `Stop`, then drains briefly so
-/// UDP audio racing the TCP `Stop` is still counted.
-fn receive_until_stop(listener: &mut dyn ListenerTransportNode) -> ReceivedStream {
-    let mut stream = ReceivedStream {
-        audio: Vec::new(),
-        boundaries: Vec::new(),
-        start_entry: None,
-        start_time_ms: None,
-        last_audio_end_ms: 0,
-        stop_time_ms: 0,
-    };
-    let deadline = Instant::now() + TEST_TIMEOUT;
-    let mut stopped_at = None;
-    loop {
-        let wait = if stopped_at.is_some() {
-            Duration::from_millis(100)
-        } else {
-            Duration::from_millis(200)
-        };
-        match listener.recv_event(wait) {
-            Ok(TransportEvent::FrameReceived {
-                channel: TransportChannel::Audio,
-                frame: ProtocolFrame::Audio(audio),
-                ..
-            }) => {
-                let samples = u64::from(audio.samples_per_packet);
-                stream.audio.push((
-                    audio.first_sample_index.get(),
-                    samples,
-                    audio.sequence.get(),
-                ));
-                let end = audio.host_presentation_time_ms.get()
-                    + samples * 1_000 / u64::from(audio.sample_rate);
-                stream.last_audio_end_ms = stream.last_audio_end_ms.max(end);
-            }
-            Ok(TransportEvent::FrameReceived {
-                channel: TransportChannel::Control,
-                frame: ProtocolFrame::Control(message),
-                ..
-            }) => match message {
-                ControlMessage::TrackBoundary(boundary) => stream
-                    .boundaries
-                    .push((boundary.entry_id, boundary.first_sample_index.get())),
-                ControlMessage::StreamStart(start) => {
-                    stream.start_entry = start.current_entry_id;
-                    stream
-                        .start_time_ms
-                        .get_or_insert(start.host_start_time_ms.get());
-                }
-                ControlMessage::Stop(stop) => {
-                    stream.stop_time_ms = stop.host_stop_time_ms.get();
-                    stopped_at = Some(Instant::now());
-                }
-                _ => {}
-            },
-            Ok(_) => {}
-            Err(error) if error.kind == TransportErrorKind::Timeout => {
-                if stopped_at.is_some() {
-                    break;
-                }
-            }
-            Err(error) => panic!("listener transport failed: {error}"),
-        }
-        assert!(Instant::now() < deadline, "stream never stopped");
-    }
-    stream.audio.sort_unstable();
-    stream
 }

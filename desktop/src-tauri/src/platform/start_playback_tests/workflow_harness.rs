@@ -23,20 +23,21 @@ use crate::platform::invitation_identity::{
 };
 use crate::platform::network::{DesktopHostNetworkControl, TestHostPorts};
 use crate::platform::paths::DesktopProfilePaths;
+use crate::platform::source_staging::StagingResult;
 use crate::platform::source_staging_control::{
     SourceStagingControl, SourceStagingProgressDto, SourceStagingProgressSink,
 };
 use crate::profile::ProfileId;
 use crate::runtime_dto::CommandReceiptDto;
 use silent_disco_core::domain::{AppRole, ApprovalMode, DeviceId, HostLifecycle};
-use silent_disco_core::protocol::{ControlMessage, DeviceIdentity, JoinRequest};
+use silent_disco_core::protocol::{ControlMessage, DeviceIdentity, JoinRequest, ProtocolFrame};
 use silent_disco_core::runtime::{
     AudioSourcePatch, CoreActorHandle, CoreCommand, CoreNotification, CoreSnapshot, HostDraftPatch,
     InviteCodePatch, NetworkEndpoint,
 };
 use silent_disco_core::transport::{
-    ListenerTransportConfig, ListenerTransportNode, SystemTransportClock, TransportFactory,
-    production_transport_factory,
+    ListenerTransportConfig, ListenerTransportNode, SystemTransportClock, TransportChannel,
+    TransportErrorKind, TransportEvent, TransportFactory, production_transport_factory,
 };
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
@@ -149,6 +150,16 @@ impl HostWorkflow {
         &self,
         inspected: &[InspectedAudioSource],
     ) -> Result<CommandReceiptDto, DesktopErrorDto> {
+        let staged = self.stage_songs(inspected)?;
+        host_workflow_ops::append_staged_sources(&self.state, &self.registry, staged)
+    }
+
+    /// The staging half of [`Self::add_songs`]: copy and validate, no queue
+    /// change yet. Lets a test append at a chosen moment.
+    pub(super) fn stage_songs(
+        &self,
+        inspected: &[InspectedAudioSource],
+    ) -> Result<Vec<StagingResult>, DesktopErrorDto> {
         let control = SourceStagingControl::new();
         let operation = control.begin()?;
         let sources = self.state.source_staging_directory()?;
@@ -159,7 +170,7 @@ impl HostWorkflow {
             &DiscardProgress,
         )?;
         drop(operation);
-        host_workflow_ops::append_staged_sources(&self.state, &self.registry, staged)
+        Ok(staged)
     }
 
     pub(super) fn submit(&self, command: CoreCommand) -> CommandReceiptDto {
@@ -368,4 +379,99 @@ impl DesktopHostSigningIdentityProvider for FixedSigningIdentity {
     ) -> Result<DesktopHostSigningIdentity, DesktopHostSigningIdentityError> {
         Ok(crate::platform::invitation_identity::tests_support::fixed_identity_for_tests(21))
     }
+}
+
+/// What one listener heard of a stream, from its first audio to `Stop`.
+pub(super) struct ReceivedStream {
+    /// `(first_sample_index, samples_per_packet, sequence)` per datagram.
+    pub(super) audio: Vec<(u64, u64, u64)>,
+    pub(super) boundaries: Vec<(String, u64)>,
+    pub(super) start_entry: Option<String>,
+    /// The first `StreamStart`'s host start time, before any pause.
+    pub(super) start_time_ms: Option<u64>,
+    pub(super) last_audio_end_ms: u64,
+    pub(super) stop_time_ms: u64,
+}
+
+impl ReceivedStream {
+    pub(super) fn assert_contiguous(&self) {
+        for pair in self.audio.windows(2) {
+            let ((first, length, sequence), (next, _, next_sequence)) = (pair[0], pair[1]);
+            assert_eq!(next, first + length, "no gap or overlap between packets");
+            assert_eq!(next_sequence, sequence + 1, "packet sequence is continuous");
+        }
+    }
+
+    pub(super) fn total_samples(&self) -> u64 {
+        self.audio.iter().map(|packet| packet.1).sum()
+    }
+}
+
+/// Collects audio and track boundaries until `Stop`, then drains briefly so
+/// UDP audio racing the TCP `Stop` is still counted.
+pub(super) fn receive_until_stop(listener: &mut dyn ListenerTransportNode) -> ReceivedStream {
+    let mut stream = ReceivedStream {
+        audio: Vec::new(),
+        boundaries: Vec::new(),
+        start_entry: None,
+        start_time_ms: None,
+        last_audio_end_ms: 0,
+        stop_time_ms: 0,
+    };
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    let mut stopped_at = None;
+    loop {
+        let wait = if stopped_at.is_some() {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_millis(200)
+        };
+        match listener.recv_event(wait) {
+            Ok(TransportEvent::FrameReceived {
+                channel: TransportChannel::Audio,
+                frame: ProtocolFrame::Audio(audio),
+                ..
+            }) => {
+                let samples = u64::from(audio.samples_per_packet);
+                stream.audio.push((
+                    audio.first_sample_index.get(),
+                    samples,
+                    audio.sequence.get(),
+                ));
+                let end = audio.host_presentation_time_ms.get()
+                    + samples * 1_000 / u64::from(audio.sample_rate);
+                stream.last_audio_end_ms = stream.last_audio_end_ms.max(end);
+            }
+            Ok(TransportEvent::FrameReceived {
+                channel: TransportChannel::Control,
+                frame: ProtocolFrame::Control(message),
+                ..
+            }) => match message {
+                ControlMessage::TrackBoundary(boundary) => stream
+                    .boundaries
+                    .push((boundary.entry_id, boundary.first_sample_index.get())),
+                ControlMessage::StreamStart(start) => {
+                    stream.start_entry = start.current_entry_id;
+                    stream
+                        .start_time_ms
+                        .get_or_insert(start.host_start_time_ms.get());
+                }
+                ControlMessage::Stop(stop) => {
+                    stream.stop_time_ms = stop.host_stop_time_ms.get();
+                    stopped_at = Some(Instant::now());
+                }
+                _ => {}
+            },
+            Ok(_) => {}
+            Err(error) if error.kind == TransportErrorKind::Timeout => {
+                if stopped_at.is_some() {
+                    break;
+                }
+            }
+            Err(error) => panic!("listener transport failed: {error}"),
+        }
+        assert!(Instant::now() < deadline, "stream never stopped");
+    }
+    stream.audio.sort_unstable();
+    stream
 }

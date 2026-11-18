@@ -20,5 +20,6 @@ mod reservation_tests;
 mod robustness_tests;
 mod secure_rejoin_tests;
 mod streaming_tests;
+mod workflow_edit_race_tests;
 mod workflow_harness;
 mod workflow_tests;
