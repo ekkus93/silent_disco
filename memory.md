@@ -2056,3 +2056,7 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Pitfall: the actor publishes snapshots asynchronously; a consumer reading 5 ms packets in a tight loop races past the reserved boundary before `host_queue_next_boundary` appears. Wait for the snapshot between reads.
 - Edits before reservation are deterministic: with 5 ms packets the 40-packet current track backpressures the 32-frame producer queue until the consumer reads.
 - Still open (recorded in gapless TODO §5 item): socket/desktop-level edit races, Android openAuthoritative edit test, listener disconnect inside a reservation race.
+
+## 2026-11-18T21:06:48Z - claude-opus-5-5 - Android authoritative queue-edit device test (A54)
+- `app/src/androidTest/.../app/controller/HostAuthoritativeQueueEditDeviceTest.kt`: real `UniFfiHostCoreController` + `openHostPlaylist` (openAuthoritative) + `HostSourceStaging` + `HostPlaybackController.retarget`; edit-first, paused edit, reservation-first refusal. 3/3 on A54, three runs.
+- Gotchas: `UniFfiHostCoreController` opens its native handle lazily, so `core.snapshots.value` stays null until the first command (`configureAndCreate` opens it). Wait for hostLifecycle READY/WAITING_FOR_LISTENERS (after acking StartAdvertising) before playback, and use `transitionPlaybackState` (waits for acceptance) rather than fire-and-forget `playbackStateChanged`. A refused queue edit never advances the revision, so `removeHostQueueEntry` times out after 5 s; the refusal arrives as an Error notification.
