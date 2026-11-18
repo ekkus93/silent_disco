@@ -2038,3 +2038,4 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `pgrep -x silent-disco-desktop` never matches (process names truncate to 15 chars: "silent-disco-de"); check by PID. Alt+F4 via xdotool did not close the app; SIGTERM did.
 - The QR cannot be shown fully at 1080p in a running session; workaround: Copy invitation text → render with desktop/node_modules qrcode → eog --fullscreen. Invitations are single-use: make a new one per scan.
 - UI findings logged in TODO §2 (stale "not secured" banner, raw reason codes, nothing shown after revoke, QR occluded).
+- 2026-11-18 banner fix: desktop plaintext-LAN warning (App.tsx, data-testid legacy-lan-security-warning) now shown only when labModeAvailable === true, reworded for "secure transport off"; App.test production/Lab cases; npm run check 203 passed.

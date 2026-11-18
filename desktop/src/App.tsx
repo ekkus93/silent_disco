@@ -325,20 +325,29 @@ export function App() {
         >
           {activeView === "host" ? (
             <>
-              <aside
-                role="note"
-                aria-label="Local network security limitation"
-                data-testid="legacy-lan-security-warning"
-                className="mb-5 rounded-sd-card border border-sd-error bg-sd-error-container p-4 text-sd-on-error-container"
-              >
-                <h3 className="font-semibold">Local network connection is not secured</h3>
-                <p className="mt-2 text-sm">
-                  This version does not encrypt or authenticate live session traffic. Others on the
-                  same Wi-Fi may read or alter invite codes, controls, and audio. A signed QR or
-                  approved-device name does not protect the connection. Only use a private network
-                  you trust.
-                </p>
-              </aside>
+              {/* Only a Lab Mode build can host the plaintext v3 transport; a
+                  production build hosts secure transport v4 only, so the
+                  plaintext warning would be false there (remediation, A54
+                  trust run 2026-11-18). */}
+              {labModeAvailable === true ? (
+                <aside
+                  role="note"
+                  aria-label="Local network security limitation"
+                  data-testid="legacy-lan-security-warning"
+                  className="mb-5 rounded-sd-card border border-sd-error bg-sd-error-container p-4 text-sd-on-error-container"
+                >
+                  <h3 className="font-semibold">
+                    Lab Mode: the older connection (v3) is not secured
+                  </h3>
+                  <p className="mt-2 text-sm">
+                    With secure transport turned off, this host does not encrypt or authenticate
+                    live session traffic. Others on the same Wi-Fi may read or alter invite codes,
+                    controls, and audio, and a signed QR or approved-device name does not protect
+                    the connection. Keep secure transport on, or only use a private network you
+                    trust.
+                  </p>
+                </aside>
+              ) : null}
               {!ready && !failed ? (
                 <p role="status" aria-live="polite">
                   Opening or reattaching the main profile…

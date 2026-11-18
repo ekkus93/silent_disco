@@ -264,11 +264,22 @@ describe("App", () => {
     expect(ensureDesktopBridgeMock).toHaveBeenCalledWith("main");
   });
 
-  it("discloses plaintext LAN risk across setup, live hosting and destination changes", async () => {
+  it("shows no plaintext warning in a production build, which hosts secure transport only", async () => {
     ensureDesktopBridgeMock.mockResolvedValue(connection);
+    getLabModeAvailableMock.mockResolvedValue(false);
     renderApp();
     await screen.findByRole("heading", { name: "Create a silent disco" });
-    const warning = screen.getByRole("note", { name: "Local network security limitation" });
+    await waitFor(() => expect(getLabModeAvailableMock).toHaveBeenCalled());
+    expect(screen.queryByRole("note", { name: "Local network security limitation" })).toBeNull();
+    expect(screen.queryByText(/does not encrypt or authenticate/)).toBeNull();
+  });
+
+  it("discloses plaintext LAN risk in a Lab Mode build across setup, live hosting and destination changes", async () => {
+    ensureDesktopBridgeMock.mockResolvedValue(connection);
+    getLabModeAvailableMock.mockResolvedValue(true);
+    renderApp();
+    await screen.findByRole("heading", { name: "Create a silent disco" });
+    const warning = await screen.findByRole("note", { name: "Local network security limitation" });
     expect(warning).toHaveTextContent("does not encrypt or authenticate live session traffic");
     expect(warning).toHaveTextContent("signed QR or approved-device");
 
