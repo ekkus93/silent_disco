@@ -153,12 +153,18 @@ internal fun MainViewModel.scheduleHostQueueBoundary(
     wait: suspend (Long) -> Unit = { delay(min(it, PAUSE_POLL_INTERVAL_MS)) },
 ) {
     diagnostics.metrics.increment("track_boundary_scheduled")
+    // [start] already carries the pause offset applied when this boundary
+    // was scheduled; later pauses add what the stream loop applies after it.
+    val offsetAtSchedule = hostPlayback.presentationOffsetMs
     hostPlayback.launchBoundaryTimer(boundary.firstSampleIndex.toLong(), dispatcher) {
         val dueAtMs = start.hostStartTimeMs.toLong() +
             boundary.firstSampleIndex.toLong() * 1_000L / sampleRate
         awaitHostQueueBoundary(
             dueAtElapsedRealtimeMs = dueAtMs,
-            isPaused = { _uiState.value.hostPlaybackState == PlaybackState.PAUSED },
+            isPaused = {
+                _uiState.value.hostPlaybackState == PlaybackState.PAUSED || hostPlayback.pauseInProgress
+            },
+            pauseOffsetMs = { hostPlayback.presentationOffsetMs - offsetAtSchedule },
             elapsedRealtimeMs = elapsedRealtimeMs,
             wait = wait,
         )
@@ -178,23 +184,29 @@ internal fun MainViewModel.scheduleHostQueueBoundary(
     }
 }
 
+/**
+ * Waits until a host queue boundary is due and returns its deadline. The
+ * deadline is [dueAtElapsedRealtimeMs] shifted by [pauseOffsetMs], the pause
+ * offset the stream loop has applied to the audio since the boundary was
+ * scheduled: the timer does not measure pauses itself, so a boundary moves by
+ * exactly what the audio moved (gapless TODO §4; two separate 20 ms pause
+ * polls let them drift apart by up to a poll interval per pause). It waits
+ * while [isPaused].
+ */
 internal suspend fun awaitHostQueueBoundary(
     dueAtElapsedRealtimeMs: Long,
     isPaused: () -> Boolean,
+    pauseOffsetMs: () -> Long,
     elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
     wait: suspend (Long) -> Unit = { delay(min(it, PAUSE_POLL_INTERVAL_MS)) },
 ): Long {
-    var dueAtMs = dueAtElapsedRealtimeMs
-    var pausedAtMs: Long? = null
     while (true) {
-        val now = elapsedRealtimeMs()
         if (isPaused()) {
-            if (pausedAtMs == null) pausedAtMs = now
             wait(PAUSE_POLL_INTERVAL_MS)
             continue
         }
-        pausedAtMs?.let { dueAtMs += now - it; pausedAtMs = null }
-        val remainingMs = dueAtMs - now
+        val dueAtMs = dueAtElapsedRealtimeMs + pauseOffsetMs()
+        val remainingMs = dueAtMs - elapsedRealtimeMs()
         if (remainingMs <= 0L) return dueAtMs
         wait(min(remainingMs, PAUSE_POLL_INTERVAL_MS))
     }

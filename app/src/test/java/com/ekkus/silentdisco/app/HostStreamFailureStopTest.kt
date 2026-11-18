@@ -185,6 +185,54 @@ class HostStreamFailureStopTest {
         }
     }
 
+    /**
+     * Gapless TODO §4 (host scheduler alignment): with a pause that does not
+     * line up with the 20 ms polls, the boundary applies exactly at the
+     * re-broadcast StreamStart time plus its sample offset, i.e. it moves by
+     * the same pause offset the audio moved. The boundary timer used to time
+     * the pause with its own poll and could land up to a poll interval off.
+     */
+    @Test
+    fun aBoundaryMovesByExactlyThePauseOffsetTheAudioMoved() = runTest(dispatcher) {
+        val fixture = startFailingStream(
+            frames = listOf(
+                trackBoundary(firstSampleIndex = 960),
+                // Off the 20 ms grid, so the stream loop's pause polls run at
+                // a different phase from the boundary timer's, as on a phone.
+                audioFrame(sequence = 1, firstSampleIndex = 960, presentationMs = 427),
+                audioFrame(sequence = 2, firstSampleIndex = 1_920, presentationMs = 453),
+            ),
+        )
+        try {
+            advanceTimeBy(47L)
+            runCurrent()
+            fixture.setPlaybackState(PlaybackState.PAUSED)
+            // Resume at 115 ms: the loop (first saw the pause at 53 ms) times
+            // 80 ms, while a timer polling from 0 ms would time 60 ms.
+            advanceTimeBy(68L)
+            runCurrent()
+            fixture.setPlaybackState(PlaybackState.PLAYING)
+            advanceTimeBy(30L)
+            runCurrent()
+
+            // The audio's pause offset is what the resumed StreamStart carries.
+            val audioOffsetMs = (fixture.transport.streamStartTimesMs.single() - HOST_START_MS).toLong()
+            assertThat(audioOffsetMs).isGreaterThan(0L)
+            // Sample 960 is 20 ms into the stream.
+            val dueAtMs = HOST_START_MS.toLong() + 20L + audioOffsetMs
+            advanceTimeBy(dueAtMs - 1L - testScheduler.currentTime)
+            runCurrent()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
+
+            advanceTimeBy(1L)
+            runCurrent()
+            assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls)
+                .containsExactly("entry-2" to 960L)
+        } finally {
+            fixture.viewModel.hostTransportController.close()
+        }
+    }
+
     @Test
     fun twoTrackBoundariesRemainOrderedAcrossPauseAndResume() = runTest(dispatcher) {
         // Both tracks have audio scheduled on the same stream. Pause before

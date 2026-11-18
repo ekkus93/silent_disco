@@ -57,6 +57,20 @@ internal class HostPlaybackController(
      */
     val pendingBoundaries = ConcurrentHashMap<Long, PendingHostTrackBoundary>()
 
+    /**
+     * The pause offset the stream loop has applied to the running stream's
+     * audio, in ms. Boundary timers shift by exactly this, so a boundary moves
+     * by what the audio moved (gapless TODO §4: one pause measurement, as on
+     * the desktop). Written only by the stream loop.
+     */
+    @Volatile var presentationOffsetMs: Long = 0L
+
+    /**
+     * True from when the stream loop sees a pause until it has added that
+     * pause to [presentationOffsetMs]; boundary timers wait meanwhile.
+     */
+    @Volatile var pauseInProgress: Boolean = false
+
     /** Timers that advance the host queue at each boundary, by first sample index. */
     val boundaryJobs = ConcurrentHashMap<Long, Job>()
 

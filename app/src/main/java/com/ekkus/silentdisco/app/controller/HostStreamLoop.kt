@@ -86,6 +86,8 @@ internal class HostStreamLoop(
         var packetCount = 0L
         var consecutiveAudioSendFailures = 0
         var presentationOffsetMs = 0L
+        playback.presentationOffsetMs = 0L
+        playback.pauseInProgress = false
         var lastReportedPositionMs = -POSITION_REPORT_INTERVAL_MS
         var pauseStartedAtMs: Long? = null
         var previousSendElapsedMs: Long? = null
@@ -108,11 +110,17 @@ internal class HostStreamLoop(
                     }
                 }
                 while (env.playbackState == PlaybackState.PAUSED) {
-                    if (pauseStartedAtMs == null) pauseStartedAtMs = clock()
+                    if (pauseStartedAtMs == null) {
+                        pauseStartedAtMs = clock()
+                        playback.pauseInProgress = true
+                    }
                     delay(PAUSE_POLL_INTERVAL_MS)
                 }
                 pauseStartedAtMs?.let { pausedAt ->
                     presentationOffsetMs += clock() - pausedAt
+                    // Boundary timers shift by exactly the offset the audio got.
+                    playback.presentationOffsetMs = presentationOffsetMs
+                    playback.pauseInProgress = false
                     pauseStartedAtMs = null
                     previousSendElapsedMs = null
                     runCatching {
