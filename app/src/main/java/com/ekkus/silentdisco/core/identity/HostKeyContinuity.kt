@@ -34,6 +34,9 @@ fun hostKeyFingerprint(publicKeyDer: ByteArray): String =
 interface HostKeyRecord {
     fun read(): String?
     fun write(fingerprint: String)
+
+    /** Forgets the recorded fingerprint, so the next key is a first use. */
+    fun clear()
 }
 
 /**
@@ -52,6 +55,46 @@ class FileHostKeyRecord(private val file: File) : HostKeyRecord {
         if (!temporary.renameTo(file)) {
             temporary.delete()
             error("Could not record the host key fingerprint at ${file.absolutePath}")
+        }
+    }
+
+    override fun clear() {
+        if (file.exists() && !file.delete()) {
+            error("Could not clear the host key fingerprint at ${file.absolutePath}")
+        }
+    }
+}
+
+/**
+ * A recorded Keystore key that is now different or gone. [currentFingerprint]
+ * is null when the Keystore holds no key under that alias any more.
+ */
+data class RecordedKeyChange(val previousFingerprint: String, val currentFingerprint: String?)
+
+/**
+ * Compares the key now in the Keystore ([currentPublicKeyDer], null when
+ * absent) with [record], without ever creating a key, and keeps the record in
+ * step. Returns a change once: after it the record holds the new fingerprint,
+ * or is cleared when the key is gone, so the next key is a first use.
+ * A key with no record yet is recorded silently; no record and no key is a
+ * genuine first install and records nothing.
+ */
+fun checkRecordedKey(record: HostKeyRecord, currentPublicKeyDer: ByteArray?): RecordedKeyChange? {
+    val recorded = record.read()
+    val current = currentPublicKeyDer?.let(::hostKeyFingerprint)
+    return when {
+        recorded == null -> {
+            if (current != null) record.write(current)
+            null
+        }
+        recorded == current -> null
+        current == null -> {
+            record.clear()
+            RecordedKeyChange(recorded, null)
+        }
+        else -> {
+            record.write(current)
+            RecordedKeyChange(recorded, current)
         }
     }
 }

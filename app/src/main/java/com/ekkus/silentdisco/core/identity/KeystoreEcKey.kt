@@ -37,6 +37,14 @@ internal class KeystoreEcKey(private val alias: String) {
         return generator.generateKeyPair()
     }
 
+    /** SubjectPublicKeyInfo DER of the key if the Keystore holds it; never creates one. */
+    @Synchronized
+    fun existingPublicKeyDer(): ByteArray? {
+        val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
+        val existing = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry ?: return null
+        return existing.certificate.publicKey.encoded.copyOf()
+    }
+
     /** SubjectPublicKeyInfo DER of the key. */
     fun publicKeyDer(): ByteArray = keyPair().public.encoded.copyOf()
 

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ekkus.silentdisco.core.identity.FileHostKeyRecord
+import com.ekkus.silentdisco.core.identity.KeyContinuityMonitor
 import com.ekkus.silentdisco.core.identity.HostIdentityManager
 import com.ekkus.silentdisco.core.identity.HostTlsIdentityManager
 import com.ekkus.silentdisco.core.model.ApprovalMode
@@ -76,6 +77,15 @@ class P2ViewModel @JvmOverloads constructor(
     private val hostIdentity: HostIdentityManager = HostIdentityManager(
         record = FileHostKeyRecord(File(application.noBackupFilesDir, "host-key-fingerprint.txt")),
     ),
+    /** Continuity of the host TLS and listener proof keys (remediation §9). */
+    private val keyContinuity: KeyContinuityMonitor = KeyContinuityMonitor(
+        mapOf(
+            KeyContinuityMonitor.Kind.HOST_TLS to
+                FileHostKeyRecord(File(application.noBackupFilesDir, "host-tls-key-fingerprint.txt")),
+            KeyContinuityMonitor.Kind.LISTENER_PROOF to
+                FileHostKeyRecord(File(application.noBackupFilesDir, "listener-key-fingerprint.txt")),
+        ),
+    ),
 ) : AndroidViewModel(application) {
     private val hostTlsIdentity = HostTlsIdentityManager()
     private val _uiState = MutableStateFlow(P2UiState())
@@ -91,15 +101,18 @@ class P2ViewModel @JvmOverloads constructor(
             // lose the non-exportable key. Tell the user at startup, not only
             // when a QR invitation is next created.
             try {
-                val replaced = withContext(Dispatchers.IO) { hostIdentity.checkContinuity() }
-                if (replaced != null) {
-                    _uiState.value = _uiState.value.copy(lastMessage = HOST_KEY_REPLACED_MESSAGE)
+                val (replaced, otherKeys) = withContext(Dispatchers.IO) {
+                    hostIdentity.checkContinuity() to keyContinuity.check().keys
+                }
+                val notices = keyReplacementMessages(hostIdentityReplaced = replaced != null, otherKeys = otherKeys)
+                if (notices.isNotEmpty()) {
+                    _uiState.value = _uiState.value.copy(lastMessage = notices.joinToString(" "))
                 }
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {
                 _uiState.value = _uiState.value.copy(
-                    lastError = "Could not verify this device's host identity: ${error.message}",
+                    lastError = "Could not verify this device's identity keys: ${error.message}",
                 )
             }
         }
@@ -447,6 +460,25 @@ internal fun P2ValidatedInvitation.toSessionInfo(): SessionInfo = SessionInfo(
     },
     inviteCodeRequired = approvalMode == "invite_code",
 )
+
+/** The startup notices for replaced Keystore keys, in a fixed order. */
+internal fun keyReplacementMessages(
+    hostIdentityReplaced: Boolean,
+    otherKeys: Set<KeyContinuityMonitor.Kind>,
+): List<String> = buildList {
+    if (hostIdentityReplaced) add(HOST_KEY_REPLACED_MESSAGE)
+    if (KeyContinuityMonitor.Kind.HOST_TLS in otherKeys) add(HOST_TLS_KEY_REPLACED_MESSAGE)
+    if (KeyContinuityMonitor.Kind.LISTENER_PROOF in otherKeys) add(LISTENER_KEY_REPLACED_MESSAGE)
+}
+
+internal const val HOST_TLS_KEY_REPLACED_MESSAGE =
+    "This device's host connection key changed (for example after a security reset). " +
+        "Listeners you approved with Always allow are no longer recognised and must be approved again; " +
+        "nothing is trusted automatically."
+
+internal const val LISTENER_KEY_REPLACED_MESSAGE =
+    "This device's listener identity changed (for example after a security reset). " +
+        "Hosts that remembered this phone will ask to approve it again."
 
 internal const val HOST_KEY_REPLACED_MESSAGE =
     "This device's host identity changed (for example after a restore or a security reset). " +
