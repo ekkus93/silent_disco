@@ -317,10 +317,27 @@ pub(in crate::platform) fn first_bindable_private_lan_address() -> Option<(Strin
 
 /// Production's own automatic selection, optionally with the shared-address-
 /// space opt-in, for manual device tests run on a carrier-NAT network.
+///
+/// Tests that need a real LAN address skip themselves when this returns
+/// `None`. Under GitHub Actions that would let them pass without testing
+/// anything, so there a missing address fails the test instead (remediation
+/// TODO §1: the desktop v4 rejoin, Stop and listener tests must really run in
+/// CI).
 #[cfg(test)]
 pub(in crate::platform) fn first_bindable_address(
     allow_shared_address_space: bool,
 ) -> Option<(String, u32, Ipv4Addr)> {
+    let found = select_first_bindable(allow_shared_address_space);
+    assert!(
+        found.is_some() || std::env::var_os("GITHUB_ACTIONS").is_none(),
+        "no bindable private LAN address on this CI runner: LAN-dependent tests would \
+         silently skip; give the runner a private interface or make the test independent of it"
+    );
+    found
+}
+
+#[cfg(test)]
+fn select_first_bindable(allow_shared_address_space: bool) -> Option<(String, u32, Ipv4Addr)> {
     let records = normalize_interfaces(netdev::get_interfaces()).ok()?;
     let selected = select_address(
         &records,
