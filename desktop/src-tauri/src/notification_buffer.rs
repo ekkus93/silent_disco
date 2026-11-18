@@ -8,6 +8,11 @@ use std::time::{Duration, Instant};
 
 pub const DESKTOP_PENDING_NOTIFICATION_CAPACITY: usize = 64;
 
+/// Operation IDs of recent error notifications kept so a command can learn
+/// that the core refused it. Commands wait for their outcome right after
+/// submitting, so a short window is enough.
+const RECENT_REFUSED_OPERATIONS: usize = 32;
+
 /// Identifies one frontend notification subscription.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DesktopNotificationSubscriptionId(u64);
@@ -73,6 +78,8 @@ struct NotificationState {
     active_subscription: Option<DesktopNotificationSubscriptionId>,
     next_subscription_id: u64,
     delivery_failure: Option<CoreError>,
+    /// Operation IDs of the latest error notifications, oldest first.
+    refused_operations: VecDeque<String>,
     closed: bool,
 }
 
@@ -232,6 +239,25 @@ impl DesktopNotificationBuffer {
         Ok(id)
     }
 
+    /// Whether the core has reported an error for `operation_id`: the
+    /// command it identifies was refused or failed and will not change the
+    /// state it targeted. Covers the last few error notifications only.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the notification state is poisoned.
+    pub fn operation_refused(&self, operation_id: &str) -> Result<bool, CoreError> {
+        let state = self
+            .shared
+            .state
+            .lock()
+            .map_err(|_| state_poisoned_error())?;
+        Ok(state
+            .refused_operations
+            .iter()
+            .any(|refused| refused == operation_id))
+    }
+
     /// Returns the latest asynchronous channel-delivery failure.
     ///
     /// The failure remains visible until a replacement subscription is installed. It does not
@@ -309,6 +335,16 @@ impl CoreObserver for DesktopNotificationBuffer {
                 Ok(())
             }
             other => {
+                if let CoreNotification::Error(error) = &other
+                    && let Some(operation_id) = &error.operation_id
+                {
+                    if state.refused_operations.len() >= RECENT_REFUSED_OPERATIONS {
+                        state.refused_operations.pop_front();
+                    }
+                    state
+                        .refused_operations
+                        .push_back(operation_id.as_str().to_owned());
+                }
                 if state.pending.len() >= DESKTOP_PENDING_NOTIFICATION_CAPACITY {
                     return Err(bridge_error(
                         CoreErrorCode::QueueOverflow,

@@ -513,3 +513,51 @@ fn record_worker_failure_does_not_panic_on_an_already_poisoned_state() {
     .expect("valid test error");
     record_worker_failure(&shared, DesktopNotificationSubscriptionId(1), error);
 }
+
+fn refusal(operation_id: &str) -> CoreNotification {
+    CoreNotification::Error(
+        CoreError::new(
+            CoreErrorCode::InvalidStateTransition,
+            "queue reorder cannot change already reserved upcoming tracks",
+            ErrorSeverity::Error,
+            false,
+            Some(OperationId::new(operation_id).expect("operation id")),
+        )
+        .expect("valid test error"),
+    )
+}
+
+/// A queue command learns at once that the core refused it (UI finding
+/// 2026-11-18), from the error notification that carries its operation ID.
+#[test]
+fn an_error_for_an_operation_marks_it_refused_and_only_the_latest_few_are_kept() {
+    let observer = DesktopNotificationBuffer::new();
+    observer.on_notification(snapshot(0)).expect("snapshot");
+    assert!(!observer.operation_refused("op-1").expect("query"));
+
+    observer.on_notification(refusal("op-1")).expect("refusal");
+    observer
+        .on_notification(platform_error("no operation"))
+        .expect("other error");
+    observer
+        .on_notification(platform_effect("op-2"))
+        .expect("effect");
+    assert!(observer.operation_refused("op-1").expect("query"));
+    assert!(
+        !observer
+            .operation_refused("op-2")
+            .expect("an effect is not a refusal")
+    );
+
+    for index in 0..super::RECENT_REFUSED_OPERATIONS {
+        observer
+            .on_notification(refusal(&format!("later-{index}")))
+            .expect("refusal");
+    }
+    assert!(
+        !observer.operation_refused("op-1").expect("query"),
+        "bounded"
+    );
+    assert!(observer.operation_refused("later-0").expect("query"));
+    observer.shutdown().expect("shutdown");
+}

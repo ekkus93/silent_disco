@@ -20,17 +20,29 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 impl DesktopAppState {
+    /// Waits for the queue command `operation_id` to change the queue
+    /// revision, returning the new snapshot, or `None` once the core refuses
+    /// the command or 2 s pass. A refusal ends the wait at once: its error
+    /// notification is already on its way to the screen, and the queue will
+    /// not change (UI finding 2026-11-18: a refused edit used to hold the
+    /// command for the full 2 s).
     pub(crate) fn wait_for_queue_revision_change(
         &self,
         previous_revision: &str,
+        operation_id: &str,
     ) -> Result<Option<CoreSnapshotDto>, DesktopErrorDto> {
+        let notifications = self.notification_buffer()?;
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             let snapshot = self.current_snapshot()?;
             if snapshot.host_queue.revision != previous_revision {
                 return Ok(Some(snapshot));
             }
-            if Instant::now() >= deadline {
+            if notifications
+                .operation_refused(operation_id)
+                .map_err(DesktopErrorDto::from)?
+                || Instant::now() >= deadline
+            {
                 return Ok(None);
             }
             std::thread::sleep(Duration::from_millis(5));

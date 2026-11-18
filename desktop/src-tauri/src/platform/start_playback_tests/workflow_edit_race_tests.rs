@@ -17,7 +17,7 @@ use super::workflow_harness::{HostWorkflow, ReceivedStream, receive_until_stop};
 use crate::host_workflow_ops;
 use crate::runtime_dto::{HostQueueEntryCommandRequest, ReorderHostQueueRequest};
 use silent_disco_core::domain::PlaybackState;
-use silent_disco_core::runtime::{CoreCommand, CoreSnapshot};
+use silent_disco_core::runtime::CoreSnapshot;
 use silent_disco_core::transport::ListenerTransportNode;
 use std::thread::JoinHandle;
 
@@ -102,19 +102,25 @@ fn after_the_reservation_a_reorder_behind_it_plays_in_the_new_order_and_one_movi
         .expect("start the queue");
     workflow.wait(|snapshot| reserved(snapshot, &ids[1]));
 
-    // Moving the reserved track is refused by the actor and changes nothing.
-    // (Sent directly: the frontend command would then wait out its retarget
-    // timeout for a queue change that never comes.)
-    let snapshot = workflow.snapshot();
-    workflow.submit(CoreCommand::ReorderHostQueue {
-        expected_queue_revision: snapshot.host_queue.revision(),
-        ordered_entry_ids: vec![
+    // Moving the reserved track is refused by the actor and changes nothing,
+    // and the frontend command returns as soon as the refusal arrives
+    // instead of waiting 2 s for a queue change that never comes (UI finding
+    // 2026-11-18).
+    let refused_at = std::time::Instant::now();
+    reorder(
+        &workflow,
+        &[
             ids[0].clone(),
             ids[2].clone(),
             ids[1].clone(),
             ids[3].clone(),
         ],
-    });
+    );
+    let refused_after = refused_at.elapsed();
+    assert!(
+        refused_after < std::time::Duration::from_millis(500),
+        "a refused reorder held the command for {refused_after:?}"
+    );
     workflow
         .notifications
         .wait_for_error("cannot change already reserved upcoming tracks");

@@ -88,7 +88,7 @@ pub(crate) fn append_staged_sources(
     });
     match receipt {
         Ok(receipt) => {
-            retarget_after_queue_change(state, registry, &current.host_queue.revision)?;
+            retarget_after_queue_change(state, registry, &current.host_queue.revision, &receipt)?;
             Ok(receipt)
         }
         Err(error) => {
@@ -145,7 +145,7 @@ pub(crate) fn append_host_queue(
             entries,
         },
     )?;
-    retarget_after_queue_change(state, registry, &request.expected_queue_revision)?;
+    retarget_after_queue_change(state, registry, &request.expected_queue_revision, &receipt)?;
     Ok(receipt)
 }
 
@@ -161,7 +161,7 @@ pub(crate) fn reorder_host_queue(
             ordered_entry_ids: request.ordered_entry_ids,
         },
     )?;
-    retarget_after_queue_change(state, registry, &request.expected_queue_revision)?;
+    retarget_after_queue_change(state, registry, &request.expected_queue_revision, &receipt)?;
     Ok(receipt)
 }
 
@@ -177,7 +177,7 @@ pub(crate) fn remove_host_queue_entry(
             entry_id: request.entry_id,
         },
     )?;
-    retarget_after_queue_change(state, registry, &request.expected_queue_revision)?;
+    retarget_after_queue_change(state, registry, &request.expected_queue_revision, &receipt)?;
     Ok(receipt)
 }
 
@@ -192,7 +192,7 @@ pub(crate) fn clear_host_queue(
             expected_queue_revision: parse_queue_revision(&request.expected_queue_revision)?,
         },
     )?;
-    retarget_after_queue_change(state, registry, &request.expected_queue_revision)?;
+    retarget_after_queue_change(state, registry, &request.expected_queue_revision, &receipt)?;
     Ok(receipt)
 }
 
@@ -215,8 +215,11 @@ fn retarget_after_queue_change(
     state: &DesktopAppState,
     registry: &SelectedSourceRegistry,
     previous_queue_revision: &str,
+    receipt: &CommandReceiptDto,
 ) -> Result<(), DesktopErrorDto> {
-    if let Some(snapshot) = state.wait_for_queue_revision_change(previous_queue_revision)? {
+    if let Some(snapshot) =
+        state.wait_for_queue_revision_change(previous_queue_revision, &receipt.operation_id)?
+    {
         state.retarget_active_host_queue(&snapshot, registry)?;
     }
     Ok(())
