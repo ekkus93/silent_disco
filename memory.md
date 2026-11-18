@@ -2031,3 +2031,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Subagent scope: §3 commit-point race already resolved (actor-reserved producer) with tests; stale text. Real gaps: Android host boundary timer timed pauses separately from the stream loop (fixed 26343050); nearby-session listener closed/reopened Oboe on Stop (fixed a95bde0b, owner decision: keep open like manual path); desktop reservation-first test missing (0ee41b0c).
 - In the JVM HostStreamFailureStopTest harness the loop and timer poll on the same 20 ms grid, so the old drift cannot be reproduced there; the contract is pinned by HostQueueBoundarySchedulerTest instead (loop offset 80 vs own view 60).
 - All green at a95bde0b (CI 44319830681, Desktop CI 44319830318). Gapless item "pause/resume ... Stop/replay" closed; late-join item open only for physical; deterministic item open only for a combined Android+desktop scheduler scenario. Ledger entry appended.
+
+## 2026-11-18T15:06:59Z - claude-opus-5-5 - Desktop-host trust run on the A54 (§2 desktop half)
+- Passed all four steps with packaged AppImage (0c52c6ae) + A54 over real Wi-Fi v4: Always allow → restart → auto-admit → live revoke (0.32 s, host_revoked_listener) → rejoin refused (device_not_approved). §2 box stays open for the Android-host half.
+- Driving the desktop: AT-SPI via /usr/bin/python3 (uv python lacks gi); helpers in ~/work/silent_disco-evidence/trust-run-2026-11-18/drive.py and dump_desktop_a11y.py. AT-SPI select_child on the approval <select> does NOT update React state; use mouse click on the option. Typing needs the window raised and the field clicked.
+- `pgrep -x silent-disco-desktop` never matches (process names truncate to 15 chars: "silent-disco-de"); check by PID. Alt+F4 via xdotool did not close the app; SIGTERM did.
+- The QR cannot be shown fully at 1080p in a running session; workaround: Copy invitation text → render with desktop/node_modules qrcode → eog --fullscreen. Invitations are single-use: make a new one per scan.
+- UI findings logged in TODO §2 (stale "not secured" banner, raw reason codes, nothing shown after revoke, QR occluded).

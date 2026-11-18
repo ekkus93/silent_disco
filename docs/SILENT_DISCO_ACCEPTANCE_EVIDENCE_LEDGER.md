@@ -52,3 +52,10 @@
 - **Acceptance tests:** `HostQueueBoundarySchedulerTest` (5), `HostStreamFailureStopTest.aBoundaryMovesByExactlyThePauseOffsetTheAudioMoved`, `ListenerPlaybackControllerTest` (10), desktop `reservation_tests::a_successor_the_producer_already_reserved_cannot_be_removed_and_still_plays` (`0ee41b0c`, ran in Desktop CI). Mutations: a timer ignoring the loop's offset fails six tests; an actor accepting removal of the reserved successor fails the desktop test.
 - **Local:** full Android gate passed; A54 full instrumented suite 208 run, 203 passed, 1 skipped, the 4 known large-text layout failures.
 - **Scope:** closes the gapless pause/resume and Stop/replay item. The late-join item stays open only for physical reconnect (§9). The deterministic-tests item stays open only for a combined Android-plus-desktop scheduler scenario. No physical listening or device-output measurement is claimed.
+
+## 2026-11-18 — Desktop-host trust records on a real phone (remediation §2, desktop half)
+
+- **Build:** packaged AppImage from [`0c52c6ae`](https://github.com/ekkus93/silent_disco/commit/0c52c6ae) (SHA-256 prefix `cd3a9d45ed01103e`), A54 (Android 16) debug app from the same day; real Wi-Fi; secure transport v4.
+- **Run (driven over AT-SPI and adb; the owner scanned each QR):** Always allow in Manual mode → real desktop restart → auto-admitted in Approved devices only (phone `Hello` 07:03:01.086, `JoinApproved` 07:03:01.106) → revoke in Settings disconnected the live phone in 0.32 s with `host_revoked_listener` → rejoin refused (`JoinRejected`, `device_not_approved`).
+- **Evidence:** `~/work/silent_disco-evidence/trust-run-2026-11-18/` on the owner's machine (logcat, control-event extract, screenshots, accessibility dumps).
+- **Scope:** desktop host only. The Android-host half needs a second phone; no never-known-key device was available (the revoked key stood in, and the never-known case is covered by automated tests). Not CI evidence.
