@@ -265,7 +265,10 @@ internal fun MainViewModel.handleTransportStreamStopped(hostStopTimeMs: ULong) {
     // StreamStart creates a new runtime and starts its own probe loop.
     listenerPlaybackController.cancelResync()
     listenerPlaybackController.boundaries.onStreamStopped()
-    stopListenerPlayback(cutAtHostMs = hostStopTimeMs)
+    // The session is still live: keep the native output open for the host's
+    // next stream to rebind instead of reopening it (owner decision
+    // 2026-11-18, as on the manual path).
+    stopListenerPlayback(cutAtHostMs = hostStopTimeMs, keepOutputOpen = true)
     propagateListenerPlaybackState(
         playbackState = PlaybackState.STOPPED,
         listenerState = ListenerLifecycleState.APPROVED,

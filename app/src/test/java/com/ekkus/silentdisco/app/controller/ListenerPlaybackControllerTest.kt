@@ -27,6 +27,8 @@ class ListenerPlaybackControllerTest {
     private val opened = mutableListOf<Pair<FfiListenerPlaybackConfig, FfiListenerSyncHandover?>>()
     private val runtimes = ArrayDeque<FfiListenerPlaybackHandle>()
     private var outputStatus = 0
+    private var rebindStatus = 0
+    private var outputOpen = false
     private var estimatorsOpened = 0
 
     @After
@@ -46,9 +48,18 @@ class ListenerPlaybackControllerTest {
         detachOutput = { events += "detach" },
         openOutput = { token ->
             events += "openOutput:$token"
+            outputOpen = outputStatus == 0
             outputStatus
         },
-        closeOutput = { events += "closeOutput" },
+        closeOutput = {
+            events += "closeOutput"
+            outputOpen = false
+        },
+        isOutputOpen = { outputOpen },
+        rebindOutput = { token ->
+            events += "rebind:$token"
+            rebindStatus
+        },
         openRuntime = { config, handover ->
             opened += config to handover
             runtimes.removeFirst()
@@ -88,9 +99,55 @@ class ListenerPlaybackControllerTest {
         assertThat(opened.map { it.second }).containsExactly(null, lock).inOrder()
         assertThat(opened.last().first.startupBufferTargetMs).isEqualTo(300uL)
         verify(lock).close()
+        // The output stays open and is rebound to the new stream (owner
+        // decision 2026-11-18: a reopen can downgrade the device's stream).
         assertThat(events).containsExactly(
-            "openOutput:1", "attach:1", "detach", "closeOutput", "openOutput:2", "attach:2",
+            "openOutput:1", "attach:1", "detach", "rebind:2", "attach:2",
         ).inOrder()
+    }
+
+    @Test
+    fun aHostStopKeepsTheOutputOpenAndTheNextStreamRebindsIt() {
+        runtimes += runtime(token = 1L)
+        runtimes += runtime(token = 2L)
+        val playback = controller()
+        playback.startNow(start("a"), reanchorRunning = false)
+
+        assertThat(playback.stopNow(cutAtHostMs = 5_000uL, keepOutputOpen = true)).isNull()
+        assertThat(outputOpen).isTrue()
+        playback.startNow(start("a", hostStartTimeMs = 9_000uL), reanchorRunning = false)
+
+        assertThat(events).containsExactly(
+            "openOutput:1", "attach:1", "detach", "rebind:2", "attach:2",
+        ).inOrder()
+    }
+
+    @Test
+    fun aFailedRebindFallsBackToAFreshOutput() {
+        runtimes += runtime(token = 1L)
+        runtimes += runtime(token = 2L)
+        val playback = controller()
+        playback.startNow(start("a"), reanchorRunning = false)
+        rebindStatus = -7
+
+        val result = playback.startNow(start("a", hostStartTimeMs = 9_000uL), reanchorRunning = false)
+
+        assertThat(result).isInstanceOf(ListenerStreamStartResult.Started::class.java)
+        assertThat(events.drop(2)).containsExactly(
+            "detach", "rebind:2", "closeOutput", "openOutput:2", "attach:2",
+        ).inOrder()
+    }
+
+    @Test
+    fun aTeardownStillClosesTheOutput() {
+        runtimes += runtime(token = 1L)
+        val playback = controller()
+        playback.startNow(start("a"), reanchorRunning = false)
+
+        assertThat(playback.stopNow()).isNull()
+
+        assertThat(events.takeLast(2)).containsExactly("detach", "closeOutput").inOrder()
+        assertThat(outputOpen).isFalse()
     }
 
     @Test

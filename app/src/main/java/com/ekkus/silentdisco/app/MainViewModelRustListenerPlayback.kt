@@ -187,10 +187,10 @@ private fun MainViewModel.startListenerPlaybackDiagnostics(runtime: FfiListenerP
  * With [cutAtHostMs], buffered audio presented after that host time is
  * dropped instead of played out (see `FfiListenerPlaybackHandle.stopAt`).
  */
-internal fun MainViewModel.stopListenerPlayback(cutAtHostMs: ULong? = null) {
+internal fun MainViewModel.stopListenerPlayback(cutAtHostMs: ULong? = null, keepOutputOpen: Boolean = false) {
     listenerPlaybackController.cancelStatusPoll()
     listenerPlaybackController.execute {
-        listenerPlaybackController.stopNow(cutAtHostMs)?.let(::reportListenerPlaybackStopFailure)
+        listenerPlaybackController.stopNow(cutAtHostMs, keepOutputOpen)?.let(::reportListenerPlaybackStopFailure)
     }
 }
 

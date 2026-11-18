@@ -89,6 +89,8 @@ internal class ListenerPlaybackController(
     private val detachOutput: () -> Unit,
     private val openOutput: (engineToken: Long) -> Int = OboeBridge::nativeOboeOpen,
     private val closeOutput: () -> Unit = OboeBridge::nativeOboeClose,
+    private val isOutputOpen: () -> Boolean = OboeBridge::nativeOboeIsOpen,
+    private val rebindOutput: (engineToken: Long) -> Int = OboeBridge::nativeOboeRebind,
     private val openRuntime: (FfiListenerPlaybackConfig, FfiListenerSyncHandover?) -> FfiListenerPlaybackHandle =
         { config, handover ->
             if (handover != null) {
@@ -192,7 +194,9 @@ internal class ListenerPlaybackController(
                 runCatching { running.reanchorPresentationTime(start.hostStartTimeMs) }.exceptionOrNull(),
             )
         }
-        val stopFailures = listOfNotNull(stopNow(cutAtHostMs = start.hostStartTimeMs))
+        // The session continues, so the native output stays open for the new
+        // stream (gapless TODO §4, owner decision 2026-11-18).
+        val stopFailures = listOfNotNull(stopNow(cutAtHostMs = start.hostStartTimeMs, keepOutputOpen = true))
         val stored = syncHandover
         syncHandover = null
         val handover = handoverForSession(stored?.sessionId, stored?.handover, start.sessionId)
@@ -203,7 +207,20 @@ internal class ListenerPlaybackController(
         runtimeSessionId = start.sessionId
 
         val failure = runCatching {
-            val oboeStatus = openOutput(opened.engineToken())
+            // Reuse the output the session already has, as the manual path
+            // does: a closed and reopened stream is what a real device
+            // downgraded from Exclusive to Shared. A rebind that fails falls
+            // back to a fresh open rather than leaving the output on a gone
+            // stream.
+            val engineToken = opened.engineToken()
+            val oboeStatus = if (isOutputOpen()) {
+                rebindOutput(engineToken).takeIf { it == LISTENER_OBOE_STATUS_OK } ?: run {
+                    closeOutput()
+                    openOutput(engineToken)
+                }
+            } else {
+                openOutput(engineToken)
+            }
             check(oboeStatus == LISTENER_OBOE_STATUS_OK) { "Oboe stream failed to open (status=$oboeStatus)" }
             attachOutput(opened)
         }.exceptionOrNull()
@@ -216,10 +233,12 @@ internal class ListenerPlaybackController(
     /**
      * Stops the runtime and the native output. Runs on [executor]. With
      * [cutAtHostMs], buffered audio presented after that host time is dropped
-     * instead of played out. Every step is attempted; returns the first
+     * instead of played out. With [keepOutputOpen] (the session continues:
+     * a host Stop or the next stream), the native output stays open for the
+     * next stream to rebind. Every step is attempted; returns the first
      * failure with the rest suppressed.
      */
-    fun stopNow(cutAtHostMs: ULong? = null): Throwable? {
+    fun stopNow(cutAtHostMs: ULong? = null, keepOutputOpen: Boolean = false): Throwable? {
         val running = runtimeRef.getAndSet(null) ?: return null
         var firstFailure: Throwable? = null
         fun capture(block: () -> Unit) {
@@ -232,7 +251,7 @@ internal class ListenerPlaybackController(
         }
         capture { detachOutput() }
         capture { if (cutAtHostMs != null) running.stopAt(cutAtHostMs) else running.stop() }
-        capture { closeOutput() }
+        if (!keepOutputOpen) capture { closeOutput() }
         // Keep this stream's clock lock for the session's next stream. It is
         // only ever reused by a stream of the same session (see
         // [handoverForSession]), so a disconnect cannot leak it elsewhere.
