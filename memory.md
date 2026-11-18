@@ -2039,3 +2039,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - The QR cannot be shown fully at 1080p in a running session; workaround: Copy invitation text → render with desktop/node_modules qrcode → eog --fullscreen. Invitations are single-use: make a new one per scan.
 - UI findings logged in TODO §2 (stale "not secured" banner, raw reason codes, nothing shown after revoke, QR occluded).
 - 2026-11-18 banner fix: desktop plaintext-LAN warning (App.tsx, data-testid legacy-lan-security-warning) now shown only when labModeAvailable === true, reworded for "secure transport off"; App.test production/Lab cases; npm run check 203 passed.
+
+## 2026-11-18T17:32:10Z - claude-opus-5-5 - Host boundary timing moved into Rust (both hosts)
+- Core `HostBoundarySchedule` (audio/host_boundary_schedule.rs): deadline = original stream start + floor(sample*1000/rate) + total pause offset passed by caller; strictly increasing sample order (even after apply), max 128 pending, withdraw_from for failures. Desktop pump uses `at_canonical_rate`; Android uses UniFFI `FfiHostBoundarySchedule` via `HostPlaybackController.boundarySchedule` + one `boundaryPoller` (`runHostBoundaryPoller` in MainViewModelHostPlayback.kt).
+- JVM tests cannot load Rust: `FakeHostBoundarySchedule` (test double of the rule, records takeDue/withdraw calls) via `MainViewModel.hostBoundaryScheduleFactory`; harness exposes `boundarySchedules`. Real rule runs on device in `HostBoundaryScheduleInstrumentedTest` (A54 passed 2026-11-18).
+- Desktop workflow_harness now opts in to shared address space when SILENT_DISCO_DEVICE_TEST_ALLOW_SHARED_ADDRESS_SPACE is set; without it, on this CGNAT Wi-Fi, LAN workflow tests failed "host transport never started" (also on master).
+- Full Android gate was killed for low memory during lint (builds + all JVM variants had passed); lintDebug was then run alone and passed. Don't run emulator + Gradle together on this 7 GB box.

@@ -136,7 +136,9 @@ class HostStreamFailureStopTest {
             // not at 420 ms where its deadline ties with the tail's end.
             advanceTimeBy(20L)
             runCurrent()
-            assertThat(fixture.viewModel.hostPlayback.boundaryJobs).isEmpty()
+            val schedule = fixture.harness.boundarySchedules.latest
+            assertThat(schedule.withdrawCalls).containsExactly(960L)
+            assertThat(schedule.pending()).isEmpty()
             assertThat(fixture.transport.stops).isEmpty()
 
             advanceTimeBy(980L)
@@ -147,7 +149,7 @@ class HostStreamFailureStopTest {
             assertThat(fixture.transport.stops)
                 .containsExactly(StopCall(STREAM_ID, hostStopTimeMs = 420uL, sentAtMs = 420L))
             assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
-            assertThat(fixture.viewModel.hostPlayback.boundaryJobs).isEmpty()
+            assertThat(fixture.viewModel.hostPlayback.boundaryPoller).isNull()
         } finally {
             fixture.viewModel.hostTransportController.close()
         }
@@ -308,7 +310,7 @@ class HostStreamFailureStopTest {
             fixture.setPlaybackState(PlaybackState.STOPPED)
             advanceTimeBy(500L)
             runCurrent()
-            assertThat(fixture.viewModel.hostPlayback.boundaryJobs).isEmpty()
+            assertThat(fixture.viewModel.hostPlayback.boundaryPoller).isNull()
             assertThat(fixture.harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
             assertThat(fixture.viewModel.hostPlayback.streamer).isNull()
         } finally {
@@ -419,6 +421,8 @@ class HostStreamFailureStopTest {
         viewModel.hostMonitorPlayback = monitor
         viewModel.hostPlayback.streamer = controller
         viewModel.hostPlayback.streamId = StreamId(STREAM_ID)
+        // What prepareStream does: one boundary schedule from the stream's start.
+        viewModel.hostPlayback.openBoundarySchedule(HOST_START_MS, 48_000u)
         viewModel._uiState.value = viewModel._uiState.value.copy(hostPlaybackState = PlaybackState.PLAYING)
 
         viewModel.startHostStreamingLoop(

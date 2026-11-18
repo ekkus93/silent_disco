@@ -9,8 +9,7 @@ import com.ekkus.silentdisco.core.rust.HostPlaylistStreamController
 import com.ekkus.silentdisco.core.uniffi.FfiCoreSnapshot
 import com.ekkus.silentdisco.core.uniffi.FfiPlaylistSource
 import com.ekkus.silentdisco.core.audio.AudioFileAccessException
-import com.ekkus.silentdisco.app.PendingHostTrackBoundary
-import java.util.concurrent.ConcurrentHashMap
+import com.ekkus.silentdisco.core.uniffi.FfiHostBoundarySchedule
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -27,7 +26,7 @@ internal data class PreparedHostStream(
  * The host's playback (God-file refactor spec §4): the staged sources,
  * stream preparation, the running Rust playlist streamer with its stream
  * start and format, the stream-loop and playback-command jobs, and the
- * track-boundary timers. The loop itself is [HostStreamLoop].
+ * boundary poller over the Rust boundary schedule. The loop itself is [HostStreamLoop].
  *
  * Play, pause, resume and stop stay with the coordinator: each waits for the
  * host core's authority, then drives this controller, the monitor, the
@@ -36,6 +35,12 @@ internal data class PreparedHostStream(
 internal class HostPlaybackController(
     parentScope: CoroutineScope,
     val staging: HostSourceStaging,
+    /**
+     * Opens the Rust host boundary schedule for a stream (its original host
+     * start time, its sample rate). The desktop host uses the same rule, so
+     * Kotlin never computes a boundary deadline. JVM tests inject a fake.
+     */
+    private val newBoundarySchedule: (ULong, UInt) -> FfiHostBoundarySchedule = ::FfiHostBoundarySchedule,
 ) : ViewModelController(parentScope) {
     /** The host's stream id, from session start until the session ends. */
     @Volatile var streamId: StreamId? = null
@@ -52,27 +57,30 @@ internal class HostPlaybackController(
     @Volatile var latestPackets: List<AudioPacket> = emptyList()
 
     /**
-     * Boundaries sent to listeners but not yet reached, by first sample index.
-     * A resume re-sends them, re-anchored. Host timing state (spec A.4 T1).
+     * The running stream's boundaries sent to listeners but not yet applied
+     * to the host queue, owned by Rust (gapless TODO §5). A resume re-sends
+     * them. Replaced when a stream is prepared; null without a stream.
      */
-    val pendingBoundaries = ConcurrentHashMap<Long, PendingHostTrackBoundary>()
+    @Volatile var boundarySchedule: FfiHostBoundarySchedule? = null
+        private set
 
     /**
      * The pause offset the stream loop has applied to the running stream's
-     * audio, in ms. Boundary timers shift by exactly this, so a boundary moves
-     * by what the audio moved (gapless TODO §4: one pause measurement, as on
-     * the desktop). Written only by the stream loop.
+     * audio, in ms. The boundary poller passes exactly this to the Rust
+     * schedule, so a boundary moves by what the audio moved (gapless TODO §4:
+     * one pause measurement, as on the desktop). Written only by the stream loop.
      */
     @Volatile var presentationOffsetMs: Long = 0L
 
     /**
      * True from when the stream loop sees a pause until it has added that
-     * pause to [presentationOffsetMs]; boundary timers wait meanwhile.
+     * pause to [presentationOffsetMs]; the boundary poller waits meanwhile.
      */
     @Volatile var pauseInProgress: Boolean = false
 
-    /** Timers that advance the host queue at each boundary, by first sample index. */
-    val boundaryJobs = ConcurrentHashMap<Long, Job>()
+    /** Applies due boundaries to the host queue while the stream runs. */
+    @Volatile var boundaryPoller: Job? = null
+        private set
 
     /** The stream loop sending packets to the monitor and listeners. */
     private var streamJob: Job? = null
@@ -111,24 +119,28 @@ internal class HostPlaybackController(
         commandJob?.cancel()
     }
 
-    /** Runs [block] as the timer for the boundary at [sampleIndex], replacing any timer already there. */
-    fun launchBoundaryTimer(sampleIndex: Long, context: CoroutineContext, block: suspend CoroutineScope.() -> Unit) {
-        val job = scope.launch(context, block = block)
-        boundaryJobs.put(sampleIndex, job)?.cancel()
-        job.invokeOnCompletion { boundaryJobs.remove(sampleIndex, job) }
+    /** Replaces the boundary schedule with a new, empty one for a stream starting at [hostStartTimeMs]. */
+    fun openBoundarySchedule(hostStartTimeMs: ULong, sampleRate: UInt): FfiHostBoundarySchedule =
+        newBoundarySchedule(hostStartTimeMs, sampleRate).also { boundarySchedule = it }
+
+    /** Runs [block] as the boundary poller unless one is already running. */
+    fun ensureBoundaryPoller(context: CoroutineContext, block: suspend CoroutineScope.() -> Unit) {
+        if (boundaryPoller?.isActive == true) return
+        boundaryPoller = scope.launch(context, block = block)
     }
 
-    fun cancelBoundaryTimers() {
-        val pendingJobs = boundaryJobs.values.toList()
-        boundaryJobs.clear()
-        pendingJobs.forEach(Job::cancel)
+    /** Stops applying boundaries: the stream stopped, failed or ended. */
+    fun cancelBoundaryPoller() {
+        boundaryPoller?.cancel()
+        boundaryPoller = null
     }
 
-    /** Cancels the timers of boundaries at or after [firstUnsentSampleIndex]: no listener will hear them. */
-    fun cancelBoundaryTimersFrom(firstUnsentSampleIndex: Long) {
-        boundaryJobs.keys
-            .filter { it >= firstUnsentSampleIndex }
-            .forEach { sampleIndex -> boundaryJobs.remove(sampleIndex)?.cancel() }
+    /**
+     * Withdraws the boundaries at or after [firstUnsentSampleIndex]: no
+     * listener will hear them, so the host queue must not advance to them.
+     */
+    fun withdrawBoundariesFrom(firstUnsentSampleIndex: Long) {
+        boundarySchedule?.withdrawFrom(firstUnsentSampleIndex.toULong())
     }
 
     /**
@@ -141,12 +153,18 @@ internal class HostPlaybackController(
         streamId: StreamId,
         open: suspend () -> HostPlaylistStreamController,
     ): PreparedHostStream {
-        pendingBoundaries.clear()
+        forgetBoundaries()
         this.streamId = streamId
         val opened = open()
         streamer = opened
         val start = opened.streamStart
         streamStart = start
+        try {
+            openBoundarySchedule(start.hostStartTimeMs, start.sampleRate)
+        } catch (error: Throwable) {
+            clearStream()
+            throw error
+        }
         val streamFormat = AudioFormatSpec(start.sampleRate.toInt(), start.channels.toInt())
         format = streamFormat
         val firstPacket = try {
@@ -172,7 +190,7 @@ internal class HostPlaybackController(
 
     /** Cancels and closes the streamer and forgets the stream; staged sources stay. */
     fun clearStream() {
-        pendingBoundaries.clear()
+        forgetBoundaries()
         val running = streamer
         streamer = null
         runCatching { running?.cancel() }
@@ -182,11 +200,20 @@ internal class HostPlaybackController(
         latestPackets = emptyList()
     }
 
+    /**
+     * Drops the stream's schedule. It is not closed here: a cancelled poller
+     * may still be inside a call on it, and UniFFI's cleaner frees it once
+     * nothing refers to it. The poller re-reads [boundarySchedule] each turn.
+     */
+    private fun forgetBoundaries() {
+        boundarySchedule = null
+    }
+
     /** `MainViewModel.onCleared` releases the staged sources at its original point; this covers the rest. */
     override fun release() {
         cancelCommand()
         cancelStream()
-        cancelBoundaryTimers()
+        cancelBoundaryPoller()
         clearStream()
         staging.releaseAll()
     }

@@ -5,6 +5,7 @@ import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.rust.FakeHostCoreController
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -96,14 +97,14 @@ class MainViewModelHostQueueTest {
     @Test
     fun stoppingPlaybackCancelsPendingBoundaryApplicationsBeforeSubmittingStop() = runTest(dispatcher) {
         val harness = newHarness()
-        val pendingBoundary = Job()
-        harness.viewModel.hostPlayback.boundaryJobs[960L] = pendingBoundary
+        harness.viewModel.hostPlayback.ensureBoundaryPoller(Dispatchers.Main) { awaitCancellation() }
+        val pendingBoundaries = harness.viewModel.hostPlayback.boundaryPoller!!
         harness.viewModel._uiState.value = AppUiState(hostPlaybackState = PlaybackState.PLAYING)
 
         harness.viewModel.stopHostPlaybackImpl()
 
-        assertThat(pendingBoundary.isCancelled).isTrue()
-        assertThat(harness.viewModel.hostPlayback.boundaryJobs).isEmpty()
+        assertThat(pendingBoundaries.isCancelled).isTrue()
+        assertThat(harness.viewModel.hostPlayback.boundaryPoller).isNull()
         assertThat(harness.hostCoreController.transitionPlaybackStateCalls).isEmpty()
     }
 

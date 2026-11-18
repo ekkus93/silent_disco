@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.app
 
+import com.ekkus.silentdisco.core.uniffi.FfiHostBoundarySchedule
 import android.app.Application
 import android.net.Uri
 import android.os.SystemClock
@@ -96,6 +97,12 @@ class MainViewModel @JvmOverloads constructor(
     internal val hostElapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
     internal val hostStreamDispatcher: CoroutineDispatcher = Dispatchers.IO,
     internal val closeHostMonitorOutput: () -> Unit = OboeBridge::nativeOboeClose,
+    /**
+     * Opens the Rust host boundary schedule for a stream (host start time,
+     * sample rate). JVM tests, which cannot load the Rust library, inject a
+     * fake; the rule itself is tested in Rust and on the device.
+     */
+    internal val hostBoundaryScheduleFactory: (ULong, UInt) -> FfiHostBoundarySchedule = ::FfiHostBoundarySchedule,
     /** The manual (desktop) listener connection; injectable for JVM tests. */
     internal val manualListenerController: ManualListenerTransportController =
         ManualListenerTransportController(
@@ -156,6 +163,7 @@ class MainViewModel @JvmOverloads constructor(
                 cacheDir = { getApplication<Application>().cacheDir },
                 openInput = { application.contentResolver.openInputStream(it) },
             ),
+            newBoundarySchedule = hostBoundaryScheduleFactory,
         ),
     )
     internal val listenerSession = controllers.add(

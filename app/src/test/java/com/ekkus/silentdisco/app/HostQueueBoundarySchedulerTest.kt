@@ -2,14 +2,15 @@ package com.ekkus.silentdisco.app
 
 import com.google.common.truth.Truth.assertThat
 import com.ekkus.silentdisco.core.model.PlaybackState
-import com.ekkus.silentdisco.core.uniffi.FfiPlaylistFrame
+import com.ekkus.silentdisco.core.uniffi.FfiHostBoundary
+import com.ekkus.silentdisco.core.uniffi.FfiHostPlaylistException
 import com.ekkus.silentdisco.core.uniffi.FfiPlaylistStreamStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.resetMain
@@ -18,6 +19,12 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 
+/**
+ * The Android host's boundary poller (gapless TODO §5): Rust's schedule
+ * decides when a boundary is due; Kotlin supplies the host clock and the
+ * stream loop's pause offset, waits while a pause is being applied, and
+ * applies what comes back to the host core and the stream announcement.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class HostQueueBoundarySchedulerTest {
     private val dispatcher = StandardTestDispatcher()
@@ -32,88 +39,9 @@ class HostQueueBoundarySchedulerTest {
         Dispatchers.resetMain()
     }
 
-    @Test
-    fun pauseShiftsScheduledBoundaryByThePausedDuration() = runTest(dispatcher) {
-        val scheduler = testScheduler
-        var appliedAtMs: Long? = null
-        launch {
-            appliedAtMs = awaitHostQueueBoundary(
-                dueAtElapsedRealtimeMs = 100L,
-                isPaused = { scheduler.currentTime in 40L until 100L },
-                // The stream loop applies the 60 ms pause when it resumes.
-                pauseOffsetMs = { if (scheduler.currentTime >= 100L) 60L else 0L },
-                elapsedRealtimeMs = { scheduler.currentTime },
-            )
-        }
-
-        runCurrent()
-        advanceTimeBy(159L)
-        runCurrent()
-        assertThat(appliedAtMs).isNull()
-
-        advanceTimeBy(1L)
-        runCurrent()
-        assertThat(appliedAtMs).isEqualTo(160L)
-    }
-
-    /**
-     * The timer follows the pause offset the stream loop applied to the audio,
-     * not its own view of the pause: here the loop's polls timed 80 ms where
-     * the timer saw a 60 ms pause, and the boundary moves by 80 ms, with the
-     * audio (gapless TODO §4: one pause measurement, as on the desktop).
-     */
-    @Test
-    fun theBoundaryFollowsTheStreamLoopsPauseOffsetNotItsOwnPollOfThePause() = runTest(dispatcher) {
-        val scheduler = testScheduler
-        var appliedAtMs: Long? = null
-        launch {
-            appliedAtMs = awaitHostQueueBoundary(
-                dueAtElapsedRealtimeMs = 100L,
-                isPaused = { scheduler.currentTime in 40L until 100L },
-                pauseOffsetMs = { if (scheduler.currentTime >= 100L) 80L else 0L },
-                elapsedRealtimeMs = { scheduler.currentTime },
-            )
-        }
-
-        runCurrent()
-        advanceTimeBy(179L)
-        runCurrent()
-        assertThat(appliedAtMs).isNull()
-
-        advanceTimeBy(1L)
-        runCurrent()
-        assertThat(appliedAtMs).isEqualTo(180L)
-    }
-
-    @Test
-    fun aBoundaryWaitsWhileTheStreamLoopHasNotYetAppliedThePause() = runTest(dispatcher) {
-        val scheduler = testScheduler
-        var appliedAtMs: Long? = null
-        // The UI resumed at 100 ms, but the loop applies the pause only at
-        // 115 ms; until then the timer must not use the old offset.
-        launch {
-            appliedAtMs = awaitHostQueueBoundary(
-                dueAtElapsedRealtimeMs = 100L,
-                isPaused = { scheduler.currentTime in 40L until 115L },
-                pauseOffsetMs = { if (scheduler.currentTime >= 115L) 75L else 0L },
-                elapsedRealtimeMs = { scheduler.currentTime },
-            )
-        }
-
-        runCurrent()
-        advanceTimeBy(174L)
-        runCurrent()
-        assertThat(appliedAtMs).isNull()
-
-        advanceTimeBy(1L)
-        runCurrent()
-        assertThat(appliedAtMs).isEqualTo(175L)
-    }
-
-    @Test
-    fun productionHostSchedulerAppliesBoundaryAtPauseAdjustedDeadline() = runTest(dispatcher) {
+    private fun TestScope.startedHost(): Pair<MainViewModelHarness, FakeHostBoundarySchedule> {
         val harness = newTestMainViewModelHarness()
-        val start = FfiPlaylistStreamStart(
+        harness.viewModel.hostPlayback.streamStart = FfiPlaylistStreamStart(
             streamId = "stream-1",
             hostStartTimeMs = 100uL,
             sampleRate = 1_000u,
@@ -122,22 +50,22 @@ class HostQueueBoundarySchedulerTest {
             currentEntryId = "entry-1",
             currentDisplayName = "First track",
         )
-        val boundary = FfiPlaylistFrame.TrackBoundary(
-            streamId = "stream-1",
-            firstSampleIndex = 100uL,
-            entryId = "entry-2",
-            displayName = "Second track",
-        )
-        val viewModel = harness.viewModel
-        viewModel.hostPlayback.streamStart = start
+        harness.viewModel.hostPlayback.openBoundarySchedule(100uL, 1_000u)
+        return harness to harness.boundarySchedules.latest
+    }
 
-        viewModel.scheduleHostQueueBoundary(
-            start = start,
-            boundary = boundary,
-            sampleRate = 1_000,
+    private fun MainViewModelHarness.runPoller(scope: TestScope) =
+        viewModel.runHostBoundaryPoller(
             dispatcher = Dispatchers.Main,
-            elapsedRealtimeMs = { testScheduler.currentTime },
+            elapsedRealtimeMs = { scope.testScheduler.currentTime },
         )
+
+    @Test
+    fun theBoundaryIsAppliedAtThePauseAdjustedDeadlineAndAdvancesTheAnnouncedTrack() = runTest(dispatcher) {
+        val (harness, schedule) = startedHost()
+        val viewModel = harness.viewModel
+        schedule.schedule("entry-2", 100uL, "Second track") // due at 200 ms before any pause
+        harness.runPoller(this)
         runCurrent()
         advanceTimeBy(40L)
         viewModel._uiState.value = viewModel._uiState.value.copy(hostPlaybackState = PlaybackState.PAUSED)
@@ -156,42 +84,99 @@ class HostQueueBoundarySchedulerTest {
 
         advanceTimeBy(1L)
         runCurrent()
-        assertThat(harness.hostCoreController.trackBoundaryAppliedCalls)
-            .containsExactly("entry-2" to 100L)
+        assertThat(harness.hostCoreController.trackBoundaryAppliedCalls).containsExactly("entry-2" to 100L)
         assertThat(viewModel.hostPlayback.streamStart?.currentEntryId).isEqualTo("entry-2")
         assertThat(viewModel.hostPlayback.streamStart?.currentDisplayName).isEqualTo("Second track")
+        viewModel.cancelHostBoundaryJobs()
+    }
+
+    /**
+     * Kotlin passes Rust the offset the stream loop applied to the audio,
+     * never a pause it measured itself, and asks nothing while a pause is in
+     * progress (it would be measured twice; gapless TODO §4).
+     */
+    @Test
+    fun thePollerPassesTheStreamLoopsPauseOffsetAndDoesNotAskWhilePaused() = runTest(dispatcher) {
+        val (harness, schedule) = startedHost()
+        val viewModel = harness.viewModel
+        schedule.schedule("entry-2", 1_000uL, "Second track")
+        harness.runPoller(this)
+        runCurrent()
+        advanceTimeBy(100L)
+        viewModel.hostPlayback.pauseInProgress = true
+        runCurrent()
+        val askedBeforePause = schedule.takeDueCalls.size
+        advanceTimeBy(300L)
+        runCurrent()
+        assertThat(schedule.takeDueCalls).hasSize(askedBeforePause)
+
+        viewModel.hostPlayback.presentationOffsetMs = 300L
+        viewModel.hostPlayback.pauseInProgress = false
+        advanceTimeBy(20L)
+        runCurrent()
+        assertThat(schedule.takeDueCalls.drop(askedBeforePause).map { it.second }.toSet()).containsExactly(300L)
+        assertThat(schedule.takeDueCalls.first().second).isEqualTo(0L)
+        assertThat(schedule.takeDueCalls.all { (now, _) -> now <= testScheduler.currentTime }).isTrue()
+        viewModel.cancelHostBoundaryJobs()
     }
 
     @Test
-    fun productionHostSchedulerDoesNotApplyBoundaryAfterStopCancelsIt() = runTest(dispatcher) {
-        val harness = newTestMainViewModelHarness()
-        val start = FfiPlaylistStreamStart(
-            streamId = "stream-1",
-            hostStartTimeMs = 100uL,
-            sampleRate = 1_000u,
-            channels = 2u,
-            samplesPerPacket = 20u,
-            currentEntryId = "entry-1",
-            currentDisplayName = "First track",
-        )
-        val boundary = FfiPlaylistFrame.TrackBoundary(
-            streamId = "stream-1",
-            firstSampleIndex = 100uL,
-            entryId = "entry-2",
-            displayName = "Second track",
-        )
+    fun boundariesOverdueTogetherAreAppliedInSampleOrder() = runTest(dispatcher) {
+        val (harness, schedule) = startedHost()
+        schedule.schedule("entry-2", 50uL, "Second")
+        schedule.schedule("entry-3", 60uL, "Third")
+        // The poller starts late: both are already due.
+        advanceTimeBy(500L)
+        harness.runPoller(this)
+        runCurrent()
+        assertThat(harness.hostCoreController.trackBoundaryAppliedCalls)
+            .containsExactly("entry-2" to 50L, "entry-3" to 60L).inOrder()
+        assertThat(harness.viewModel.hostPlayback.streamStart?.currentEntryId).isEqualTo("entry-3")
+        harness.viewModel.cancelHostBoundaryJobs()
+    }
 
-        harness.viewModel.scheduleHostQueueBoundary(
-            start = start,
-            boundary = boundary,
-            sampleRate = 1_000,
-            dispatcher = Dispatchers.Main,
-            elapsedRealtimeMs = { testScheduler.currentTime },
-        )
+    @Test
+    fun aBoundaryIsNotAppliedAfterStopCancelsThePoller() = runTest(dispatcher) {
+        val (harness, schedule) = startedHost()
+        schedule.schedule("entry-2", 100uL, "Second track")
+        harness.runPoller(this)
         runCurrent()
         harness.viewModel.cancelHostBoundaryJobs()
         advanceUntilIdle()
 
         assertThat(harness.hostCoreController.trackBoundaryAppliedCalls).isEmpty()
+        assertThat(harness.viewModel.hostPlayback.boundaryPoller).isNull()
+    }
+
+    @Test
+    fun aRustScheduleFailureIsShownAndStopsThePoller() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        val failing = object : FakeHostBoundarySchedule(100uL, 1_000u) {
+            override fun takeDue(nowMs: ULong, pauseOffsetMs: ULong): List<FfiHostBoundary> =
+                throw FfiHostPlaylistException.Closed("host boundary schedule is poisoned")
+        }
+        harness.boundarySchedules.next = failing
+        harness.viewModel.hostPlayback.openBoundarySchedule(100uL, 1_000u)
+        harness.runPoller(this)
+        advanceUntilIdle()
+
+        assertThat(harness.viewModel.uiState.value.lastError).isEqualTo("host boundary schedule is poisoned")
+        assertThat(harness.viewModel.hostPlayback.boundaryPoller?.isActive ?: false).isFalse()
+    }
+
+    @Test
+    fun aPollerForAStreamWithoutAScheduleEndsAndTheNextStreamStartsAFreshOne() = runTest(dispatcher) {
+        val harness = newTestMainViewModelHarness()
+        harness.runPoller(this)
+        advanceUntilIdle()
+        assertThat(harness.viewModel.hostPlayback.boundaryPoller?.isActive ?: false).isFalse()
+
+        harness.viewModel.hostPlayback.openBoundarySchedule(0uL, 1_000u)
+        harness.boundarySchedules.latest.schedule("entry-2", 10uL, "Second")
+        harness.runPoller(this)
+        advanceTimeBy(10L)
+        runCurrent()
+        assertThat(harness.hostCoreController.trackBoundaryAppliedCalls).containsExactly("entry-2" to 10L)
+        harness.viewModel.cancelHostBoundaryJobs()
     }
 }

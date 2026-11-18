@@ -47,6 +47,8 @@ class MainViewModelHarness(
     val wifiDirectService: FakeSessionTransport,
     val mdnsService: FakeMdnsTransport,
     val listenerTransport: FakeListenerTransport,
+    /** The host boundary schedules the view model opened, one per stream. */
+    val boundarySchedules: FakeHostBoundaryScheduleFactory = FakeHostBoundaryScheduleFactory(),
 )
 
 /**
@@ -99,6 +101,7 @@ fun newTestMainViewModelHarness(
     val wifiDirectService = FakeSessionTransport()
     val mdnsService = FakeMdnsTransport()
     val listenerTransport = FakeListenerTransport()
+    val boundarySchedules = FakeHostBoundaryScheduleFactory()
     val viewModel = MainViewModel(
         application = fakeApplication(),
         domainStore = domainStore,
@@ -112,6 +115,7 @@ fun newTestMainViewModelHarness(
         hostElapsedRealtimeMs = hostElapsedRealtimeMs,
         hostStreamDispatcher = hostStreamDispatcher,
         closeHostMonitorOutput = closeHostMonitorOutput,
+        hostBoundaryScheduleFactory = boundarySchedules,
         // JVM tests cannot load Oboe; closing the controller must not call it.
         manualListenerController = ManualListenerTransportController(closeNativeOutput = {}),
     )
@@ -124,6 +128,7 @@ fun newTestMainViewModelHarness(
         wifiDirectService = wifiDirectService,
         mdnsService = mdnsService,
         listenerTransport = listenerTransport,
+        boundarySchedules = boundarySchedules,
     )
 }
 

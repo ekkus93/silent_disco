@@ -978,6 +978,7 @@ Each moved unchanged into its controller.
   - Listener side, `controller/ListenerTrackBoundaries.kt`: pending and applied boundaries, the timers, and the stream's host start time.
   - Host side, `controller/HostPlaybackController.kt`: `pendingBoundaries` and `boundaryJobs`, scheduled by `scheduleHostQueueBoundary` in `MainViewModelHostPlayback.kt`.
   - Kotlin decides when a boundary takes effect. Still unconfirmed: does it only drive the displayed track name and the host queue advance, or does it compete with boundary timing in the Rust scheduler? Check that before any move.
+  - **Host side moved to Rust 2026-11-18 (owner decision).** It drove the host queue advance and the announced track name, and did not compete with the listener's Rust scheduler. `HostPlaybackController` now holds the Rust `FfiHostBoundarySchedule` and one boundary poller; `pendingBoundaries`, `boundaryJobs` and `awaitHostQueueBoundary` are gone. The listener side (`ListenerTrackBoundaries.kt`) is unchanged and still logged here.
 - **T2, the pre-runtime sync exchange.**
   - Kotlin side: `MainViewModelSynchronization.kt` sends the probes. `controller/ListenerPlaybackController.kt` keeps the pre-runtime estimator, the same-session clock-lock handover and the probe IDs. `hostTimingService` answers demo sessions.
   - Rust already owns the estimate, so Kotlin only orchestrates.

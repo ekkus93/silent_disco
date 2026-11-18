@@ -1,6 +1,6 @@
 package com.ekkus.silentdisco.app.controller
 
-import com.ekkus.silentdisco.app.PendingHostTrackBoundary
+import com.ekkus.silentdisco.app.FakeHostBoundaryScheduleFactory
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.rust.HostPlaylistStreamController
@@ -34,10 +34,12 @@ class HostPlaybackControllerTest {
         dir.deleteRecursively()
     }
 
+    private val schedules = FakeHostBoundaryScheduleFactory()
+
     private fun TestScope.controller(): Pair<HostPlaybackController, CoroutineScope> {
         val parent = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         val staging = HostSourceStaging(cacheDir = { dir }, openInput = { null }, validate = { _, _ -> })
-        return HostPlaybackController(parent, staging) to parent
+        return HostPlaybackController(parent, staging, newBoundarySchedule = schedules) to parent
     }
 
     @Test
@@ -64,46 +66,50 @@ class HostPlaybackControllerTest {
     }
 
     @Test
-    fun aBoundaryTimerReplacesTheOneAtItsSampleAndForgetsItselfWhenDone() = runTest {
+    fun onlyOneBoundaryPollerRunsAndCancellingItForgetsIt() = runTest {
         val (playback, parent) = controller()
-        var replaced: Job? = null
-        playback.launchBoundaryTimer(960L, EmptyCoroutineContext) { replaced = coroutineContext[Job]; awaitCancellation() }
+        var started = 0
+        repeat(2) {
+            playback.ensureBoundaryPoller(EmptyCoroutineContext) { started += 1; awaitCancellation() }
+        }
         runCurrent()
+        assertThat(started).isEqualTo(1)
+        val poller = playback.boundaryPoller!!
 
-        playback.launchBoundaryTimer(960L, EmptyCoroutineContext) {}
+        playback.cancelBoundaryPoller()
         runCurrent()
-
-        assertThat(replaced!!.isCancelled).isTrue()
-        assertThat(playback.boundaryJobs).isEmpty()
+        assertThat(poller.isCancelled).isTrue()
+        assertThat(playback.boundaryPoller).isNull()
+        // A later stream can start a new one.
+        playback.ensureBoundaryPoller(EmptyCoroutineContext) { started += 1 }
+        runCurrent()
+        assertThat(started).isEqualTo(2)
         parent.cancel()
     }
 
     @Test
-    fun timersOfBoundariesNoListenerWillHearAreCancelledAndEarlierOnesKept() = runTest {
+    fun boundariesNoListenerWillHearAreWithdrawnFromTheRustScheduleAndEarlierOnesKept() = runTest {
         val (playback, parent) = controller()
-        listOf(480L, 960L, 1_440L).forEach { index ->
-            playback.launchBoundaryTimer(index, EmptyCoroutineContext) { awaitCancellation() }
-        }
-        runCurrent()
+        val schedule = playback.openBoundarySchedule(0uL, 48_000u)
+        listOf(480uL, 960uL, 1_440uL).forEach { index -> schedule.schedule("entry-$index", index, "Entry") }
 
-        playback.cancelBoundaryTimersFrom(960L)
-        assertThat(playback.boundaryJobs.keys).containsExactly(480L)
+        playback.withdrawBoundariesFrom(960L)
 
-        playback.cancelBoundaryTimers()
-        assertThat(playback.boundaryJobs).isEmpty()
+        assertThat(schedules.latest.withdrawCalls).containsExactly(960L)
+        assertThat(schedule.pending().map { it.firstSampleIndex }).containsExactly(480uL)
         parent.cancel()
     }
 
     @Test
     fun clearingTheStreamForgetsPendingBoundariesAndReleaseCancelsTheStream() = runTest {
         val (playback, parent) = controller()
-        playback.pendingBoundaries[960L] = PendingHostTrackBoundary("stream-1", 960L, "entry-2", "Second")
+        playback.openBoundarySchedule(0uL, 48_000u).schedule("entry-2", 960uL, "Second")
         var stream: Job? = null
         playback.launchStream(EmptyCoroutineContext) { stream = coroutineContext[Job]; awaitCancellation() }
         runCurrent()
 
         playback.clearStream()
-        assertThat(playback.pendingBoundaries).isEmpty()
+        assertThat(playback.boundarySchedule).isNull()
         assertThat(stream!!.isActive).isTrue()
 
         playback.close()
@@ -152,7 +158,8 @@ class HostPlaybackControllerTest {
     @Test
     fun preparingAStreamOpensItAndKeepsItsFormatAndFirstPacket() = runTest {
         val (playback, parent) = controller()
-        playback.pendingBoundaries[960L] = PendingHostTrackBoundary("old", 960L, "entry-0", "Old")
+        val old = playback.openBoundarySchedule(0uL, 48_000u)
+        old.schedule("entry-0", 960uL, "Old")
         val streamer = HostPlaylistStreamController(ScriptedStreamer(listOf(audio())))
 
         val prepared = playback.prepareStream(session, stream) { streamer }
@@ -164,7 +171,13 @@ class HostPlaybackControllerTest {
         assertThat(playback.streamer).isSameInstanceAs(streamer)
         assertThat(playback.streamStart?.currentEntryId).isEqualTo("entry-1")
         assertThat(playback.latestPackets).containsExactly(prepared.firstPacket)
-        assertThat(playback.pendingBoundaries).isEmpty()
+        // A fresh schedule from the new stream's own start and rate.
+        val fresh = schedules.latest
+        assertThat(playback.boundarySchedule).isSameInstanceAs(fresh)
+        assertThat(fresh).isNotSameInstanceAs(old)
+        assertThat(fresh.hostStartTimeMs).isEqualTo(500uL)
+        assertThat(fresh.sampleRate).isEqualTo(48_000u)
+        assertThat(fresh.pending()).isEmpty()
         parent.cancel()
     }
 

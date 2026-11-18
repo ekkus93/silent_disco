@@ -11,6 +11,8 @@ import com.ekkus.silentdisco.core.protocol.AudioPacket
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.rust.HostPlaylistStreamController
 import com.ekkus.silentdisco.core.transport.SendAllResult
+import com.ekkus.silentdisco.core.uniffi.FfiHostBoundary
+import com.ekkus.silentdisco.core.uniffi.FfiHostPlaylistException
 import com.ekkus.silentdisco.core.uniffi.FfiHostTransportDelivery
 import com.ekkus.silentdisco.core.uniffi.FfiPlaylistFrame
 import com.ekkus.silentdisco.core.uniffi.FfiPlaylistStreamStart
@@ -19,7 +21,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.math.min
 
 /** A missing delivery (transport not yet bound) reports as zero peers reached. */
 internal fun FfiHostTransportDelivery?.toSendAllResult(): SendAllResult = SendAllResult(
@@ -56,11 +57,10 @@ private fun MainViewModel.hostStreamEnvironment() = object : HostStreamEnvironme
         broadcastHostStreamStart(streamId, start)
     override suspend fun broadcastTrackBoundary(streamId: StreamId, boundary: FfiPlaylistFrame.TrackBoundary) =
         broadcastHostTrackBoundary(streamId, boundary)
-    override fun scheduleBoundary(
-        start: FfiPlaylistStreamStart,
-        boundary: FfiPlaylistFrame.TrackBoundary,
-        sampleRate: Int,
-    ) = scheduleHostQueueBoundary(start, boundary, sampleRate, hostStreamDispatcher, hostElapsedRealtimeMs)
+    override fun boundaryScheduled() {
+        diagnostics.metrics.increment("track_boundary_scheduled")
+        runHostBoundaryPoller(hostStreamDispatcher, hostElapsedRealtimeMs)
+    }
     override fun engineFailed(error: Throwable) = handleHostPlaybackEngineFailure(error)
     override fun reportPlaybackFailure(message: String) = reportRustHostPlaybackFailure(message)
     override fun reportCommandFailure(action: String, error: Throwable) = reportRustHostCommandFailure(action, error)
@@ -144,74 +144,59 @@ private suspend fun MainViewModel.broadcastHostTrackBoundary(
     }
 }
 
-internal fun MainViewModel.scheduleHostQueueBoundary(
-    start: FfiPlaylistStreamStart,
-    boundary: FfiPlaylistFrame.TrackBoundary,
-    sampleRate: Int,
+/**
+ * Applies the running stream's due track boundaries to the host queue. The
+ * Rust schedule ([HostPlaybackController.boundarySchedule], shared with the
+ * desktop host) decides which boundaries are due; this supplies the host clock
+ * and the pause offset the stream loop applied to the audio, so a boundary
+ * moves by exactly what the audio moved, and asks nothing while a pause is
+ * being applied (gapless TODO §4, §5). One poller runs per stream; it re-reads
+ * the schedule each turn and ends when the stream has none.
+ */
+internal fun MainViewModel.runHostBoundaryPoller(
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
     elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
-    wait: suspend (Long) -> Unit = { delay(min(it, PAUSE_POLL_INTERVAL_MS)) },
+    wait: suspend (Long) -> Unit = { delay(it) },
 ) {
-    diagnostics.metrics.increment("track_boundary_scheduled")
-    // [start] already carries the pause offset applied when this boundary
-    // was scheduled; later pauses add what the stream loop applies after it.
-    val offsetAtSchedule = hostPlayback.presentationOffsetMs
-    hostPlayback.launchBoundaryTimer(boundary.firstSampleIndex.toLong(), dispatcher) {
-        val dueAtMs = start.hostStartTimeMs.toLong() +
-            boundary.firstSampleIndex.toLong() * 1_000L / sampleRate
-        awaitHostQueueBoundary(
-            dueAtElapsedRealtimeMs = dueAtMs,
-            isPaused = {
-                _uiState.value.hostPlaybackState == PlaybackState.PAUSED || hostPlayback.pauseInProgress
-            },
-            pauseOffsetMs = { hostPlayback.presentationOffsetMs - offsetAtSchedule },
-            elapsedRealtimeMs = elapsedRealtimeMs,
-            wait = wait,
-        )
-        if (!isActive) return@launchBoundaryTimer
-        runCatching {
-            ensureRustHostCore().trackBoundaryApplied(boundary.entryId, boundary.firstSampleIndex.toLong())
-        }.onSuccess {
-            hostPlayback.pendingBoundaries.remove(boundary.firstSampleIndex.toLong())
-            hostPlayback.streamStart = hostPlayback.streamStart?.copy(
-                currentEntryId = boundary.entryId,
-                currentDisplayName = boundary.displayName,
-            )
-            diagnostics.metrics.increment("track_boundary_applied")
-            diagnostics.updateHost { it.copy(metricsSummary = summarizeMetrics()) }
-            refreshHostDiagnostics()
-        }.onFailure { error -> reportRustHostCommandFailure("advance playlist", error) }
-    }
-}
-
-/**
- * Waits until a host queue boundary is due and returns its deadline. The
- * deadline is [dueAtElapsedRealtimeMs] shifted by [pauseOffsetMs], the pause
- * offset the stream loop has applied to the audio since the boundary was
- * scheduled: the timer does not measure pauses itself, so a boundary moves by
- * exactly what the audio moved (gapless TODO §4; two separate 20 ms pause
- * polls let them drift apart by up to a poll interval per pause). It waits
- * while [isPaused].
- */
-internal suspend fun awaitHostQueueBoundary(
-    dueAtElapsedRealtimeMs: Long,
-    isPaused: () -> Boolean,
-    pauseOffsetMs: () -> Long,
-    elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
-    wait: suspend (Long) -> Unit = { delay(min(it, PAUSE_POLL_INTERVAL_MS)) },
-): Long {
-    while (true) {
-        if (isPaused()) {
-            wait(PAUSE_POLL_INTERVAL_MS)
-            continue
+    hostPlayback.ensureBoundaryPoller(dispatcher) {
+        while (isActive) {
+            val schedule = hostPlayback.boundarySchedule ?: return@ensureBoundaryPoller
+            if (_uiState.value.hostPlaybackState == PlaybackState.PAUSED || hostPlayback.pauseInProgress) {
+                wait(PAUSE_POLL_INTERVAL_MS)
+                continue
+            }
+            val pauseOffsetMs = hostPlayback.presentationOffsetMs.toULong()
+            val (due, nextDueAtMs) = try {
+                schedule.takeDue(elapsedRealtimeMs().toULong(), pauseOffsetMs) to
+                    schedule.nextDueAtMs(pauseOffsetMs)
+            } catch (error: FfiHostPlaylistException) {
+                reportRustHostCommandFailure("advance playlist", error)
+                return@ensureBoundaryPoller
+            }
+            for (boundary in due) {
+                if (!isActive) return@ensureBoundaryPoller
+                applyHostQueueBoundary(boundary)
+            }
+            val untilNextMs = nextDueAtMs?.let { it.toLong() - elapsedRealtimeMs() } ?: PAUSE_POLL_INTERVAL_MS
+            wait(untilNextMs.coerceIn(1L, PAUSE_POLL_INTERVAL_MS))
         }
-        val dueAtMs = dueAtElapsedRealtimeMs + pauseOffsetMs()
-        val remainingMs = dueAtMs - elapsedRealtimeMs()
-        if (remainingMs <= 0L) return dueAtMs
-        wait(min(remainingMs, PAUSE_POLL_INTERVAL_MS))
     }
 }
 
-internal fun MainViewModel.cancelHostBoundaryJobs() = hostPlayback.cancelBoundaryTimers()
+private fun MainViewModel.applyHostQueueBoundary(boundary: FfiHostBoundary) {
+    runCatching {
+        ensureRustHostCore().trackBoundaryApplied(boundary.entryId, boundary.firstSampleIndex.toLong())
+    }.onSuccess {
+        hostPlayback.streamStart = hostPlayback.streamStart?.copy(
+            currentEntryId = boundary.entryId,
+            currentDisplayName = boundary.displayName,
+        )
+        diagnostics.metrics.increment("track_boundary_applied")
+        diagnostics.updateHost { it.copy(metricsSummary = summarizeMetrics()) }
+        refreshHostDiagnostics()
+    }.onFailure { error -> reportRustHostCommandFailure("advance playlist", error) }
+}
+
+internal fun MainViewModel.cancelHostBoundaryJobs() = hostPlayback.cancelBoundaryPoller()
 
 private const val PAUSE_POLL_INTERVAL_MS = 20L

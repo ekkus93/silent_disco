@@ -1,7 +1,6 @@
 package com.ekkus.silentdisco.app.controller
 
 import com.ekkus.silentdisco.app.HostQueueItem
-import com.ekkus.silentdisco.app.PendingHostTrackBoundary
 import com.ekkus.silentdisco.app.awaitHostPacketPresentationTail
 import com.ekkus.silentdisco.app.toSendAllResult
 import com.ekkus.silentdisco.core.audio.AudioFormatSpec
@@ -40,8 +39,11 @@ internal interface HostStreamEnvironment {
     /** Sends a boundary to every listener; throws when any connected listener missed it. */
     suspend fun broadcastTrackBoundary(streamId: StreamId, boundary: FfiPlaylistFrame.TrackBoundary)
 
-    /** Starts the timer that advances the host queue at [boundary]. */
-    fun scheduleBoundary(start: FfiPlaylistStreamStart, boundary: FfiPlaylistFrame.TrackBoundary, sampleRate: Int)
+    /**
+     * A boundary was added to [HostPlaybackController.boundarySchedule]:
+     * make sure the poller that applies due boundaries to the host queue runs.
+     */
+    fun boundaryScheduled()
 
     fun engineFailed(error: Throwable)
     fun reportPlaybackFailure(message: String)
@@ -139,19 +141,17 @@ internal class HostStreamLoop(
                     )
                     playback.streamStart = resumedStart
                     env.broadcastStreamStart(streamId, resumedStart)
-                    playback.pendingBoundaries.values
-                        .sortedBy(PendingHostTrackBoundary::firstSampleIndex)
-                        .forEach { pending ->
-                            env.broadcastTrackBoundary(
-                                streamId,
-                                FfiPlaylistFrame.TrackBoundary(
-                                    streamId = pending.streamId,
-                                    firstSampleIndex = pending.firstSampleIndex.toULong(),
-                                    entryId = pending.entryId,
-                                    displayName = pending.displayName,
-                                ),
-                            )
-                        }
+                    playback.boundarySchedule?.pending().orEmpty().forEach { pending ->
+                        env.broadcastTrackBoundary(
+                            streamId,
+                            FfiPlaylistFrame.TrackBoundary(
+                                streamId = streamId.value,
+                                firstSampleIndex = pending.firstSampleIndex,
+                                entryId = pending.entryId,
+                                displayName = pending.displayName,
+                            ),
+                        )
+                    }
                 }
                 if (env.playbackState in setOf(PlaybackState.STOPPED, PlaybackState.ERROR)) {
                     return
@@ -175,24 +175,13 @@ internal class HostStreamLoop(
                                     frame.firstSampleIndex.toLong(),
                                 )
                             }
-                            playback.pendingBoundaries[frame.firstSampleIndex.toLong()] =
-                                PendingHostTrackBoundary(
-                                    streamId = frame.streamId,
-                                    firstSampleIndex = frame.firstSampleIndex.toLong(),
-                                    entryId = frame.entryId,
-                                    displayName = frame.displayName,
-                                )
+                            // Rust refuses a boundary out of sample order;
+                            // that failure stops the stream visibly.
+                            val schedule = playback.boundarySchedule
+                                ?: error("No boundary schedule for the running stream")
+                            schedule.schedule(frame.entryId, frame.firstSampleIndex, frame.displayName)
                             env.broadcastTrackBoundary(streamId, frame)
-                            env.scheduleBoundary(
-                                // New boundaries must share the pause-adjusted
-                                // clock of boundaries scheduled before Resume.
-                                start.copy(
-                                    hostStartTimeMs = start.hostStartTimeMs +
-                                        presentationOffsetMs.toULong(),
-                                ),
-                                frame,
-                                format.sampleRate,
-                            )
+                            env.boundaryScheduled()
                             continue
                         }
                         is FfiPlaylistFrame.Audio -> packet = AudioPacket(
@@ -341,9 +330,16 @@ internal class HostStreamLoop(
             // track no listener will hear. Cancel it before waiting out the
             // tail: its deadline equals the tail's end, and the host queue
             // must not advance to it on whichever timer happens to win.
-            playback.cancelBoundaryTimersFrom(
-                lastPacket?.let { it.firstSampleIndex + it.samplesPerPacket } ?: 0L,
-            )
+            try {
+                playback.withdrawBoundariesFrom(
+                    lastPacket?.let { it.firstSampleIndex + it.samplesPerPacket } ?: 0L,
+                )
+            } catch (withdrawFailure: Throwable) {
+                // Without the withdrawal the poller could still advance the
+                // queue to an unheard track: stop applying boundaries at all.
+                playback.cancelBoundaryPoller()
+                error.addSuppressed(withdrawFailure)
+            }
             lastPacket?.let { sentPacket ->
                 awaitHostPacketPresentationTail(
                     sentPacket.hostPresentationTimeMs,
@@ -354,7 +350,7 @@ internal class HostStreamLoop(
             }
             env.engineFailed(error)
         } finally {
-            playback.cancelBoundaryTimers()
+            playback.cancelBoundaryPoller()
             if (playback.streamer === streamer) {
                 playback.clearStream()
             }

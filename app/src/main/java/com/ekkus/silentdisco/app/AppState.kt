@@ -109,13 +109,6 @@ internal data class PendingListenerTrackBoundary(
     val displayName: String,
 )
 
-internal data class PendingHostTrackBoundary(
-    val streamId: String,
-    val firstSampleIndex: Long,
-    val entryId: String,
-    val displayName: String,
-)
-
 fun AppUiState.permissionSummary(): String {
     if (permissions.isEmpty()) return "Permissions not checked"
     val granted = permissions.count { it.granted }
