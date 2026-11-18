@@ -1,6 +1,7 @@
 package com.ekkus.silentdisco.app
 
 import com.ekkus.silentdisco.core.uniffi.FfiHostBoundarySchedule
+import com.ekkus.silentdisco.core.uniffi.FfiListenerBoundarySchedule
 import android.app.Application
 import android.net.Uri
 import android.os.SystemClock
@@ -103,6 +104,10 @@ class MainViewModel @JvmOverloads constructor(
      * fake; the rule itself is tested in Rust and on the device.
      */
     internal val hostBoundaryScheduleFactory: (ULong, UInt) -> FfiHostBoundarySchedule = ::FfiHostBoundarySchedule,
+    /** Opens the Rust listener boundary schedule; JVM tests inject a fake, as for the host. */
+    internal val listenerBoundaryScheduleFactory: () -> FfiListenerBoundarySchedule = { FfiListenerBoundarySchedule() },
+    /** The listener's monotonic clock for track-boundary presentation; JVM tests drive it with virtual time. */
+    internal val listenerElapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
     /** The manual (desktop) listener connection; injectable for JVM tests. */
     internal val manualListenerController: ManualListenerTransportController =
         ManualListenerTransportController(
@@ -183,6 +188,8 @@ class MainViewModel @JvmOverloads constructor(
             parentScope = viewModelScope,
             attachOutput = listenerTransportController::attachPlayback,
             detachOutput = listenerTransportController::detachPlayback,
+            newBoundarySchedule = listenerBoundaryScheduleFactory,
+            boundaryClockMs = listenerElapsedRealtimeMs,
         ),
     )
 

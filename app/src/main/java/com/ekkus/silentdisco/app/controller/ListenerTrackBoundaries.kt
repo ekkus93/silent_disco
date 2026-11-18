@@ -1,18 +1,17 @@
 package com.ekkus.silentdisco.app.controller
 
 import android.os.SystemClock
-import com.ekkus.silentdisco.app.PendingListenerTrackBoundary
-import com.ekkus.silentdisco.app.listenerBoundaryHostTimeMs
-import com.ekkus.silentdisco.app.listenerBoundaryLocalTimeMs
-import java.util.SortedMap
+import com.ekkus.silentdisco.core.uniffi.FfiListenerBoundary
+import com.ekkus.silentdisco.core.uniffi.FfiListenerBoundarySchedule
+import com.ekkus.silentdisco.core.uniffi.FfiListenerBoundaryWithdrawal
+import kotlin.math.ceil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-private const val MAX_APPLIED_LISTENER_TRACK_BOUNDARIES = 100
-
-/** What the boundary timers read from the listener's current state. */
+/** What the boundary poller reads from the listener's current state. */
 internal interface ListenerBoundaryContext {
     /** True while the host has the stream paused; no boundary is presented then. */
     val paused: Boolean
@@ -20,112 +19,109 @@ internal interface ListenerBoundaryContext {
     /** The host-to-local clock offset, or null while sync is still unknown. */
     val hostOffsetMs: Double?
 
-    /** The stream the listener is following now. */
-    val currentStreamId: String?
-
-    /** A timer was set for a boundary. */
+    /** The poller started waiting for a boundary. */
     fun onScheduled()
 
     /** A boundary reached its presentation time: show its track. */
-    fun onApplied(boundary: PendingListenerTrackBoundary)
+    fun onApplied(boundary: FfiListenerBoundary)
+
+    /** The Rust schedule failed; the track shown may now be wrong. */
+    fun onFailed(error: Throwable)
 }
 
 /**
  * Track boundaries of the stream the listener is playing (God-file refactor
- * spec §4, ListenerPlayback). Each boundary waits as pending until its
- * presentation time, mapped onto the local clock, then is applied so the
- * screen shows its track. This is Kotlin timing state (spec A.4 T1), logged
- * for a later move into Rust.
+ * spec §4, ListenerPlayback). When a boundary is presented, mapped from host
+ * time onto the local clock, is decided by the Rust schedule
+ * ([FfiListenerBoundarySchedule], owner decision 2026-11-18; formerly Kotlin
+ * timing state, spec A.4 T1). This keeps only the clock and one poller.
+ *
+ * Transport events arrive on an IO thread and the poller runs on [scope], so
+ * every change that can make a boundary due restarts the poller through
+ * [poll]: the new poller sees the change, and no poller decides to stop just
+ * as a change lands.
  */
 internal class ListenerTrackBoundaries(
     private val scope: CoroutineScope,
     private val elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
+    newSchedule: () -> FfiListenerBoundarySchedule = { FfiListenerBoundarySchedule() },
 ) {
-    /** Host start time of the current stream, which boundary sample indexes count from. */
-    var streamHostStartTimeMs: Long? = null
+    val schedule: FfiListenerBoundarySchedule = newSchedule()
 
-    val pending = linkedMapOf<Long, PendingListenerTrackBoundary>()
+    private var poller: Job? = null
+
+    /** The running poller, if any; for tests and diagnostics. */
+    val activePoller: Job? @Synchronized get() = poller?.takeIf { it.isActive }
+
+    /** The current stream's host start time; null before a start and after Stop. */
+    val streamHostStartTimeMs: Long? get() = schedule.hostStartTimeMs()?.toLong()
+
+    /** The boundaries waiting, by first sample index. */
+    val pending: List<FfiListenerBoundary> get() = schedule.pending()
 
     /**
-     * Boundaries presented since the last StreamStart, and the track that
-     * StreamStart announced. A host Pause undoes any presented past its pause
-     * instant: a replayed paused stream carries its pre-pause anchor, so its
-     * upcoming boundary otherwise looks overdue before the Pause arrives.
+     * A StreamStart. Returns whether Rust counts it as resuming the stream
+     * already followed, which keeps that stream's pending boundaries.
      */
-    val applied: SortedMap<Long, PendingListenerTrackBoundary> = sortedMapOf()
-    private var streamStartTrackName: String? = null
-
-    val timers = mutableMapOf<Long, Job>()
-
-    /** A StreamStart: a new stream drops the old stream's pending boundaries; a resumed one keeps them. */
-    fun onStreamStarted(hostStartTimeMs: Long, startTrackName: String?, sameStream: Boolean) {
-        streamHostStartTimeMs = hostStartTimeMs
-        streamStartTrackName = startTrackName
-        applied.clear()
-        if (!sameStream) pending.clear()
-    }
+    fun onStreamStarted(streamId: String, hostStartTimeMs: Long, startTrackName: String?): Boolean =
+        schedule.streamStarted(streamId, hostStartTimeMs.toULong(), startTrackName)
 
     fun onStreamStopped() {
-        streamHostStartTimeMs = null
-        pending.clear()
-        applied.clear()
-        streamStartTrackName = null
-        cancelTimers()
+        stopPolling()
+        schedule.streamStopped()
     }
 
-    fun add(boundary: PendingListenerTrackBoundary) {
-        pending[boundary.firstSampleIndex] = boundary
+    /** The listener stopped following any stream (left or switched role). */
+    fun forgetStream() {
+        stopPolling()
+        schedule.forgetStream()
+    }
+
+    /** A boundary from the host; false when it belongs to another stream. */
+    fun add(streamId: String, firstSampleIndex: Long, displayName: String): Boolean =
+        schedule.add(streamId, firstSampleIndex.toULong(), displayName)
+
+    /** A host Pause: what it took back, or null when nothing was presented after it. */
+    fun onPaused(streamId: String, hostPauseTimeMs: Long): FfiListenerBoundaryWithdrawal? {
+        stopPolling()
+        return schedule.paused(streamId, hostPauseTimeMs.toULong())
+    }
+
+    @Synchronized
+    fun stopPolling() {
+        poller?.cancel()
+        poller = null
     }
 
     /**
-     * Returns boundaries presented after the host's pause instant to pending.
-     * Returns how many moved and the track playing at the pause, or null when
-     * none did. The host holds such boundaries across the pause and re-sends
-     * them, re-anchored, on resume.
+     * Restarts the poller after a change. It ends while paused or before
+     * sync, when nothing is pending, or on a Rust failure; the next change
+     * starts it again.
      */
-    fun withdrawAfter(hostPauseTimeMs: Long): Pair<Int, String?>? {
-        val hostStartMs = streamHostStartTimeMs ?: return null
-        val withdrawn = applied.filterKeys { sampleIndex ->
-            listenerBoundaryHostTimeMs(hostStartMs, sampleIndex) > hostPauseTimeMs
-        }
-        if (withdrawn.isEmpty()) return null
-        withdrawn.forEach { (sampleIndex, boundary) ->
-            applied.remove(sampleIndex)
-            pending[sampleIndex] = boundary
-        }
-        return withdrawn.size to (applied.values.lastOrNull()?.displayName ?: streamStartTrackName)
-    }
-
-    fun cancelTimers() {
-        timers.values.forEach { it.cancel() }
-        timers.clear()
-    }
-
-    fun reschedule(context: ListenerBoundaryContext) {
-        cancelTimers()
-        pending.keys.toList().forEach { schedule(it, context) }
-    }
-
-    fun schedule(sampleIndex: Long, context: ListenerBoundaryContext) {
-        if (context.paused) return
-        val offsetMs = context.hostOffsetMs ?: return
-        val boundary = pending[sampleIndex] ?: return
-        val hostStartMs = streamHostStartTimeMs ?: return
-        val boundaryLocalTimeMs = listenerBoundaryLocalTimeMs(hostStartMs, sampleIndex, offsetMs)
-        val waitMs = (boundaryLocalTimeMs - elapsedRealtimeMs()).coerceAtLeast(0.0).toLong()
-        timers.remove(sampleIndex)?.cancel()
-        context.onScheduled()
-        timers[sampleIndex] = scope.launch {
-            delay(waitMs)
-            if (context.currentStreamId != boundary.streamId) return@launch
-            if (context.paused) return@launch
-            pending.remove(sampleIndex)
-            timers.remove(sampleIndex)
-            applied[sampleIndex] = boundary
-            while (applied.size > MAX_APPLIED_LISTENER_TRACK_BOUNDARIES) {
-                applied.remove(applied.firstKey())
+    @Synchronized
+    fun poll(context: ListenerBoundaryContext) {
+        poller?.cancel()
+        poller = scope.launch {
+            var announced = false
+            while (isActive) {
+                if (context.paused) return@launch
+                val offsetMs = context.hostOffsetMs ?: return@launch
+                val nextDueMs = try {
+                    schedule.takeDue(elapsedRealtimeMs(), offsetMs).forEach { boundary ->
+                        if (!isActive) return@launch
+                        context.onApplied(boundary)
+                    }
+                    schedule.nextDueLocalMs(offsetMs)
+                } catch (error: com.ekkus.silentdisco.core.uniffi.FfiHostPlaylistException) {
+                    context.onFailed(error)
+                    return@launch
+                } ?: return@launch
+                if (!announced) {
+                    context.onScheduled()
+                    announced = true
+                }
+                delay(ceil(nextDueMs - elapsedRealtimeMs()).toLong().coerceAtLeast(1L))
             }
-            context.onApplied(boundary)
         }
     }
 }

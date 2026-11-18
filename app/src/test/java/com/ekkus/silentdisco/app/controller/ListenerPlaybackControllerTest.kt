@@ -1,5 +1,6 @@
 package com.ekkus.silentdisco.app.controller
 
+import com.ekkus.silentdisco.app.FakeListenerBoundarySchedule
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.rust.RustSyncEstimator
@@ -44,6 +45,7 @@ class ListenerPlaybackControllerTest {
 
     private fun controller() = ListenerPlaybackController(
         parentScope = parent,
+        newBoundarySchedule = { FakeListenerBoundarySchedule() },
         attachOutput = { events += "attach:${it.engineToken()}" },
         detachOutput = { events += "detach" },
         openOutput = { token ->

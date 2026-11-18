@@ -26,6 +26,7 @@ mod host_control;
 mod host_playlist;
 mod host_transport;
 mod legacy_v3;
+mod listener_boundary_schedule;
 mod listener_playback;
 mod listener_proof;
 mod listener_transport;
@@ -82,6 +83,9 @@ pub use host_playlist::{
 pub use host_transport::{
     FfiHostTransportCounters, FfiHostTransportDelivery, FfiHostTransportError,
     FfiHostTransportEvent, FfiHostTransportHandle,
+};
+pub use listener_boundary_schedule::{
+    FfiListenerBoundary, FfiListenerBoundarySchedule, FfiListenerBoundaryWithdrawal,
 };
 pub use listener_playback::{
     FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError,

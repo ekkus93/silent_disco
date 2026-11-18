@@ -1,5 +1,7 @@
 package com.ekkus.silentdisco.app.controller
 
+import android.os.SystemClock
+import com.ekkus.silentdisco.core.uniffi.FfiListenerBoundarySchedule
 import com.ekkus.silentdisco.core.audio.OboeBridge
 import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
@@ -101,6 +103,10 @@ internal class ListenerPlaybackController(
         },
     private val openEstimator: (maxSamples: Int) -> RustSyncEstimator =
         { RustCoreBridge.openSyncEstimator(maxSamples = it) },
+    /** The Rust listener boundary schedule; JVM tests, which cannot load Rust, inject a fake. */
+    newBoundarySchedule: () -> FfiListenerBoundarySchedule = { FfiListenerBoundarySchedule() },
+    /** The listener's monotonic clock for boundary presentation; JVM tests use virtual time. */
+    boundaryClockMs: () -> Long = SystemClock::elapsedRealtime,
 ) : ViewModelController(parentScope) {
     /** Start and stop run here, one at a time and in order. Keep it single-threaded. */
     val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
@@ -116,6 +122,12 @@ internal class ListenerPlaybackController(
 
     /** The stream the listener is following, from its StreamStarted on. */
     @Volatile var streamId: StreamId? = null
+        set(value) {
+            // Forgetting the stream must reach the Rust schedule too, or the
+            // next start of the same stream ID would count as a resume there.
+            if (value == null && field != null) boundaries.forgetStream()
+            field = value
+        }
 
     /** Session of [runtime], so its clock lock is only reused within that session. */
     private var runtimeSessionId: SessionId? = null
@@ -142,8 +154,8 @@ internal class ListenerPlaybackController(
     /** Monotonic probe ids, shared by the pre-runtime and runtime-owned paths. */
     private var nextSyncCorrelationId: Long = 1
 
-    /** Track boundaries of the stream being played; their timers run on this controller's scope. */
-    val boundaries = ListenerTrackBoundaries(scope)
+    /** Track boundaries of the stream being played; their poller runs on this controller's scope. */
+    val boundaries = ListenerTrackBoundaries(scope, boundaryClockMs, newBoundarySchedule)
 
     /** Mirrors the runtime's own accounting into the UI while a stream plays. */
     private var statusPoll: Job? = null

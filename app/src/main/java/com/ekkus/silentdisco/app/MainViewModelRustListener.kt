@@ -1,5 +1,8 @@
 package com.ekkus.silentdisco.app
 
+import com.ekkus.silentdisco.app.controller.ListenerTrackBoundaries
+import com.ekkus.silentdisco.core.uniffi.FfiHostPlaylistException
+import com.ekkus.silentdisco.core.uniffi.FfiListenerBoundary
 import com.ekkus.silentdisco.app.controller.ListenerBoundaryContext
 import com.ekkus.silentdisco.app.controller.ListenerSessionCallbacks
 import com.ekkus.silentdisco.core.model.ListenerLifecycleState
@@ -22,7 +25,6 @@ import com.ekkus.silentdisco.core.uniffi.FfiSyncConfidence
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiSessionAdvertisement
 
-private const val CANONICAL_STREAM_SAMPLE_RATE = 48_000L
 
 /** Protocol version advertised by this app's BLE and desktop-mDNS discovery layers. */
 internal const val LISTENER_DISCOVERY_PROTOCOL_VERSION: Int = 3
@@ -46,15 +48,6 @@ private val CONNECTED_OR_LATER = setOf(
 private val APPROVED_OR_LATER = setOf(
     ListenerLifecycleState.APPROVED,
 )
-
-internal fun listenerBoundaryHostTimeMs(hostStartTimeMs: Long, firstSampleIndex: Long): Double =
-    hostStartTimeMs + firstSampleIndex * 1_000.0 / CANONICAL_STREAM_SAMPLE_RATE
-
-internal fun listenerBoundaryLocalTimeMs(
-    hostStartTimeMs: Long,
-    firstSampleIndex: Long,
-    hostOffsetMs: Double,
-): Double = listenerBoundaryHostTimeMs(hostStartTimeMs, firstSampleIndex) - hostOffsetMs
 
 internal fun shouldReanchorListenerPlayback(
     resumeInPlace: Boolean,
@@ -186,10 +179,7 @@ internal fun MainViewModel.handleListenerTransportEvent(
         is FfiListenerTransportEvent.StreamStarted -> handleTransportStreamStarted(event)
         is FfiListenerTransportEvent.TrackBoundary -> handleTransportTrackBoundary(event)
         is FfiListenerTransportEvent.Paused -> {
-            listenerPlaybackController.boundaries.cancelTimers()
-            if (listenerPlaybackController.streamId?.value == event.streamId) {
-                withdrawListenerTrackBoundariesAfter(event.hostPauseTimeMs.toLong())
-            }
+            withdrawListenerTrackBoundariesAfter(event.streamId, event.hostPauseTimeMs.toLong())
             propagateListenerPlaybackState(
                 playbackState = PlaybackState.PAUSED,
                 listenerState = _uiState.value.listenerState,
@@ -214,11 +204,13 @@ private fun MainViewModel.handleTransportStreamStarted(event: FfiListenerTranspo
             announcedTrackName = event.currentDisplayName,
         ),
     )
-    listenerPlaybackController.boundaries.onStreamStarted(
-        hostStartTimeMs = event.hostStartTimeMs.toLong(),
-        startTrackName = _uiState.value.listenerCurrentTrackName,
-        sameStream = isSameStream,
-    )
+    withListenerBoundaries {
+        onStreamStarted(
+            streamId = event.streamId,
+            hostStartTimeMs = event.hostStartTimeMs.toLong(),
+            startTrackName = _uiState.value.listenerCurrentTrackName,
+        )
+    }
     val resumesRunningPlayback = isSameStream && listenerPlayback != null
     if (resumesRunningPlayback && _uiState.value.listenerPlaybackState == PlaybackState.PAUSED) {
         // The runtime is re-anchored in place, so it never re-reports its
@@ -264,7 +256,7 @@ internal fun MainViewModel.handleTransportStreamStopped(hostStopTimeMs: ULong) {
     // offset falsely marks an otherwise healthy listener DESYNCED. The next
     // StreamStart creates a new runtime and starts its own probe loop.
     listenerPlaybackController.cancelResync()
-    listenerPlaybackController.boundaries.onStreamStopped()
+    withListenerBoundaries { onStreamStopped() }
     // The session is still live: keep the native output open for the host's
     // next stream to rebind instead of reopening it (owner decision
     // 2026-11-18, as on the manual path).
@@ -289,17 +281,13 @@ internal fun MainViewModel.handleTransportStreamStopped(hostStopTimeMs: ULong) {
 private fun MainViewModel.handleTransportTrackBoundary(
     event: FfiListenerTransportEvent.TrackBoundary,
 ) {
-    if (listenerPlaybackController.streamId?.value != event.streamId) return
-    val sampleIndex = event.firstSampleIndex.toLong()
+    // Rust ignores a boundary of a stream the listener is not following.
+    val added = withListenerBoundaries {
+        add(event.streamId, event.firstSampleIndex.toLong(), event.displayName)
+    } ?: return
+    if (!added) return
     diagnostics.metrics.increment("track_boundary_received")
-    listenerPlaybackController.boundaries.add(
-        PendingListenerTrackBoundary(
-            streamId = event.streamId,
-            firstSampleIndex = sampleIndex,
-            displayName = event.displayName,
-        ),
-    )
-    listenerPlaybackController.boundaries.schedule(sampleIndex, listenerBoundaryContext)
+    rescheduleListenerTrackBoundaries()
 }
 
 /**
@@ -307,14 +295,34 @@ private fun MainViewModel.handleTransportTrackBoundary(
  * restores the track that was playing at that instant. The host holds such
  * boundaries across the pause and re-sends them, re-anchored, on resume.
  */
-private fun MainViewModel.withdrawListenerTrackBoundariesAfter(hostPauseTimeMs: Long) {
-    val (count, trackAtPause) = listenerPlaybackController.boundaries.withdrawAfter(hostPauseTimeMs) ?: return
-    diagnostics.metrics.increment("track_boundary_withdrawn", count.toLong())
-    _uiState.value = _uiState.value.copy(listenerCurrentTrackName = trackAtPause)
+private fun MainViewModel.withdrawListenerTrackBoundariesAfter(streamId: String, hostPauseTimeMs: Long) {
+    val withdrawal = withListenerBoundaries { onPaused(streamId, hostPauseTimeMs) } ?: return
+    diagnostics.metrics.increment("track_boundary_withdrawn", withdrawal.count.toLong())
+    _uiState.value = _uiState.value.copy(listenerCurrentTrackName = withdrawal.trackAtPause)
 }
 
 internal fun MainViewModel.rescheduleListenerTrackBoundaries() =
-    listenerPlaybackController.boundaries.reschedule(listenerBoundaryContext)
+    listenerPlaybackController.boundaries.poll(listenerBoundaryContext)
+
+/**
+ * Runs [block] on the Rust boundary schedule. A refused or failed call is
+ * shown, not dropped: the track name the listener sees may be wrong after it.
+ * Returns null on failure.
+ */
+private fun <T> MainViewModel.withListenerBoundaries(block: ListenerTrackBoundaries.() -> T): T? =
+    try {
+        listenerPlaybackController.boundaries.block()
+    } catch (error: FfiHostPlaylistException) {
+        reportListenerBoundaryFailure(error)
+        null
+    }
+
+private fun MainViewModel.reportListenerBoundaryFailure(error: Throwable) {
+    val message = "Track boundary tracking failed: ${error.message ?: "unknown error"}"
+    logger.e("listener.boundary", message, error)
+    diagnostics.metrics.increment("track_boundary_failed")
+    _uiState.value = _uiState.value.copy(lastError = message)
+}
 
 /** What the boundary timers read from, and report to, the listener's UI state. */
 private val MainViewModel.listenerBoundaryContext: ListenerBoundaryContext
@@ -325,12 +333,11 @@ private val MainViewModel.listenerBoundaryContext: ListenerBoundaryContext
             get() = _uiState.value.listenerSyncState
                 .takeIf { it.confidence != SyncQualityBadge.UNKNOWN }
                 ?.offsetMs
-        override val currentStreamId: String?
-            get() = listenerPlaybackController.streamId?.value
-
         override fun onScheduled() = diagnostics.metrics.increment("track_boundary_scheduled")
 
-        override fun onApplied(boundary: PendingListenerTrackBoundary) {
+        override fun onFailed(error: Throwable) = reportListenerBoundaryFailure(error)
+
+        override fun onApplied(boundary: FfiListenerBoundary) {
             _uiState.value = _uiState.value.copy(listenerCurrentTrackName = boundary.displayName)
             diagnostics.metrics.increment("track_boundary_applied")
             diagnostics.updateListener { it.copy(metricsSummary = summarizeMetrics()) }

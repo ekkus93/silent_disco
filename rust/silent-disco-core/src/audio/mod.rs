@@ -3,6 +3,7 @@ mod debug_recorder;
 mod decoder;
 mod host_boundary_schedule;
 mod jitter_buffer;
+mod listener_boundary_schedule;
 mod packetizer;
 // Block 44 failure-visibility tests intentionally sit beside the Drop lifecycle they exercise.
 #[cfg_attr(test, allow(clippy::items_after_test_module))]
@@ -31,6 +32,10 @@ pub use jitter_buffer::{
     JitterBufferConfigError, JitterBufferConfigErrorKind, JitterBufferRejection,
     JitterBufferRejectionKind, JitterBufferStatistics, MAX_BUFFERED_DURATION_LIMIT_MS,
     MAX_REORDER_WINDOW_LIMIT,
+};
+pub use listener_boundary_schedule::{
+    ListenerBoundary, ListenerBoundarySchedule, ListenerBoundaryScheduleError,
+    ListenerBoundaryWithdrawal, MAX_APPLIED_LISTENER_BOUNDARIES, MAX_PENDING_LISTENER_BOUNDARIES,
 };
 pub use packetizer::{
     DEFAULT_PACKET_DURATION_MS, MAX_PACKET_DURATION_MS, MIN_PACKET_DURATION_MS, PacketizeOutcome,

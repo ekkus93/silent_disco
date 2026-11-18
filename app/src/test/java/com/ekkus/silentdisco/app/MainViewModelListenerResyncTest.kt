@@ -129,10 +129,14 @@ class MainViewModelListenerResyncTest {
 
     @Test
     fun trackBoundaryPresentationWaitsForItsSampleTimeAndSurvivesPause() = runTest(dispatcher) {
-        val harness = newTestMainViewModelHarness()
+        val harness = newTestMainViewModelHarness(listenerElapsedRealtimeMs = { testScheduler.currentTime })
         val viewModel = harness.viewModel
         viewModel.listenerPlaybackController.streamId = StreamId("stream-1")
-        viewModel.listenerPlaybackController.boundaries.streamHostStartTimeMs = SystemClock.elapsedRealtime() + 1_000L
+        viewModel.listenerPlaybackController.boundaries.onStreamStarted(
+            "stream-1",
+            testScheduler.currentTime + 1_000L,
+            "First track",
+        )
         viewModel._uiState.value = viewModel._uiState.value.copy(
             listenerState = ListenerLifecycleState.PLAYING,
             listenerPlaybackState = PlaybackState.PAUSED,
@@ -151,7 +155,7 @@ class MainViewModelListenerResyncTest {
         )
         runCurrent()
         assertThat(viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("First track")
-        assertThat(viewModel.listenerPlaybackController.boundaries.pending).containsKey(0L)
+        assertThat(viewModel.listenerPlaybackController.boundaries.pending.map { it.firstSampleIndex }).containsExactly(0uL)
 
         viewModel._uiState.value = viewModel._uiState.value.copy(listenerPlaybackState = PlaybackState.PLAYING)
         viewModel.rescheduleListenerTrackBoundaries()
@@ -162,7 +166,7 @@ class MainViewModelListenerResyncTest {
         advanceTimeBy(1)
         runCurrent()
         assertThat(viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
-        assertThat(viewModel.listenerPlaybackController.boundaries.pending).doesNotContainKey(0L)
+        assertThat(viewModel.listenerPlaybackController.boundaries.pending).isEmpty()
     }
 
     @Test

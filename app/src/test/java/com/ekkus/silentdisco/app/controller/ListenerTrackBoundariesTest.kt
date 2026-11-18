@@ -1,135 +1,164 @@
 package com.ekkus.silentdisco.app.controller
 
-import com.ekkus.silentdisco.app.PendingListenerTrackBoundary
+import com.ekkus.silentdisco.app.FakeListenerBoundarySchedule
+import com.ekkus.silentdisco.core.uniffi.FfiHostPlaylistException
+import com.ekkus.silentdisco.core.uniffi.FfiListenerBoundary
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
+/**
+ * Kotlin's side of the listener's track boundaries: when it asks the Rust
+ * schedule, with which clock and offset, and what it does with the answer.
+ * When a boundary is due is Rust's rule, tested in
+ * `listener_boundary_schedule_tests.rs` and on the device.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ListenerTrackBoundariesTest {
     private val applied = mutableListOf<String>()
+    private val failures = mutableListOf<Throwable>()
+    private val schedule = FakeListenerBoundarySchedule()
 
     private inner class Context(
         override var paused: Boolean = false,
         override var hostOffsetMs: Double? = 0.0,
-        override var currentStreamId: String? = "stream-1",
     ) : ListenerBoundaryContext {
         var scheduled = 0
         override fun onScheduled() {
             scheduled += 1
         }
-        override fun onApplied(boundary: PendingListenerTrackBoundary) {
+        override fun onApplied(boundary: FfiListenerBoundary) {
             applied += boundary.displayName
+        }
+        override fun onFailed(error: Throwable) {
+            failures += error
         }
     }
 
-    /** 48 kHz: sample index 48_000 is one second after the stream's host start. */
-    private fun boundary(seconds: Long, name: String, stream: String = "stream-1") =
-        PendingListenerTrackBoundary(stream, firstSampleIndex = seconds * 48_000L, displayName = name)
+    private fun TestScope.tracker(on: FakeListenerBoundarySchedule = schedule) =
+        ListenerTrackBoundaries(this, elapsedRealtimeMs = { testScheduler.currentTime }, newSchedule = { on })
 
-    private fun TestScope.tracker() = ListenerTrackBoundaries(this, elapsedRealtimeMs = { testScheduler.currentTime })
+    /** 48 kHz: one second of samples. */
+    private val second = 48_000L
 
     @Test
-    fun aBoundaryIsAppliedAtItsLocalPresentationTime() = runTest {
+    fun aBoundaryIsPresentedWhenRustSaysAndThePollerPassesTheCurrentOffset() = runTest {
         val boundaries = tracker()
         val context = Context(hostOffsetMs = -500.0)
-        boundaries.onStreamStarted(hostStartTimeMs = 1_000L, startTrackName = "First", sameStream = false)
-        boundaries.add(boundary(seconds = 2, name = "Second"))
+        boundaries.onStreamStarted("stream-1", hostStartTimeMs = 1_000L, startTrackName = "First")
+        assertThat(boundaries.add("stream-1", 2 * second, "Second")).isTrue()
 
-        boundaries.schedule(96_000L, context)
+        boundaries.poll(context)
         // Host time 3_000 ms is local 3_500 ms with a -500 ms offset.
         advanceTimeBy(3_499L)
         runCurrent()
         assertThat(applied).isEmpty()
-        advanceTimeBy(2L)
+        advanceTimeBy(1L)
         runCurrent()
 
         assertThat(applied).containsExactly("Second")
         assertThat(boundaries.pending).isEmpty()
-        assertThat(boundaries.applied.keys).containsExactly(96_000L)
         assertThat(context.scheduled).isEqualTo(1)
+        assertThat(schedule.takeDueCalls.map { it.second }.toSet()).containsExactly(-500.0)
+        assertThat(schedule.takeDueCalls.all { (now, _) -> now <= testScheduler.currentTime }).isTrue()
+        advanceUntilIdle()
+        assertThat(boundaries.activePoller).isNull()
     }
 
     @Test
-    fun nothingIsScheduledWhilePausedOrBeforeSync() = runTest {
+    fun nothingIsAskedWhilePausedOrBeforeSync() = runTest {
         val boundaries = tracker()
-        boundaries.onStreamStarted(hostStartTimeMs = 0L, startTrackName = "First", sameStream = false)
-        boundaries.add(boundary(seconds = 1, name = "Second"))
+        boundaries.onStreamStarted("stream-1", hostStartTimeMs = 0L, startTrackName = "First")
+        boundaries.add("stream-1", second, "Second")
 
-        boundaries.schedule(48_000L, Context(paused = true))
-        boundaries.schedule(48_000L, Context(hostOffsetMs = null))
+        boundaries.poll(Context(paused = true))
+        boundaries.poll(Context(hostOffsetMs = null))
         advanceTimeBy(10_000L)
         runCurrent()
 
         assertThat(applied).isEmpty()
-        assertThat(boundaries.pending.keys).containsExactly(48_000L)
+        assertThat(schedule.takeDueCalls).isEmpty()
+        assertThat(boundaries.pending.map { it.firstSampleIndex.toLong() }).containsExactly(second)
+    }
+
+    /**
+     * Each change restarts the poller, so a pause or a new offset is seen by
+     * the next turn and never raced by a poller that has already decided.
+     */
+    @Test
+    fun aPauseStopsThePollerAndTheNextChangeRestartsItWithTheNewOffset() = runTest {
+        val boundaries = tracker()
+        val context = Context()
+        boundaries.onStreamStarted("stream-1", hostStartTimeMs = 0L, startTrackName = "First")
+        boundaries.add("stream-1", 2 * second, "Second")
+        boundaries.poll(context)
+        runCurrent()
+
+        assertThat(boundaries.onPaused("stream-1", hostPauseTimeMs = 1_000L)).isNull()
+        assertThat(boundaries.activePoller).isNull()
+        advanceTimeBy(5_000L)
+        runCurrent()
+        assertThat(applied).isEmpty()
+
+        context.hostOffsetMs = 250.0
+        boundaries.poll(context)
+        runCurrent()
+        // Due at host 2 000 = local 1 750, already past: presented at once.
+        assertThat(applied).containsExactly("Second")
+        assertThat(schedule.takeDueCalls.last().second).isEqualTo(250.0)
     }
 
     @Test
-    fun aBoundaryOfAnotherStreamOrOnePausedBeforeItsTimeIsNotApplied() = runTest {
+    fun overdueBoundariesArePresentedTogetherInOrder() = runTest {
         val boundaries = tracker()
-        val context = Context()
-        boundaries.onStreamStarted(hostStartTimeMs = 0L, startTrackName = "First", sameStream = false)
-        boundaries.add(boundary(seconds = 1, name = "Second"))
-        boundaries.schedule(48_000L, context)
-
-        context.paused = true
-        advanceTimeBy(2_000L)
-        runCurrent()
-
-        assertThat(applied).isEmpty()
-        assertThat(boundaries.pending.keys).containsExactly(48_000L)
-
-        context.paused = false
-        boundaries.reschedule(context)
-        context.currentStreamId = "stream-2"
-        advanceTimeBy(2_000L)
-        runCurrent()
-        assertThat(applied).isEmpty()
-    }
-
-    @Test
-    fun aPauseWithdrawsBoundariesPresentedAfterItAndRestoresTheTrackAtThePause() = runTest {
-        val boundaries = tracker()
-        val context = Context()
-        boundaries.onStreamStarted(hostStartTimeMs = 0L, startTrackName = "First", sameStream = false)
-        boundaries.add(boundary(seconds = 1, name = "Second"))
-        boundaries.add(boundary(seconds = 3, name = "Third"))
-        boundaries.reschedule(context)
-        advanceTimeBy(4_000L)
+        boundaries.onStreamStarted("stream-1", hostStartTimeMs = 0L, startTrackName = "First")
+        boundaries.add("stream-1", 2 * second, "Third")
+        boundaries.add("stream-1", second, "Second")
+        advanceTimeBy(5_000L)
+        boundaries.poll(Context())
         runCurrent()
         assertThat(applied).containsExactly("Second", "Third").inOrder()
-
-        assertThat(boundaries.withdrawAfter(hostPauseTimeMs = 2_000L)).isEqualTo(1 to "Second")
-        assertThat(boundaries.pending.keys).containsExactly(144_000L)
-
-        assertThat(boundaries.withdrawAfter(hostPauseTimeMs = 500L)).isEqualTo(1 to "First")
-        assertThat(boundaries.withdrawAfter(hostPauseTimeMs = 500L)).isNull()
     }
 
     @Test
-    fun aResumedStreamKeepsItsPendingBoundariesAndANewOneDropsThem() = runTest {
+    fun stopAndForgettingTheStreamEndThePollerAndReachTheSchedule() = runTest {
         val boundaries = tracker()
-        boundaries.onStreamStarted(hostStartTimeMs = 0L, startTrackName = "First", sameStream = false)
-        boundaries.add(boundary(seconds = 1, name = "Second"))
+        boundaries.onStreamStarted("stream-1", hostStartTimeMs = 0L, startTrackName = "First")
+        boundaries.add("stream-1", second, "Second")
+        boundaries.poll(Context())
+        runCurrent()
 
-        boundaries.onStreamStarted(hostStartTimeMs = 5_000L, startTrackName = "First", sameStream = true)
-        assertThat(boundaries.pending.keys).containsExactly(48_000L)
-
-        boundaries.onStreamStarted(hostStartTimeMs = 9_000L, startTrackName = "Other", sameStream = false)
-        assertThat(boundaries.pending).isEmpty()
-
-        boundaries.add(boundary(seconds = 1, name = "Next"))
-        boundaries.reschedule(Context())
         boundaries.onStreamStopped()
+        assertThat(boundaries.activePoller).isNull()
+        assertThat(boundaries.streamHostStartTimeMs).isNull()
         advanceTimeBy(20_000L)
         runCurrent()
         assertThat(applied).isEmpty()
-        assertThat(boundaries.streamHostStartTimeMs).isNull()
-        assertThat(boundaries.timers).isEmpty()
+
+        boundaries.forgetStream()
+        assertThat(schedule.forgetCalls).isEqualTo(1)
+        assertThat(boundaries.add("stream-1", second, "Second")).isFalse()
+    }
+
+    @Test
+    fun aRustScheduleFailureIsReportedAndEndsThePoller() = runTest {
+        val failing = object : FakeListenerBoundarySchedule() {
+            override fun takeDue(nowLocalMs: Long, hostOffsetMs: Double): List<FfiListenerBoundary> =
+                throw FfiHostPlaylistException.Closed("listener boundary schedule is poisoned")
+        }
+        val boundaries = tracker(failing)
+        boundaries.onStreamStarted("stream-1", hostStartTimeMs = 0L, startTrackName = "First")
+        boundaries.add("stream-1", second, "Second")
+        boundaries.poll(Context())
+        advanceUntilIdle()
+
+        assertThat(failures.single().message).isEqualTo("listener boundary schedule is poisoned")
+        assertThat(boundaries.activePoller).isNull()
+        assertThat(applied).isEmpty()
     }
 }

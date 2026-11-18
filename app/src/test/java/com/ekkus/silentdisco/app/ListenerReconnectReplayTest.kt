@@ -61,7 +61,7 @@ class ListenerReconnectReplayTest {
         fixture.deliver(FfiListenerTransportEvent.Paused(STREAM_ID, hostPauseTimeMs = 1_500uL))
 
         assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
-        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending.keys).containsExactly(FUTURE_SAMPLE)
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending.map { it.firstSampleIndex.toLong() }).containsExactly(FUTURE_SAMPLE)
         assertThat(fixture.viewModel._uiState.value.listenerPlaybackState).isEqualTo(PlaybackState.PAUSED)
     }
 
@@ -101,7 +101,7 @@ class ListenerReconnectReplayTest {
         fixture.deliver(boundary(LATER_SAMPLE, "Third track"))
 
         assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
-        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending.keys).containsExactly(LATER_SAMPLE)
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending.map { it.firstSampleIndex.toLong() }).containsExactly(LATER_SAMPLE)
 
         // Host 9 000 + 5 000 = 14 000 maps to local 4 000.
         advanceTimeBy(4_000L)
@@ -120,8 +120,8 @@ class ListenerReconnectReplayTest {
         fixture.deliver(boundary(LATER_SAMPLE, "Third track"))
 
         assertThat(fixture.viewModel._uiState.value.listenerCurrentTrackName).isEqualTo("Second track")
-        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending.keys).containsExactly(LATER_SAMPLE)
-        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.timers.keys).containsExactly(LATER_SAMPLE)
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.pending.map { it.firstSampleIndex.toLong() }).containsExactly(LATER_SAMPLE)
+        assertThat(fixture.viewModel.listenerPlaybackController.boundaries.activePoller).isNotNull()
 
         advanceTimeBy(3_999L)
         runCurrent()
@@ -154,7 +154,7 @@ class ListenerReconnectReplayTest {
     private fun TestScope.reconnectingListener(
         pendingBeforeDisconnect: FfiListenerTransportEvent.TrackBoundary?,
     ): ReplayFixture {
-        val harness = newTestMainViewModelHarness()
+        val harness = newTestMainViewModelHarness(listenerElapsedRealtimeMs = { testScheduler.currentTime })
         val viewModel = harness.viewModel
         viewModel.ensureRustListenerCore()
         val runtime = RecordingListenerPlayback()
@@ -175,9 +175,12 @@ class ListenerReconnectReplayTest {
             listenerSyncState = SyncState(offsetMs = HOST_OFFSET_MS, confidence = SyncQualityBadge.GOOD),
             listenerCurrentTrackName = "First track",
         )
+        // The schedule followed this stream before the drop, as the Rust
+        // schedule does from the stream's first StreamStart.
+        viewModel.listenerPlaybackController.boundaries.onStreamStarted(STREAM_ID, 0L, "First track")
         pendingBeforeDisconnect?.let { pending ->
             viewModel.listenerPlaybackController.boundaries.add(
-                PendingListenerTrackBoundary(pending.streamId, pending.firstSampleIndex.toLong(), pending.displayName),
+                pending.streamId, pending.firstSampleIndex.toLong(), pending.displayName,
             )
         }
         runCurrent()

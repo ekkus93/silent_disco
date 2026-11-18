@@ -49,6 +49,8 @@ class MainViewModelHarness(
     val listenerTransport: FakeListenerTransport,
     /** The host boundary schedules the view model opened, one per stream. */
     val boundarySchedules: FakeHostBoundaryScheduleFactory = FakeHostBoundaryScheduleFactory(),
+    /** The listener's boundary schedule. */
+    val listenerBoundaries: FakeListenerBoundarySchedule = FakeListenerBoundarySchedule(),
 )
 
 /**
@@ -93,6 +95,7 @@ fun newTestMainViewModelHarness(
     hostElapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
     hostStreamDispatcher: CoroutineDispatcher = Dispatchers.IO,
     closeHostMonitorOutput: () -> Unit = {},
+    listenerElapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
 ): MainViewModelHarness {
     val hostCoreController = FakeHostCoreController()
     val listenerCoreController = FakeListenerCoreController()
@@ -102,6 +105,7 @@ fun newTestMainViewModelHarness(
     val mdnsService = FakeMdnsTransport()
     val listenerTransport = FakeListenerTransport()
     val boundarySchedules = FakeHostBoundaryScheduleFactory()
+    val listenerBoundaries = FakeListenerBoundarySchedule()
     val viewModel = MainViewModel(
         application = fakeApplication(),
         domainStore = domainStore,
@@ -116,6 +120,8 @@ fun newTestMainViewModelHarness(
         hostStreamDispatcher = hostStreamDispatcher,
         closeHostMonitorOutput = closeHostMonitorOutput,
         hostBoundaryScheduleFactory = boundarySchedules,
+        listenerBoundaryScheduleFactory = { listenerBoundaries },
+        listenerElapsedRealtimeMs = listenerElapsedRealtimeMs,
         // JVM tests cannot load Oboe; closing the controller must not call it.
         manualListenerController = ManualListenerTransportController(closeNativeOutput = {}),
     )
@@ -129,6 +135,7 @@ fun newTestMainViewModelHarness(
         mdnsService = mdnsService,
         listenerTransport = listenerTransport,
         boundarySchedules = boundarySchedules,
+        listenerBoundaries = listenerBoundaries,
     )
 }
 
