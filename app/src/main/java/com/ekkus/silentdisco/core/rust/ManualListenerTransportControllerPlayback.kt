@@ -191,7 +191,14 @@ internal fun ManualListenerTransportController.handleStreamStarted(
     // second, which delayed the control traffic queued behind it (sync
     // responses were timestamped ~140ms late against a 7.7ms real round
     // trip) and is what drove the rebuffering heard as dropouts.
-    if (withManualHandle(handle) { it.attachPlayback(runtime); true } != true) {
+    val attached = withManualHandle(handle) {
+        it.attachPlayback(runtime)
+        // Recorded under the same gate as the attach, so a teardown never
+        // sees attached playback without its owning connection.
+        playbackOwnerRef.set(handle)
+        true
+    }
+    if (attached != true) {
         stopPlayback()
         return
     }
@@ -307,7 +314,10 @@ internal fun ManualListenerTransportController.endStream(
     // runtime that is shutting down. Every cleanup step is still attempted
     // if one fails; the first failure remains primary and later failures are
     // attached as suppressed exceptions.
-    capture { withCurrentManualHandle { it.detachPlayback() } }
+    // Through the connection that owns this stream: if a rebind already
+    // retired it, there is nothing to detach and the new session is untouched.
+    val owner = playbackOwnerRef.getAndSet(null)
+    if (owner != null) capture { withManualHandle(owner) { it.detachPlayback() } }
     // Order matters and is deliberate: `stop()` drains the render ring
     // *through the still-running Oboe callback* so the stream ends on its
     // own final sample rather than mid-note (see `await_ring_drain`, which

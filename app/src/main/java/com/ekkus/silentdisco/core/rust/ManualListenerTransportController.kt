@@ -129,6 +129,13 @@ class ManualListenerTransportController(
     internal var playbackRuntime: FfiListenerPlaybackHandle?
         get() = playbackRuntimeRef.get()
         set(value) = playbackRuntimeRef.set(value)
+    /**
+     * The connection the current stream's playback is attached to. Teardown
+     * detaches through this handle, never through whichever one is current,
+     * so an old session's teardown racing a rebind cannot detach the new
+     * session's playback (remediation §9).
+     */
+    internal val playbackOwnerRef = AtomicReference<FfiListenerTransportHandle?>(null)
     private val currentStreamIdRef = AtomicReference<StreamId?>(null)
     internal var currentStreamId: StreamId?
         get() = currentStreamIdRef.get()
