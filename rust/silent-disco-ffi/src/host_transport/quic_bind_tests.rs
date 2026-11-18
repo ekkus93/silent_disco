@@ -17,7 +17,7 @@ use silent_disco_core::transport::SECURE_V4_ENDPOINT_VERSION;
 /// 5 ms of 48 kHz stereo 16-bit PCM.
 const FRAMES: u32 = 240;
 
-fn host_spki() -> Vec<u8> {
+pub(super) fn host_spki() -> Vec<u8> {
     SigningKey::from_slice(&[61_u8; 32])
         .expect("fixture key")
         .verifying_key()
@@ -28,7 +28,7 @@ fn host_spki() -> Vec<u8> {
 }
 
 /// What a v4 host advertises: one port, protocol version 4.
-fn v4_payload(session: &str, port: u16) -> String {
+pub(super) fn v4_payload(session: &str, port: u16) -> String {
     endpoint_payload(session, port, port, port).replace(
         &format!(
             "\"protocolVersion\":{}",
@@ -46,7 +46,7 @@ fn free_udp_port() -> u16 {
         .port()
 }
 
-fn quic_host(session: &str) -> (std::sync::Arc<FfiHostTransportHandle>, u16) {
+pub(super) fn quic_host(session: &str) -> (std::sync::Arc<FfiHostTransportHandle>, u16) {
     let port = free_udp_port();
     let host = FfiHostTransportHandle::bind_quic_with_host_clock(
         "127.0.0.1".to_owned(),
@@ -59,7 +59,7 @@ fn quic_host(session: &str) -> (std::sync::Arc<FfiHostTransportHandle>, u16) {
     (host, port)
 }
 
-fn wait_host<T>(
+pub(super) fn wait_host<T>(
     host: &FfiHostTransportHandle,
     pick: impl Fn(FfiHostTransportEvent) -> Option<T>,
 ) -> T {
@@ -74,7 +74,7 @@ fn wait_host<T>(
     panic!("expected host event did not arrive");
 }
 
-fn wait_listener<T>(
+pub(super) fn wait_listener<T>(
     listener: &FfiListenerTransportHandle,
     pick: impl Fn(FfiListenerTransportEvent) -> Option<T>,
 ) -> T {

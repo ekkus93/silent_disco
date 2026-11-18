@@ -6,6 +6,8 @@ mod handle_tests;
 #[cfg(test)]
 mod quic_bind_tests;
 #[cfg(test)]
+mod quic_two_listener_tests;
+#[cfg(test)]
 mod secure_bind_tests;
 mod types;
 
