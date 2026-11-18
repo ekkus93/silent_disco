@@ -17,6 +17,7 @@ use silent_disco_core::transport::{
     ListenerTransportNode, TransportChannel, TransportErrorKind, TransportEvent,
 };
 use std::net::{TcpListener, UdpSocket};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// 100 ms of 44.1 kHz source resampled onto the 48 kHz network timeline.
@@ -297,6 +298,60 @@ fn playback_crosses_every_queued_boundary_and_ends_with_the_session_still_open()
     workflow.close();
 }
 
+/// The host's own queue advances to the next track when that track's first
+/// sample is due on the host clock, not when the boundary is sent ahead to
+/// listeners (gapless TODO §5; the deadline rule is the shared
+/// `HostBoundarySchedule`, which the Android host also uses).
+#[test]
+fn the_host_queue_advances_at_the_boundary_deadline_not_when_it_is_sent() {
+    let workflow = open_or_skip!();
+    let picked = workflow.pick(&[("first.wav", long_pcm_wav()), ("second.wav", pcm_wav())]);
+    workflow.add_songs(&picked).expect("queue two songs");
+    workflow.wait(|snapshot| snapshot.host_queue.entries().len() == 2);
+    let second = workflow.queue_ids()[1].clone();
+    let endpoint = workflow.create_session();
+    let mut listener = workflow.join_listener(endpoint);
+
+    let handle = workflow.handle.clone();
+    let network = Arc::clone(&workflow.network);
+    let next_entry = second.clone();
+    let advance_probe = std::thread::spawn(move || {
+        let deadline = Instant::now() + TEST_TIMEOUT;
+        loop {
+            let snapshot = handle.current_snapshot().expect("snapshot");
+            if snapshot
+                .host_queue
+                .current()
+                .is_some_and(|entry| entry.entry_id == next_entry)
+            {
+                return network.transport_now().expect("host clock").get();
+            }
+            assert!(Instant::now() < deadline, "the host queue never advanced");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    });
+    workflow
+        .state
+        .start_host_playback(&workflow.registry)
+        .expect("start the queue");
+    let stream = receive_until_stop(&mut *listener);
+    let advanced_at_ms = advance_probe.join().expect("advance probe");
+
+    assert_eq!(stream.boundaries, vec![(second, LONG_TRACK_SAMPLES)]);
+    let due_at_ms =
+        stream.start_time_ms.expect("stream start") + LONG_TRACK_SAMPLES * 1_000 / 48_000;
+    assert!(
+        advanced_at_ms >= due_at_ms,
+        "advanced at {advanced_at_ms}, before the boundary was due at {due_at_ms}"
+    );
+    assert!(
+        advanced_at_ms < due_at_ms + 1_000,
+        "advanced at {advanced_at_ms}, long after the boundary was due at {due_at_ms}"
+    );
+    listener.shutdown().expect("listener shutdown");
+    workflow.close();
+}
+
 #[test]
 fn a_late_source_failure_mid_queue_retains_the_failed_item_after_its_valid_audio() {
     let workflow = open_or_skip!();
@@ -526,6 +581,8 @@ struct ReceivedStream {
     audio: Vec<(u64, u64, u64)>,
     boundaries: Vec<(String, u64)>,
     start_entry: Option<String>,
+    /// The first `StreamStart`'s host start time, before any pause.
+    start_time_ms: Option<u64>,
     last_audio_end_ms: u64,
     stop_time_ms: u64,
 }
@@ -551,6 +608,7 @@ fn receive_until_stop(listener: &mut dyn ListenerTransportNode) -> ReceivedStrea
         audio: Vec::new(),
         boundaries: Vec::new(),
         start_entry: None,
+        start_time_ms: None,
         last_audio_end_ms: 0,
         stop_time_ms: 0,
     };
@@ -588,6 +646,9 @@ fn receive_until_stop(listener: &mut dyn ListenerTransportNode) -> ReceivedStrea
                     .push((boundary.entry_id, boundary.first_sample_index.get())),
                 ControlMessage::StreamStart(start) => {
                     stream.start_entry = start.current_entry_id;
+                    stream
+                        .start_time_ms
+                        .get_or_insert(start.host_start_time_ms.get());
                 }
                 ControlMessage::Stop(stop) => {
                     stream.stop_time_ms = stop.host_stop_time_ms.get();

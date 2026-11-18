@@ -1,6 +1,7 @@
 mod concealment;
 mod debug_recorder;
 mod decoder;
+mod host_boundary_schedule;
 mod jitter_buffer;
 mod packetizer;
 // Block 44 failure-visibility tests intentionally sit beside the Drop lifecycle they exercise.
@@ -21,6 +22,10 @@ pub use concealment::{
 };
 pub use debug_recorder::DebugPcmRecorder;
 pub use decoder::{DecodeStatisticsReader, StreamingDecodeHandle};
+pub use host_boundary_schedule::{
+    HostBoundarySchedule, HostBoundaryScheduleError, HostBoundaryScheduleErrorKind,
+    MAX_PENDING_HOST_BOUNDARIES, PendingHostBoundary,
+};
 pub use jitter_buffer::{
     DEFAULT_MAX_BUFFERED_DURATION_MS, DEFAULT_MAX_REORDER_WINDOW, JitterBuffer, JitterBufferConfig,
     JitterBufferConfigError, JitterBufferConfigErrorKind, JitterBufferRejection,

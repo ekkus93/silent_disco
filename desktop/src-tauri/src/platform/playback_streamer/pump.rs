@@ -64,7 +64,9 @@ fn run_pump(
     let authoritative_boundaries = packetizer.boundaries_already_reserved();
     let mut last_reported_position_ms: Option<u64> = None;
     let mut streaming_error: Option<DesktopErrorDto> = None;
-    let mut pending_boundaries: VecDeque<TrackBoundary> = VecDeque::new();
+    // The shared host boundary rule (gapless TODO §5): the Android host uses
+    // the same type through UniFFI.
+    let mut pending_boundaries = HostBoundarySchedule::at_canonical_rate(host_start_time_ms);
     let mut packetizer_disconnected = false;
     let mut last_audible_audio_end_ms = None;
     loop {
@@ -84,7 +86,6 @@ fn run_pump(
         };
         if let Err(error) = apply_due_boundaries(
             &mut pending_boundaries,
-            host_start_time_ms,
             accumulated_pause_offset_ms.load(Ordering::Acquire),
             now,
             handle,
@@ -122,7 +123,20 @@ fn run_pump(
                         streaming_error = Some(DesktopErrorDto::from(error));
                         break;
                     }
-                    pending_boundaries.push_back(boundary.clone());
+                    if let Err(error) = pending_boundaries.schedule(PendingHostBoundary {
+                        entry_id: boundary.entry_id.clone(),
+                        first_sample_index: boundary.first_sample_index.get(),
+                        display_name: boundary.display_name.clone(),
+                    }) {
+                        streaming_error = Some(DesktopErrorDto::new(
+                            "desktop.playback.boundary_schedule_failed",
+                            "audio",
+                            "error",
+                            false,
+                            &error.message,
+                        ));
+                        break;
+                    }
                 }
                 // Capture content progress before applying the pause offset.
                 // Do not report it until the network accepts the audio frame.
@@ -347,26 +361,16 @@ fn playback_failure(message: &str) -> CoreError {
 }
 
 fn apply_due_boundaries(
-    pending: &mut VecDeque<TrackBoundary>,
-    host_start_time_ms: u64,
+    pending: &mut HostBoundarySchedule,
     pause_offset_ms: u64,
     now_ms: u64,
     handle: &CoreActorHandle,
 ) -> Result<(), DesktopErrorDto> {
-    while pending.front().is_some_and(|boundary| {
-        let boundary_time_ms = host_start_time_ms
-            .saturating_add(
-                boundary.first_sample_index.get().saturating_mul(1_000)
-                    / u64::from(CANONICAL_SAMPLE_RATE_HZ),
-            )
-            .saturating_add(pause_offset_ms);
-        boundary_time_ms <= now_ms
-    }) {
-        let boundary = pending.pop_front().expect("front was present");
+    for boundary in pending.take_due(now_ms, pause_offset_ms) {
         handle
             .submit_audio_event(AudioEvent::TrackBoundaryApplied {
                 entry_id: boundary.entry_id,
-                first_sample_index: boundary.first_sample_index.get(),
+                first_sample_index: boundary.first_sample_index,
             })
             .map_err(DesktopErrorDto::from)?;
     }
@@ -552,6 +556,4 @@ fn wait_until_within_send_ahead_horizon_with_clock(
         thread::sleep(SEND_AHEAD_POLL_INTERVAL);
     }
 }
-use std::collections::VecDeque;
-
-use silent_disco_core::audio::CANONICAL_SAMPLE_RATE_HZ;
+use silent_disco_core::audio::{HostBoundarySchedule, PendingHostBoundary};

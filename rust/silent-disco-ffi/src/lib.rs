@@ -21,6 +21,7 @@ mod busy_join;
 mod callback_capture;
 #[cfg(test)]
 mod encoded_playlist_pcm_tests;
+mod host_boundary_schedule;
 mod host_control;
 mod host_playlist;
 mod host_transport;
@@ -64,6 +65,7 @@ use silent_disco_core::{CoreVersion, core_version, deterministic_smoke};
 pub use android_abi::{CORE_ABI_VERSION, silent_disco_core_abi_version};
 pub use audio_abi::AUDIO_ABI_VERSION;
 pub use audio_output::{FfiAudioOutputError, FfiAudioOutputHandle};
+pub use host_boundary_schedule::{FfiHostBoundary, FfiHostBoundarySchedule};
 pub use host_control::{
     FfiAppRole, FfiApprovalMode, FfiAudioSource, FfiBridgeError, FfiCommandReceipt,
     FfiCoreDiagnostic, FfiCoreError, FfiCoreHandle, FfiCoreNotification, FfiCoreObserver,

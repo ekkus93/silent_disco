@@ -90,6 +90,13 @@ impl HostWorkflow {
                 Arc::clone(&network),
             )
             .expect("open production profile");
+        if super::harness::device_test_allows_shared_address_space() {
+            // The address came from the same opt-in; the profile must make
+            // it too, as an operator does in Settings, or binding refuses it.
+            state
+                .set_allow_shared_address_space(true)
+                .expect("allow shared address space");
+        }
         let notifications = Arc::new(RecordingNotificationSink::default());
         buffer
             .attach_sink(Arc::clone(&notifications) as Arc<dyn DesktopNotificationSink>)
