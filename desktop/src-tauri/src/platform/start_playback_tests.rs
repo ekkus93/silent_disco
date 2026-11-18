@@ -16,6 +16,7 @@ mod fixtures;
 mod harness;
 mod lifecycle_tests;
 mod manual;
+mod reservation_tests;
 mod robustness_tests;
 mod secure_rejoin_tests;
 mod streaming_tests;
