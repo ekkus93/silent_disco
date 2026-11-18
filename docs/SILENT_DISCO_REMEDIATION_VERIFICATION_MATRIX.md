@@ -77,3 +77,24 @@ Every row below was evaluated on this one code SHA. "Proven" means named automat
 | No unbounded bridge accumulation | Holds |
 | No cross-generation FFI access | **Gap**: the F4 manual-listener `detachPlayback` path |
 | Documented restore recovery | **Partly**: host invitation key only; two Keystore aliases regenerate silently and handoff §15 is stale |
+
+## Re-qualification at exact code SHA `53587f0b1f06cbc9b7546139842187c17e6baf68` (2026-11-18) — supersedes the SHA above
+
+The two §9 invariant gaps found at `32c2d4c5` are fixed, and every gate was re-run on the new SHA.
+
+| Gap at `32c2d4c5` | Fix | Proof |
+| --- | --- | --- |
+| F4: manual-listener teardown detached playback through the *current* connection, so an old session's teardown racing a rebind could detach the new session's playback | `fcf78f7f`: the owning connection is recorded with the playback under the same gate as `attachPlayback`; teardown detaches through it with `withExpected` | `ManualPlaybackDetachGenerationTest` (3); the old-session case failed before the fix; restoring the current-handle detach fails two tests |
+| F6/F1: the host TLS and listener proof Keystore keys were silently regenerated, so a host lost its remembered listeners and a listener got a new identity with no notice; handoff §15 inventory stale | `53587f0b`: `KeyContinuityMonitor` checks both keys against fingerprint records at startup without creating keys and reports a replaced or missing key once; handoff §15 updated | `KeyContinuityMonitorTest` (6), `KeyReplacementMessagesTest` (3), A54 `KeyContinuityMonitorInstrumentedTest` (3, real Keystore, test-only aliases); making a missing key silent again fails a test |
+
+| Workflow | Run | Result |
+| --- | --- | --- |
+| CI | [44250209583](https://github.com/ekkus93/silent_disco/actions/runs/44250209583) | success: Rust 948 passed / 0 failed, `PCM_EVIDENCE_PASS`; Android build, unit tests, lint; API 29 emulator 206/206; 26 screenshot scenes identical across cold processes (0 approved goldens); candidate gate |
+| Desktop CI (dispatched on the SHA) | [44250219945](https://github.com/ekkus93/silent_disco/actions/runs/44250219945) | success: desktop Rust 424 lib tests; packaged WebKit pixel captures |
+| Desktop Lab live transport (dispatched) | [44250223140](https://github.com/ekkus93/silent_disco/actions/runs/44250223140) | success |
+| Supply chain | [44250209515](https://github.com/ekkus93/silent_disco/actions/runs/44250209515) | success |
+| Source file line limit | [44250209558](https://github.com/ekkus93/silent_disco/actions/runs/44250209558) | success |
+
+Local on the same SHA: `check-rust.sh` 948 passed; desktop `npm run check` 202 passed, clippy clean, `cargo test --locked` passed; full Android gate passed; supply-chain gate passed; script tests passed. A54 full instrumented suite: 206 run, 201 passed, 1 skipped, the same 4 known large-text layout failures.
+
+**Invariant review after the fixes:** no plaintext fallback, no spoof-based trust, no silent critical-event loss, no unbounded bridge accumulation, no cross-generation FFI access found, and restore recovery documented and checked for all three Keystore keys. Every other row of the findings table above stands, including its residual risks and its limits (no real cloud restore, no multi-listener or phone-to-phone hardware runs).

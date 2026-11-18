@@ -2009,3 +2009,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - All workflows green on 32c2d4c5 (CI 44192003435, Supply chain 44192003564, Source 44192003470, Desktop CI 44243570601 and Desktop Lab 44244965907 dispatched manually since path filters skipped them). Local gates all green; A54 full suite 198 pass / 1 skip / 4 known large-text layout failures.
 - Final findings matrix appended to docs/SILENT_DISCO_REMEDIATION_VERIFICATION_MATRIX.md. Closed §0 (3 items) and §9 items 1-4. §9.5 open: manual-listener `endStream` uses `withCurrentManualHandle { detachPlayback() }` (cross-generation risk from the event-loop failure path) and KeystoreEcKey silently regenerates host-TLS/listener-proof keys (no notice); handoff §15 key inventory stale. §9.6 open.
 - The session scratchpad was wiped between sessions (tools and logs gone); re-download pinned scanners from the checksums in .github/workflows/supply-chain.yml.
+
+## 2026-11-18T06:39:30Z - claude-opus-5-5 - §9 gaps fixed; re-qualified at 53587f0b
+- `fcf78f7f` manual playback detach via owning connection (`playbackOwnerRef`, set under the gate with attachPlayback). `53587f0b` `KeyContinuityMonitor` + `checkRecordedKey` for host-TLS and listener-proof keys (records `host-tls-key-fingerprint.txt`, `listener-key-fingerprint.txt` in noBackupFilesDir), startup notices in P2ViewModel; handoff §15 dated update.
+- All workflows green on 53587f0b (CI 44250209583, Desktop CI 44250219945, Lab 44250223140, Supply 44250209515, Source 44250209558); local gates green; A54 206 run / 201 pass / 1 skip / 4 known layout failures.
+- §9.5 closed. §9.6 still open (blocked by §1 two-device items, §2 owner trust run, §8 post-redesign).
