@@ -2021,3 +2021,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - 5d3f3211 real bug: consumed QR nonce stored with expires=exp, but QR valid until exp+60 s skew -> storage error (CHECK) and replay window. Now exp+QR_CLOCK_SKEW_MS.
 - 7b7f3113 live revoke (owner decision 2026-11-18: disconnect immediately): core CoreCommand::ListenerRevoked (revision-exempt, no-op if not connected, reason host_revoked_listener); FFI live_revocation.rs registry of running hosts by host key; desktop trust_commands notifies actor; ADR updated. UI finding: listener shows raw reason code.
 - Disk: cleaned rust/target/debug and desktop/src-tauri/target/debug (freed ~37 GB, 45 GB free). Evidence files from desktop/src-tauri/target moved to ~/work/silent_disco-evidence/desktop-target-2026-11-18/. Next test run rebuilds debug (~10 min).
+
+## 2026-11-18T11:13:57Z - claude-opus-5-5 - §1 scenario item closed at 7b7f3113
+- All workflows green at 7b7f3113 (CI 44289523583: Rust 952, PCM evidence, emulator 208/208; Desktop CI 44289523534: 427). Closed §1 "Verify Android and desktop bootstrap ... on exact-head CI" with the scenario map, new tests and stated limits (no real-radio discovery in CI; wrong-key/unsupported-version screens and raw reason codes wait for the UI redesign).
+- §1 UDP item: two-listener v4 test now exists in software (ef9ec647); box stays open only for a phone-to-phone run.
+- Remaining open overall: §1 phone-to-phone (second device), §2 trust records (owner two-device run; desktop half doable with A54), §8 post-redesign, §9.6, §10 hardware. Next suggested: original gapless TODO software items (late join/reconnect truthfulness, pause/resume and Stop/replay timeline, deterministic virtual tests).
