@@ -404,3 +404,57 @@ fn a_remembered_listener_reconnects_and_a_new_key_is_a_new_device() {
     worker.stop_and_join().expect("database closes");
     let _ = std::fs::remove_dir_all(directory);
 }
+
+/// Owner decision 2026-11-18 (remediation TODO §1): revoking a listener that is
+/// connected to the running host disconnects it at once, through the same
+/// revoke the Android Settings screen calls. A revoke of a listener that is
+/// not connected changes nothing in the session.
+#[test]
+fn revoking_a_connected_listener_disconnects_it_from_the_running_host() {
+    let (directory, worker) = database("live-revoke-flow");
+    let client = worker.client();
+    let host = host_key();
+    let remembered = key_bound_device_id(&[0xc3; 32]);
+    let absent = key_bound_device_id(&[0xd4; 32]);
+    for (device, name) in [(&remembered, "Patio"), (&absent, "Hallway")] {
+        silent_disco_core::transport::secure_trust_store::enroll_listener(
+            &client, &host, device, name, 1,
+        )
+        .expect("remembered earlier");
+    }
+
+    let (recorder, handle) = hosting("live-revoke-flow", FfiApprovalMode::TrustedDevices);
+    load_host_trust(&handle, &client, &host).expect("host start loads trust");
+    join(&handle, "patio-1", remembered.as_str());
+    let (operation, _) = recorder.decision("patio-1").expect("admitted");
+    deliver_and_connect(&recorder, &handle, operation, remembered.as_str(), true);
+
+    // Not connected: nothing to disconnect.
+    crate::verified_listeners::revoke_verified_listener(&client, &host, absent.as_str(), 2)
+        .expect("revoked an absent listener");
+    // Connected: disconnected now, with its own reason.
+    crate::verified_listeners::revoke_verified_listener(&client, &host, remembered.as_str(), 3)
+        .expect("revoked the connected listener");
+    let (listener, reason) = recorder.wait_for(|notification| match notification {
+        FfiCoreNotification::TransportEffect {
+            effect:
+                FfiTransportEffect::DisconnectListener {
+                    listener_id,
+                    reason_code,
+                    ..
+                },
+        } => Some((listener_id.clone(), reason_code.clone())),
+        _ => None,
+    });
+    assert_eq!(
+        listener,
+        remembered.as_str(),
+        "only the connected, revoked listener"
+    );
+    assert_eq!(reason, "host_revoked_listener");
+
+    handle.shutdown().expect("shutdown");
+    drop(client);
+    worker.stop_and_join().expect("database closes");
+    let _ = std::fs::remove_dir_all(directory);
+}

@@ -225,9 +225,14 @@ impl ActorState {
                 // between would reject a stale Shutdown, leave the actor running, and
                 // hang the join forever. Shutdown carries no state precondition, so it
                 // is exempt from the optimistic check, as End is.
+                // A revocation is an authoritative trust fact with no state
+                // precondition (a listener that is not connected is left
+                // alone), so it is exempt as well.
                 let is_terminal = matches!(
                     &request.command,
-                    CoreCommand::EndHostSession | CoreCommand::Shutdown
+                    CoreCommand::EndHostSession
+                        | CoreCommand::Shutdown
+                        | CoreCommand::ListenerRevoked { .. }
                 );
                 if request.expected_revision != self.snapshot.revision && !is_terminal {
                     return Err(invalid_state(
@@ -248,6 +253,9 @@ impl ActorState {
                     }
                     CoreCommand::RemoveListener { listener_id } => {
                         self.remove_listener(operation_id, listener_id)
+                    }
+                    CoreCommand::ListenerRevoked { listener_id } => {
+                        self.listener_revoked(listener_id)
                     }
                     command => self.apply_command(operation_id, command),
                 }

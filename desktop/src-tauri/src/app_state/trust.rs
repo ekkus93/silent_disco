@@ -5,6 +5,8 @@ use super::errors::poisoned_state_error;
 use super::state::DesktopRuntimeState;
 use crate::dto::DesktopErrorDto;
 use crate::platform::verified_trust::DesktopVerifiedTrust;
+use silent_disco_core::domain::DeviceId;
+use silent_disco_core::runtime::{CoreCommand, CoreCommandRequest};
 use std::sync::Arc;
 
 impl DesktopAppState {
@@ -29,5 +31,45 @@ impl DesktopAppState {
                 "no desktop profile is ready",
             )),
         }
+    }
+
+    /// Tells the host actor a remembered listener was revoked, so a running
+    /// session disconnects it now if it is connected (owner decision
+    /// 2026-11-18); the actor leaves a listener that is not connected alone.
+    /// The command carries no revision precondition, so the current one is
+    /// used as is.
+    pub(crate) fn notify_listener_revoked(
+        &self,
+        device_id: &DeviceId,
+    ) -> Result<(), DesktopErrorDto> {
+        let state = self.runtime.lock().map_err(|_| poisoned_state_error())?;
+        let DesktopRuntimeState::Ready(ready) = &*state else {
+            return Ok(()); // no running host to tell
+        };
+        let revision = ready
+            .handle
+            .current_snapshot()
+            .map_err(DesktopErrorDto::from)?
+            .revision;
+        let request = CoreCommandRequest::new(
+            revision,
+            CoreCommand::ListenerRevoked {
+                listener_id: device_id.clone(),
+            },
+        )
+        .map_err(|error| {
+            DesktopErrorDto::new(
+                "desktop.command.invalid_payload",
+                "validation",
+                "error",
+                false,
+                &error.to_string(),
+            )
+        })?;
+        ready
+            .handle
+            .submit_command(request)
+            .map(|_| ())
+            .map_err(DesktopErrorDto::from)
     }
 }

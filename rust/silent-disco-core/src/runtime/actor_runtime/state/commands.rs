@@ -58,6 +58,7 @@ impl ActorState {
             CoreCommand::RemoveListener { listener_id } => {
                 self.remove_listener(operation_id, listener_id)
             }
+            CoreCommand::ListenerRevoked { listener_id } => self.listener_revoked(listener_id),
             CoreCommand::StartPlayback { .. }
             | CoreCommand::PausePlayback
             | CoreCommand::ResumePlayback

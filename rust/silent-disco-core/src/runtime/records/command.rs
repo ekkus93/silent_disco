@@ -48,6 +48,13 @@ pub enum CoreCommand {
     RemoveListener {
         listener_id: DeviceId,
     },
+    /// The host revoked this listener's remembered trust (remediation TODO
+    /// §1, owner decision 2026-11-18): if it is connected to the running host
+    /// session it is disconnected now, not only refused at its next join. A
+    /// listener that is not connected is left alone; this is not an error.
+    ListenerRevoked {
+        listener_id: DeviceId,
+    },
     StartPlayback {
         source: AudioSourceDescriptor,
     },

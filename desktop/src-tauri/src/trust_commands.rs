@@ -79,10 +79,16 @@ pub(crate) fn list(state: &DesktopAppState) -> Result<Vec<RememberedListenerDto>
 
 pub(crate) fn revoke(state: &DesktopAppState, device_id: &str) -> Result<bool, DesktopErrorDto> {
     let device_id = parse_device_id(device_id).map_err(|error| trust_error(&error))?;
-    state
+    let revoked = state
         .ready_verified_trust()?
         .revoke(&device_id, unix_time_ms())
-        .map_err(|error| trust_error(&error))
+        .map_err(|error| trust_error(&error))?;
+    if revoked {
+        // A connected listener is disconnected now, not only refused at its
+        // next join (owner decision 2026-11-18).
+        state.notify_listener_revoked(&device_id)?;
+    }
+    Ok(revoked)
 }
 
 fn unix_time_ms() -> u64 {

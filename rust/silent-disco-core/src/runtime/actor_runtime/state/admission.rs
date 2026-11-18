@@ -158,6 +158,44 @@ impl ActorState {
         Ok(ApplyOutcome::transport_effect(effect))
     }
 
+    /// Disconnects a listener whose remembered trust the host just revoked,
+    /// if it is connected to the running host session; otherwise does
+    /// nothing. Uses the same delivery-first disconnect as a removal, with its
+    /// own reason so the listener can tell the two apart.
+    pub(super) fn listener_revoked(
+        &mut self,
+        listener_id: DeviceId,
+    ) -> Result<ApplyOutcome, CoreError> {
+        let connected = self
+            .snapshot
+            .listeners
+            .iter()
+            .any(|listener| listener.device_id == listener_id);
+        let already_leaving = self.pending_transport.iter().any(|(_, pending)| {
+            matches!(
+                pending,
+                PendingTransportOperation::DisconnectListener {
+                    listener_id: pending_id,
+                } if pending_id == &listener_id
+            )
+        });
+        let Some(session_id) = self.host_session_id.clone() else {
+            return Ok(ApplyOutcome::default());
+        };
+        if !connected || already_leaving {
+            return Ok(ApplyOutcome::default());
+        }
+        let effect = self.start_transport_operation(
+            TransportEffectRequest::DisconnectListener {
+                session_id,
+                listener_id: listener_id.clone(),
+                reason_code: "host_revoked_listener".to_owned(),
+            },
+            PendingTransportOperation::DisconnectListener { listener_id },
+        )?;
+        Ok(ApplyOutcome::transport_effect(effect))
+    }
+
     pub(super) fn apply_admission_storage(
         &mut self,
         event: StorageEvent,

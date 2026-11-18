@@ -216,6 +216,9 @@ pub(super) fn load_host_trust(
                 generation,
             }),
         });
+    // A revoke made anywhere in the app can now disconnect this host's
+    // listener at once (owner decision 2026-11-18).
+    super::live_revocation::register(handle, host_public_key_der)?;
     Ok(count)
 }
 

@@ -175,7 +175,9 @@ class HostVerifiedTrustDeviceTest {
                 System.currentTimeMillis().toULong(),
             )
         }
-        first.shutdown()
+        // Owner decision 2026-11-18: the running host disconnects a revoked
+        // listener at once, not only at its next join.
+        assertThat(awaitHostDisconnect(first)).isEqualTo("host_revoked_listener")
         awaitNoConnectedListener(rememberedId)
         assertThat(awaitDecision(connect(remembered))).isEqualTo(Decision.Rejected)
         assertThat(failures).isEmpty()
@@ -254,6 +256,12 @@ class HostVerifiedTrustDeviceTest {
                 is FfiListenerTransportEvent.JoinRejected -> Decision.Rejected
                 else -> null
             }
+        }
+
+    /** The reason the host gave when it disconnected [listener]. */
+    private suspend fun awaitHostDisconnect(listener: FfiListenerTransportHandle): String =
+        awaitUntil("the host to disconnect the listener") {
+            (listener.pollEvent(100uL) as? FfiListenerTransportEvent.HostDisconnected)?.reason
         }
 
     private suspend fun awaitListenerTrust(deviceId: String, trust: FfiTrustState) {

@@ -301,3 +301,46 @@ fn a_v4_listener_gets_the_stop_then_a_fresh_stream_when_the_host_plays_again() {
     );
     stop_and_shut_down(host, listener);
 }
+
+/// Owner decision 2026-11-18 (remediation TODO §1): revoking a connected
+/// listener disconnects it at once. Through the real actor and the desktop's
+/// v4 transport, the actor turns the revocation into a delivery-first
+/// disconnect and the listener receives it with the revoked reason.
+#[test]
+fn a_revoked_v4_listener_is_disconnected_with_the_revoked_reason() {
+    let Some(host) = start_v4_host() else { return };
+    let mut listener = join_and_approve_v4(&host);
+    let device = host.handle.current_snapshot().expect("snapshot").listeners[0]
+        .device_id
+        .clone();
+
+    let revision = host
+        .handle
+        .current_snapshot()
+        .expect("snapshot")
+        .revision
+        .get();
+    submit(
+        &host.handle,
+        revision,
+        CoreCommand::ListenerRevoked {
+            listener_id: device.clone(),
+        },
+    );
+    let effect = loop {
+        match host.receiver.recv_timeout(TEST_TIMEOUT) {
+            Ok(CoreNotification::TransportEffect(effect)) => break effect,
+            Ok(_) => {}
+            Err(error) => panic!("no disconnect effect: {error}"),
+        }
+    };
+    host.network
+        .dispatch_transport_effect(effect)
+        .expect("dispatch disconnect");
+    wait_for_control(
+        &mut *listener,
+        |m| matches!(m, ControlMessage::Disconnect(d) if d.listener_id == device && d.reason == "host_revoked_listener"),
+    );
+    host.network.shutdown().expect("host shutdown");
+    host.actor.shutdown().expect("actor shutdown");
+}

@@ -37,8 +37,8 @@ pub fn list_verified_listeners_in_database(
 
 /// Revokes a remembered listener for `host_public_key_der`. Returns `false` if
 /// no trusted record existed (already revoked or never remembered). A running
-/// host session re-reads its trust at its next join, so the revoke applies
-/// from the listener's next join.
+/// host session re-reads its trust at its next join, and a running host with
+/// this key disconnects the listener at once if it is connected.
 ///
 /// # Errors
 /// Returns an error for a device ID that is not key-bound, an invalid database
@@ -96,6 +96,11 @@ pub(crate) fn revoke_verified_listener(
         secure_trust_store::revoke_listener(client, host_public_key_der, &device_id, revoked_at_ms)
             .map_err(core_error)?;
     crate::host_control::trust_records_changed();
+    if revoked {
+        // Disconnect it now from any running host with this key, not only at
+        // its next join (owner decision 2026-11-18).
+        crate::host_control::listener_revoked(host_public_key_der, &device_id)?;
+    }
     Ok(revoked)
 }
 
