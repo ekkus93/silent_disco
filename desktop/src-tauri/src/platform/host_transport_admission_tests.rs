@@ -27,8 +27,17 @@ pub(super) struct RecordingSink {
 
 impl RecordingSink {
     pub(super) fn new(sender: mpsc::Sender<CoreTransportEvent>) -> Arc<Self> {
+        Self::with_snapshot(sender, CoreSnapshot::default())
+    }
+
+    /// A sink whose authoritative snapshot starts as [snapshot], e.g. with an
+    /// approved-devices-only draft.
+    pub(super) fn with_snapshot(
+        sender: mpsc::Sender<CoreTransportEvent>,
+        snapshot: CoreSnapshot,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            snapshot: Mutex::new(CoreSnapshot::default()),
+            snapshot: Mutex::new(snapshot),
             sender,
         })
     }

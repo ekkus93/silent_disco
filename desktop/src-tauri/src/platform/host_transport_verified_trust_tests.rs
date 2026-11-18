@@ -1,6 +1,8 @@
 //! Remediation F1 on the desktop host: over real loopback QUIC, a listener the
 //! host remembered joins as Trusted, an unknown listener joins as session-only,
-//! and "Always allow" reaches the listener as a remembered approval.
+//! and "Always allow" reaches the listener as a remembered approval. A
+//! revoked key is no longer Trusted at its next join, so Approved-devices-only
+//! refuses it.
 
 use super::host_transport::DesktopHostTransportRuntime;
 use super::host_transport_admission_tests::{
@@ -163,6 +165,133 @@ fn a_remembered_listener_joins_trusted_and_always_allow_reaches_the_listener() {
 
     stranger.node.shutdown().expect("listener shutdown");
     known.node.shutdown().expect("listener shutdown");
+    runtime.shutdown().expect("runtime shutdown");
+    drop(trust);
+    database.stop_and_join().expect("database shutdown");
+}
+
+/// Remediation TODO §1 (revocation) on the desktop host, over real loopback
+/// QUIC in Approved-devices-only mode: a remembered key is admitted, then the
+/// host revokes it, and the same key reconnecting is refused by policy, as is
+/// a key the host never remembered.
+#[test]
+#[allow(clippy::too_many_lines)] // One acceptance scenario over real QUIC.
+fn a_revoked_key_is_refused_at_its_next_join_in_approved_devices_only_mode() {
+    use silent_disco_core::domain::ApprovalMode;
+    use silent_disco_core::runtime::{
+        CoreSnapshot, JoinRejectionReason, JoinRequestDisposition, SessionAdvertisement,
+        classify_join_request,
+    };
+
+    let directory = tempfile::tempdir().expect("temp dir");
+    let database = DatabaseWorker::start(
+        DatabaseConfig::new(directory.path().join("domain.sqlite3")).expect("config"),
+    )
+    .expect("database");
+    let identity = crate::platform::invitation_identity::tests_support::fixed_identity_for_tests(8)
+        .host_tls_identity()
+        .expect("tls identity");
+    let host_spki = identity.spki.clone();
+    let trust =
+        Arc::new(DesktopVerifiedTrust::load(database.client(), host_spki.clone()).expect("trust"));
+
+    let session = SessionId::new("desktop-revocation-session").expect("session");
+    let host_id = DeviceId::new("desktop-revocation-host").expect("host");
+    let mut snapshot = CoreSnapshot::default();
+    snapshot.host_draft.approval_mode = ApprovalMode::TrustedDevices;
+    let draft = snapshot.host_draft.clone();
+    let advertisement = SessionAdvertisement::new(
+        session.clone(),
+        host_id,
+        "Revocation host",
+        ApprovalMode::TrustedDevices,
+        silent_disco_core::protocol::PROTOCOL_VERSION,
+        None,
+    )
+    .expect("advertisement");
+    let clock = Arc::new(SystemTransportClock::default());
+    let mut config = HostTransportConfig::loopback(session.clone());
+    config.secure_control = Some(Arc::new(identity));
+    let node = QuicTransportFactory
+        .bind_host(config, clock.clone())
+        .expect("bind v4 host");
+    let endpoint = node.endpoint();
+    let (sender, receiver) = mpsc::channel();
+    let runtime = DesktopHostTransportRuntime::start_with_admission(
+        node,
+        advertisement,
+        RecordingSink::with_snapshot(sender, snapshot),
+        clock,
+        HostAdmission {
+            secure_v4: true,
+            trust: Some(Arc::clone(&trust)),
+        },
+    )
+    .expect("runtime");
+
+    let join_as = |seed: u8| {
+        let listener = connect(seed, &session, endpoint, &host_spki);
+        send_join(&*listener.node, &session, &listener.device_id);
+        // Classify exactly the request the actor received.
+        let request = loop {
+            if let CoreTransportEvent::JoinRequested(request) = receiver
+                .recv_timeout(TEST_TIMEOUT)
+                .expect("actor received join")
+            {
+                break request;
+            }
+        };
+        assert_eq!(request.device_id, listener.device_id);
+        (
+            listener,
+            request.trust_state,
+            classify_join_request(&draft, &request),
+        )
+    };
+
+    // Remembered: admitted without asking.
+    let remembered_id = connect(31, &session, endpoint, &host_spki).device_id;
+    trust
+        .remember(&remembered_id, "Remembered listener", 1)
+        .expect("remember");
+    let (mut first, trust_state, disposition) = join_as(31);
+    assert_eq!(trust_state, TrustState::Trusted);
+    assert!(
+        matches!(disposition, JoinRequestDisposition::AutoApprove { .. }),
+        "a remembered key is admitted: {disposition:?}"
+    );
+    first.node.shutdown().expect("listener shutdown");
+
+    // Revoked: the same key is refused at its next join.
+    assert!(
+        trust.revoke(&remembered_id, 2).expect("revoke"),
+        "it was remembered"
+    );
+    let (mut again, trust_state, disposition) = join_as(31);
+    assert_ne!(
+        trust_state,
+        TrustState::Trusted,
+        "a revoked key is not trusted"
+    );
+    assert_eq!(
+        disposition,
+        JoinRequestDisposition::AutoReject {
+            reason: JoinRejectionReason::DeviceNotApproved,
+        }
+    );
+    again.node.shutdown().expect("listener shutdown");
+
+    // Never remembered: refused the same way.
+    let (mut stranger, trust_state, disposition) = join_as(32);
+    assert_eq!(trust_state, TrustState::SessionOnly);
+    assert_eq!(
+        disposition,
+        JoinRequestDisposition::AutoReject {
+            reason: JoinRejectionReason::DeviceNotApproved,
+        }
+    );
+    stranger.node.shutdown().expect("listener shutdown");
+
     runtime.shutdown().expect("runtime shutdown");
     drop(trust);
     database.stop_and_join().expect("database shutdown");
