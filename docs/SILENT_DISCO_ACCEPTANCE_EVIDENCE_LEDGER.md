@@ -76,3 +76,9 @@
 - **Run 3 (all fixes: + output opened at approval, 800 ms host lead; AppImage `7db2a0ae…`, APK `69cab99c…`):** first track exactly 12.000 s from the stream's first frame (nothing lost), StreamStart→rebind 21 ms, 0 late, one output open, both boundaries gapless. Owner heard nothing at the start.
 - **Open:** 17 packets per stream start never reach the listener's transport (runs 2 and 3), a measured 61 ms dropout ~0.06 s in; not heard. Next: host-side send instrumentation.
 - Evidence: `~/work/silent_disco-evidence/playback-run-2026-11-19/{,rerun-after-fix/,run3-standby-and-lead/}` (not CI evidence).
+
+## 2026-11-19 — Loss at stream start traced and reduced (A54 runs 4–5)
+
+- **Run 4 (diagnostics, AppImage `1b5ebd15…`, APK `ac81c26d…`):** host `audio_datagrams_sent=7200`, QUIC `lost_packets=18 congestion_events=1`; listener `audioDatagramsReceived=7182 eventDrops=0`. Loss on the Wi-Fi, in the host's ~40-packet opening burst; 65 ms silence at 0.07 s.
+- **Run 5 (paced opening, AppImage `fea21bdf…`):** QUIC `lost_packets=4`; listener received 7 196; ring-input capture has no silent gap, the first 50 ms block at 84 % level (concealment), both boundaries exact.
+- Evidence: `~/work/silent_disco-evidence/playback-run-2026-11-19/run4-transport-stats/`, `run5-paced-opening/` (not CI evidence).

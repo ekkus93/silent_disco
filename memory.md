@@ -2089,3 +2089,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Pitfall: pre-stream sync alone made it worse (runtime locked at once, played, then concealed while packets were still arriving). Lock + fast output together fixed it.
 - Open: 17 packets/stream-start never reach the listener transport (runs 2,3); 61 ms measured dropout, not heard. Next: instrument host QUIC sends.
 - My earlier "missing ring-input capture" finding was wrong (listing truncated by `tail`).
+
+## 2026-11-19T23:16:00Z - claude-opus-5-5 - Stream-start loss traced to Wi-Fi burst; desktop opening paced
+- New diagnostics: desktop stderr `host_transport_stream_stop` + `host_transport_connection` (QUIC stats) at each Stop; Android `manual.audio.transport_summary` with listener counters + QUIC stats. Compare host audio_datagrams_sent / lost_packets with listener audioDatagramsReceived / eventDrops.
+- Run 4: 18 lost on Wi-Fi in the opening burst. Fix: desktop pump `OpeningPace` (2x real time from first packet). Run 5: 4 lost, no silence. Android host was never bursty (1 packet per duration).
+- Intermittent: one failure of `songs_added_during_live_playback_are_queued_and_play_at_the_exact_boundary` in 12 network runs after pacing; message not captured; that test reads its listener only after staging (overflow-prone pattern).
+- Open option for the owner: send the first ~200 ms twice to cover the last 4 packets.
+- Owner took the A54 away 2026-11-19 ~23:15Z; Battery Saver was left off by my runs.
