@@ -59,3 +59,12 @@
 - **Run (driven over AT-SPI and adb; the owner scanned each QR):** Always allow in Manual mode → real desktop restart → auto-admitted in Approved devices only (phone `Hello` 07:03:01.086, `JoinApproved` 07:03:01.106) → revoke in Settings disconnected the live phone in 0.32 s with `host_revoked_listener` → rejoin refused (`JoinRejected`, `device_not_approved`).
 - **Evidence:** `~/work/silent_disco-evidence/trust-run-2026-11-18/` on the owner's machine (logcat, control-event extract, screenshots, accessibility dumps).
 - **Scope:** desktop host only. The Android-host half needs a second phone; no never-known-key device was available (the revoked key stood in, and the never-known case is covered by automated tests). Not CI evidence.
+
+## 2026-11-19 — Packaged desktop host → A54 listener, gapless across formats (remediation §10, desktop half)
+
+- **Build:** AppImage from [`234ef6aa`](https://github.com/ekkus93/silent_disco/commit/234ef6aa) (SHA-256 `7ba1f37860e40787a73e0ce0dd2bbfbb82879a33ef423d5f5d55b9b28e738908`), A54 (SM-A546E, Android 16) debug APK from the same head (`14bae8ab05411a163216a996d6b6e93bf5909990c29024ca87bbcb3dba2347b5`); real Wi-Fi, secure v4 joined through the signed QR (owner scanned), manual approval.
+- **Content:** one phase-continuous 440 Hz tone in three 12 s tracks at levels 0.5/0.4/0.3 — WAV 44.1 kHz, FLAC 48 kHz, MP3 44.1 kHz.
+- **Measured (callback capture, SHA-256 `400d9299…4909`):** track changes exactly 12.000 s apart; no silent run inside the tone; phase offset 0.0° at both joins; one Oboe open, no reopen/rebind; zero underruns/silence fill/concealment in every second after the first; sync EXCELLENT, RTT 8–12 ms. Analyser validated first on a clean reference (exact boundaries) and a copy with a 5 ms gap (detected as 241 frames).
+- **Heard (owner):** clean start, no gap/click/stutter at either step, nothing odd.
+- **Open observation:** first second had 23 underruns and ~46 ms silence fill; session totals skipped 114 and concealed 81 packets. Not audible and not in the capture (which began ~0.49 s into track 1).
+- **Not covered:** acoustic/loopback recording (independent of the app), Android host, two listeners. Evidence: `~/work/silent_disco-evidence/playback-run-2026-11-19/` (not CI evidence).

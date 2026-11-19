@@ -2074,3 +2074,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Mutation: dropping `controls.extend(upcoming)` in `transport/socket/host/mod.rs::snapshot_at` fails the BoundarySent test only.
 - Gapless TODO "deterministic virtual tests" item checked [x] 2026-11-19.
 - One unidentified desktop `cargo test` failure (440 passed / 1 failed) in a single run; log not kept; 3 later runs clean (442/442). Watch for it.
+
+## 2026-11-19T09:55:22Z - claude-opus-5-5 - Packaged desktop → A54 gapless playback run (owner listened)
+- AppImage 234ef6aa + A54 debug APK same head; QR join, manual approval. WAV44.1→FLAC48→MP3 440 Hz phase-continuous tracks: callback capture gapless (12.000 s spacing, 0° phase, no silence), one Oboe open, owner heard clean. Gapless TODO packaged desktop→Android item checked; remediation §10 box open for the Android-host half.
+- Tooling: evidence dir `~/work/silent_disco-evidence/playback-run-2026-11-19/` has `analyze_capture.py` (validated on clean + 5 ms-gap references). Callback capture: `adb shell am broadcast -a com.ekkus.silentdisco.debug.PCM_CAPTURE --es command start|stop` → `/sdcard/Android/data/com.ekkus.silentdisco/files/diagnostics/silent-disco-callback-*.wav`. Oboe opens are logged as `SilentDiscoOboe ... open #N granted`.
+- Driving: session name must be typed by mouse click + xdotool (AT-SPI text set does not reach React). GTK "Select audio sources" may leave an unmapped duplicate window: activate the IsViewable one. Ctrl+L, type path, Return.
+- Open observation: startup counters (23 underruns, 46 ms silence fill, 114 skipped, 81 concealed) inaudible. UI findings logged: stale nearby-permission prompt after reinstall; ring-input capture file missing despite recording_started.
+- Freed ~11 GB by deleting incremental caches (disk was at 3.5 GB free).
