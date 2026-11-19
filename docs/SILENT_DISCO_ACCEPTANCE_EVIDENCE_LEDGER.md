@@ -68,3 +68,11 @@
 - **Heard (owner):** clean start, no gap/click/stutter at either step, nothing odd.
 - **Open observation:** first second had 23 underruns and ~46 ms silence fill; session totals skipped 114 and concealed 81 packets. Not audible and not in the capture (which began ~0.49 s into track 1).
 - **Not covered:** acoustic/loopback recording (independent of the app), Android host, two listeners. Evidence: `~/work/silent_disco-evidence/playback-run-2026-11-19/` (not CI evidence).
+
+## 2026-11-19 — First-stream start-up on the A54: investigation and fix (owner listening)
+
+- **Run 1 (before, AppImage `234ef6aa`, APK `14bae8ab…`):** ring-input capture shows the first song began 0.165 s in; 24 packets never reached the runtime and 9 were late. The earlier "concealed 81" was trailing silence after the song.
+- **Run 2 (pre-stream sync + early-audio hold only, APK `d38fd875…`):** worse — opening lost 0.29 s plus a ~200 ms concealment dip; the listener still needed ~0.6 s after StreamStart (mostly a ~350 ms output open) against a 400 ms host lead. Not committed in that state.
+- **Run 3 (all fixes: + output opened at approval, 800 ms host lead; AppImage `7db2a0ae…`, APK `69cab99c…`):** first track exactly 12.000 s from the stream's first frame (nothing lost), StreamStart→rebind 21 ms, 0 late, one output open, both boundaries gapless. Owner heard nothing at the start.
+- **Open:** 17 packets per stream start never reach the listener's transport (runs 2 and 3), a measured 61 ms dropout ~0.06 s in; not heard. Next: host-side send instrumentation.
+- Evidence: `~/work/silent_disco-evidence/playback-run-2026-11-19/{,rerun-after-fix/,run3-standby-and-lead/}` (not CI evidence).

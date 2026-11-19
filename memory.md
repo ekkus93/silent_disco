@@ -2081,3 +2081,11 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Driving: session name must be typed by mouse click + xdotool (AT-SPI text set does not reach React). GTK "Select audio sources" may leave an unmapped duplicate window: activate the IsViewable one. Ctrl+L, type path, Return.
 - Open observation: startup counters (23 underruns, 46 ms silence fill, 114 skipped, 81 concealed) inaudible. UI findings logged: stale nearby-permission prompt after reinstall; ring-input capture file missing despite recording_started.
 - Freed ~11 GB by deleting incremental caches (disk was at 3.5 GB free).
+
+## 2026-11-19T21:54:27Z - claude-opus-5-5 - First-stream start-up loss: cause, fixes, A54 verification
+- The ring-input capture (`files/manual-listener-<stream>.wav`, every frame from the stream's first) is the right measurement for start-up loss: in the playlist test the first track must run exactly 12.000 s. The callback capture starts late and hides the opening.
+- Cause: the manual listener needed ~0.6 s after StreamStart (fresh runtime + ~350 ms Oboe open + sync acquired only after StreamStart) vs a 400 ms desktop host lead; audio overtaking StreamStart (QUIC datagrams vs control stream) was dropped in Kotlin.
+- Fixes: Rust `ListenerSyncSession`/`FfiListenerSyncSession` (pre-stream clock lock → first stream `openContinuing`), Kotlin `SyncProbeTarget`; standby output (`openSilentStandbyOutput`, empty FfiAudioOutputHandle ring) opened at JoinApproved, released after the stream rebinds; early audio held (`holdEarlyAudio`/`replayEarlyAudio`, 400 packets); host lead 800 ms (desktop `STARTUP_BUFFER_MS`, Android `HOST_STREAM_START_LEAD_MS`); jitter `skip_ahead_to` so a late lock after pre-sync-hold overflow keeps the held window.
+- Pitfall: pre-stream sync alone made it worse (runtime locked at once, played, then concealed while packets were still arriving). Lock + fast output together fixed it.
+- Open: 17 packets/stream-start never reach the listener transport (runs 2,3); 61 ms measured dropout, not heard. Next: instrument host QUIC sends.
+- My earlier "missing ring-input capture" finding was wrong (listing truncated by `tail`).
