@@ -386,6 +386,10 @@ impl ListenerTransportNode for QuicListenerTransport {
         }
     }
 
+    fn connection_diagnostics(&self) -> Vec<String> {
+        vec![self.worker.connection_stats_line()]
+    }
+
     fn counters(&self) -> TransportCounters {
         let mut counters = self
             .counters

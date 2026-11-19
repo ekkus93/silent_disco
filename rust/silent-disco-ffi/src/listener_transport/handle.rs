@@ -393,6 +393,12 @@ impl FfiListenerTransportHandle {
         })
     }
 
+    /// The connection's own statistics (QUIC) as log lines; empty where the
+    /// transport has none.
+    pub fn connection_diagnostics(&self) -> Result<Vec<String>, FfiListenerTransportError> {
+        self.with_transport(|inner| Ok(inner.transport.connection_diagnostics()))
+    }
+
     pub fn counters(&self) -> Result<FfiListenerTransportCounters, FfiListenerTransportError> {
         self.with_transport(|inner| Ok(inner.transport.counters().into()))
     }

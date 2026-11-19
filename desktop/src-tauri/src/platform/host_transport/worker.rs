@@ -104,6 +104,21 @@ fn process_broadcast_frames(
         match delivery {
             Ok(delivery) => {
                 status.broadcast.record_delivery(&delivery);
+                if matches!(&frame, ProtocolFrame::Control(ControlMessage::Stop(_))) {
+                    // Per stream: whether its audio left the host or was lost
+                    // on the way (start-up loss investigation, 2026-11-19).
+                    let counters = node.counters();
+                    eprintln!(
+                        "host_transport_stream_stop observed_monotonic_ms={} audio_datagrams_sent={} delivery_failures={} queue_overflows={}",
+                        clock.now().get(),
+                        counters.audio_datagrams_sent,
+                        counters.delivery_failures,
+                        counters.queue_overflows,
+                    );
+                    for line in node.connection_diagnostics() {
+                        eprintln!("host_transport_connection {line}");
+                    }
+                }
                 if delivery.report.failed_peers > 0 {
                     let (kind, sequence) = broadcast_frame_identity(&frame);
                     eprintln!(

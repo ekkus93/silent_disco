@@ -116,6 +116,8 @@ pub struct QuicListenerWorker {
     dropped_datagrams: Arc<AtomicU64>,
     max_datagram_size: Option<usize>,
     local_addr: SocketAddr,
+    /// A handle on the connection, read only for its statistics.
+    connection: quinn::Connection,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -171,7 +173,8 @@ impl QuicListenerWorker {
                         }
                     };
                     let local = endpoint.local_addr().map_err(|error| error.to_string());
-                    let ready = local.map(|local| (connection.max_datagram_size(), local));
+                    let ready = local
+                        .map(|local| (connection.max_datagram_size(), local, connection.clone()));
                     let failed = ready.is_err();
                     let _ = ready_tx.send(ready);
                     if failed {
@@ -183,7 +186,7 @@ impl QuicListenerWorker {
                 });
             })
             .map_err(|error| QuicListenerError::Connect(error.to_string()))?;
-        let (max_datagram_size, local_addr) = ready_rx
+        let (max_datagram_size, local_addr, connection) = ready_rx
             .recv()
             .map_err(|_| QuicListenerError::Connect("worker ended before connecting".to_owned()))?
             .map_err(QuicListenerError::Connect)?;
@@ -193,6 +196,7 @@ impl QuicListenerWorker {
             dropped_datagrams: dropped,
             max_datagram_size,
             local_addr,
+            connection,
             thread: Some(thread),
         })
     }
@@ -207,6 +211,13 @@ impl QuicListenerWorker {
     #[must_use]
     pub const fn local_addr(&self) -> SocketAddr {
         self.local_addr
+    }
+
+    /// The connection's QUIC statistics as one log line (stream start-up
+    /// loss investigation, 2026-11-19).
+    #[must_use]
+    pub fn connection_stats_line(&self) -> String {
+        super::quic_stats::stats_line(&self.connection.stats())
     }
 
     /// Datagrams dropped because the event queue was full.

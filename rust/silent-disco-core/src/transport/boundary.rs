@@ -109,6 +109,12 @@ pub trait HostTransportNode: Send {
     fn broadcast_audio(&self, frame: &ProtocolFrame) -> Result<TransportDelivery, TransportError>;
     fn recv_event(&mut self, timeout: Duration) -> Result<TransportEvent, TransportError>;
     fn counters(&self) -> TransportCounters;
+
+    /// The underlying connection's own statistics as log lines, where the
+    /// transport has them (QUIC). For diagnostics only.
+    fn connection_diagnostics(&self) -> Vec<String> {
+        Vec::new()
+    }
     fn shutdown(&mut self) -> Result<(), TransportError>;
 }
 
@@ -132,6 +138,12 @@ pub trait ListenerTransportNode: Send + Sync {
     /// latency.
     fn recv_event(&self, timeout: Duration) -> Result<TransportEvent, TransportError>;
     fn counters(&self) -> TransportCounters;
+
+    /// The underlying connection's own statistics as log lines, where the
+    /// transport has them (QUIC). For diagnostics only.
+    fn connection_diagnostics(&self) -> Vec<String> {
+        Vec::new()
+    }
     fn shutdown(&mut self) -> Result<(), TransportError>;
 }
 

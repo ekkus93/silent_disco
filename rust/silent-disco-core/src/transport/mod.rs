@@ -35,6 +35,8 @@ mod quic_reconnect_tests;
 #[cfg(all(test, feature = "quic"))]
 mod quic_stalled_peer_tests;
 #[cfg(feature = "quic")]
+mod quic_stats;
+#[cfg(feature = "quic")]
 pub mod quic_transport_factory;
 #[cfg(all(test, feature = "quic"))]
 mod quic_transport_factory_tests;

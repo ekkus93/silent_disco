@@ -104,6 +104,7 @@ internal fun ManualListenerTransportController.appendDiagnosticsLine(line: Strin
  * actually happened the way an independently maintained tally could.
  */
 internal fun ManualListenerTransportController.logPlaybackSummary(runtime: FfiListenerPlaybackHandle) {
+    logTransportSummary()
     val diagnostics = runtime.finalDiagnostics() ?: runtime.diagnostics()
     appendDiagnosticsLine(
         "summary streamId=$currentStreamId " +
@@ -150,4 +151,25 @@ internal fun ManualListenerTransportController.logPlaybackSummary(runtime: FfiLi
     runtime.debugCaptureError()?.let { error ->
         logger.w("manual.audio.recording_error", error)
     }
+}
+
+/**
+ * The connection's view of the stream at its end: audio datagrams this
+ * listener received and dropped, and the transport's own (QUIC) statistics,
+ * to compare with the host's `host_transport_stream_stop` line and tell
+ * packets the host never sent from packets lost on the way (start-up loss
+ * investigation, 2026-11-19). Diagnostic only; a failure to read is logged.
+ */
+internal fun ManualListenerTransportController.logTransportSummary() {
+    val line = runCatching {
+        withCurrentManualHandle { handle ->
+            val counters = handle.counters()
+            "audioDatagramsReceived=${counters.audioDatagramsReceived} " +
+                "eventDrops=${counters.bestEffortEventDrops} malformed=${counters.malformedFrames} " +
+                "unauthorized=${counters.unauthorizedFrames} queueOverflows=${counters.queueOverflows} | " +
+                handle.connectionDiagnostics().joinToString(" | ")
+        }
+    }.getOrElse { error -> "unavailable: ${error.message}" } ?: "no connection"
+    appendDiagnosticsLine("transport $line")
+    logger.i("manual.audio.transport_summary", line)
 }

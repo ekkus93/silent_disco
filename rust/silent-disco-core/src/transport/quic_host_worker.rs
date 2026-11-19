@@ -262,6 +262,27 @@ impl QuicHostWorker {
         self.local_addr
     }
 
+    /// Each admitted peer's QUIC statistics as one log line, by peer number.
+    #[must_use]
+    pub fn connection_stats_lines(&self) -> Vec<String> {
+        let mut lines: Vec<(u64, String)> = self
+            .shared
+            .peers()
+            .iter()
+            .map(|(peer, entry)| {
+                (
+                    *peer,
+                    super::quic_stats::stats_line(&entry.connection.stats()),
+                )
+            })
+            .collect();
+        lines.sort_by_key(|(peer, _)| *peer);
+        lines
+            .into_iter()
+            .map(|(peer, line)| format!("peer={peer} {line}"))
+            .collect()
+    }
+
     /// Datagrams dropped because the event queue was full.
     #[must_use]
     pub fn dropped_datagrams(&self) -> u64 {

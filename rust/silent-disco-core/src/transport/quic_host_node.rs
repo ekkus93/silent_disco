@@ -635,6 +635,10 @@ impl HostTransportNode for QuicHostTransport {
         self.next_event(timeout)
     }
 
+    fn connection_diagnostics(&self) -> Vec<String> {
+        self.worker.connection_stats_lines()
+    }
+
     fn counters(&self) -> TransportCounters {
         let mut counters = self
             .counters
