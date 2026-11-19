@@ -133,15 +133,18 @@ fn a_long_acquisition_keeps_only_the_newest_window_and_still_adopts_the_live_str
     }
     assert_eq!(pump.dropped_before_sync(), 50);
 
-    // The held window starts beyond the reorder window from sequence zero,
-    // so the replay itself corroborates the jump and the buffer adopts it.
+    // The stream before the held window is gone: the replay starts the
+    // buffer at the window, so all of it is taken up as one contiguous run
+    // (it used to cross the reorder window from sequence zero and trip a
+    // far-future resync that threw the window's start away).
     pump.apply_sync_offset(0.0);
     let diagnostics = pump.diagnostics();
     assert_eq!(diagnostics.replayed_after_sync, window);
-    assert_eq!(diagnostics.resynchronisations, 1);
-    assert!(
-        diagnostics.packets_accepted >= window - 2,
-        "the held window was not taken up after sync locked: {diagnostics:?}"
+    assert_eq!(diagnostics.resynchronisations, 0);
+    assert_eq!(diagnostics.packets_accepted, window);
+    assert_eq!(
+        diagnostics.sequences_skipped, 50,
+        "only what the hold dropped"
     );
 }
 
@@ -216,4 +219,100 @@ fn soft_offset_updates_are_slew_limited_and_converge_without_an_instant_jump() {
         "repeated accepted observations must converge to the estimator target"
     );
     assert_eq!(pump.diagnostics().offset_driven_rebuffers, 0);
+}
+
+/// A first stream whose sync locks late, after the hold overflowed: the
+/// listener plays from the first packet still due when sync locks, losing
+/// only the time that actually passed. It used to start ~1.3 s into the
+/// stream after ~0.4 s of silence (startup-counter investigation,
+/// 2026-11-19, A54 run).
+#[test]
+fn a_late_lock_after_the_hold_overflowed_plays_from_the_first_packet_still_due() {
+    use super::super::PlaybackPumpConfig;
+    use crate::audio::{
+        PlaybackScheduler, PumpTick, RenderRing, RenderRingConfig, SchedulerConfig,
+    };
+    use crate::domain::{MonotonicMillis, PacketSequence, SampleIndex, SessionId, StreamId};
+    use crate::protocol::{AudioCodec, AudioDatagram};
+
+    const SPP: u32 = 240; // 5 ms, as the desktop host sends
+    const START: u64 = 10_000;
+    const LOCK_AFTER_START: u64 = 460;
+    let packet = |sequence: u64| AudioDatagram {
+        session_id: SessionId::new("session-late-lock").expect("id"),
+        stream_id: StreamId::new("stream-late-lock").expect("id"),
+        sequence: PacketSequence::new(sequence),
+        codec: AudioCodec::PcmS16Le,
+        sample_rate: 48_000,
+        channels: 2,
+        samples_per_packet: SPP,
+        first_sample_index: SampleIndex::new(sequence * u64::from(SPP)),
+        host_presentation_time_ms: MonotonicMillis::new(START + sequence * 5),
+        payload: vec![0; SPP as usize * 4],
+    };
+    // The Android listener's production settings.
+    let mut config = SchedulerConfig::new(
+        SessionId::new("session-late-lock").expect("id"),
+        StreamId::new("stream-late-lock").expect("id"),
+        48_000,
+        START,
+        SPP,
+        2,
+    );
+    config.startup_buffer_target_ms = 400;
+    let scheduler = PlaybackScheduler::new(config, 0.0).expect("scheduler");
+    let ring = RenderRing::new(RenderRingConfig {
+        capacity_frames: 48_000,
+        target_fill_frames: 19_200,
+    })
+    .expect("ring");
+    let (producer, consumer) = ring.split();
+    let mut pump = PlaybackPump::new(
+        scheduler,
+        producer,
+        PlaybackPumpConfig {
+            volume: 1.0,
+            write_lead_ms: 400,
+            max_prefill_ms: 800,
+            target_depth_frames: 19_200,
+        },
+    )
+    .expect("pump");
+
+    // The host sends up to 1 s ahead of each packet's presentation time.
+    let mut sent = 0_u64;
+    let mut first_played = None;
+    let mut out = vec![0.0_f32; 960];
+    for now in (START - 400)..(START + 1_500) {
+        while START + sent * 5 < now + 1_000 {
+            let _ = pump.submit_packet(packet(sent));
+            sent += 1;
+        }
+        if now == START + LOCK_AFTER_START {
+            pump.apply_sync_offset(0.0);
+        }
+        if now >= START + LOCK_AFTER_START {
+            let _ = consumer.read_frames(&mut out);
+            if let PumpTick::Queued { sequence, .. } = pump.tick(now) {
+                first_played.get_or_insert((sequence, now));
+            }
+        }
+    }
+    let diagnostics = pump.diagnostics();
+    assert!(
+        diagnostics.dropped_before_sync > 0,
+        "the hold overflowed: {diagnostics:?}"
+    );
+    let (sequence, at) = first_played.expect("playback started");
+    let due_at_lock = LOCK_AFTER_START / 5;
+    assert!(
+        (due_at_lock..due_at_lock + 20).contains(&sequence),
+        "first played sequence {sequence}; {due_at_lock} was due when sync locked"
+    );
+    assert!(
+        at < START + LOCK_AFTER_START + 50,
+        "playback started {} ms after the lock",
+        at - START - LOCK_AFTER_START
+    );
+    assert_eq!(diagnostics.resynchronisations, 0);
 }

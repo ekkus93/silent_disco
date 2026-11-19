@@ -123,6 +123,15 @@ impl PlaybackPump {
     /// Feeds the packets held before sync locked into the scheduler, in
     /// arrival order. Rejections are counted by the jitter buffer as usual.
     fn replay_pre_sync_hold(&mut self) {
+        // When the hold overflowed, the stream before what it kept is gone
+        // for good: start the jitter buffer at the held window instead of
+        // the stream's first sequence, so the window is taken up as it is
+        // rather than read as a far-future jump that discards its start.
+        if self.dropped_before_sync > 0
+            && let Some(first_held) = self.pre_sync_hold.iter().map(|d| d.sequence.get()).min()
+        {
+            self.scheduler.skip_ahead_to(first_held);
+        }
         while let Some(datagram) = self.pre_sync_hold.pop_front() {
             self.replayed_after_sync = self.replayed_after_sync.saturating_add(1);
             let _ = self.scheduler.submit_packet(datagram);

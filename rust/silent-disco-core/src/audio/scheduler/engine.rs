@@ -167,6 +167,12 @@ impl PlaybackScheduler {
         self.jitter_buffer.accept(datagram)
     }
 
+    /// Abandons every sequence before `sequence`; see
+    /// [`crate::audio::JitterBuffer::skip_ahead_to`].
+    pub(crate) fn skip_ahead_to(&mut self, sequence: u64) -> u64 {
+        self.jitter_buffer.skip_ahead_to(sequence)
+    }
+
     /// How many packets ahead of the next expected one the jitter buffer
     /// accepts before treating the stream as having moved on.
     #[must_use]

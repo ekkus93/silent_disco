@@ -351,6 +351,27 @@ impl JitterBuffer {
         self.statistics.skipped += 1;
     }
 
+    /// Abandons every sequence before `sequence`, buffered or not, and
+    /// returns how many were abandoned; nothing changes when `sequence` is
+    /// not ahead of the next-expected one.
+    ///
+    /// For a listener whose pre-sync hold overflowed: the packets it kept
+    /// start well after the stream's first sequence, and without this the
+    /// replay would cross the reorder window measured from that first
+    /// sequence and trip far-future resynchronisation, which throws away the
+    /// buffered start of the window (startup-counter investigation,
+    /// 2026-11-19).
+    pub fn skip_ahead_to(&mut self, sequence: u64) -> u64 {
+        if sequence <= self.next_expected_sequence {
+            return 0;
+        }
+        let abandoned = sequence - self.next_expected_sequence;
+        self.packets.retain(|&buffered, _| buffered >= sequence);
+        self.next_expected_sequence = sequence;
+        self.statistics.skipped = self.statistics.skipped.saturating_add(abandoned);
+        abandoned
+    }
+
     /// Forcibly advances to the earliest currently buffered sequence,
     /// abandoning every missing sequence before it, and returns how many were
     /// abandoned. Used when a gap is too wide to be worth covering packet by
