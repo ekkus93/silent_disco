@@ -69,6 +69,7 @@ fn run_pump(
     let mut pending_boundaries = HostBoundarySchedule::at_canonical_rate(host_start_time_ms);
     let mut packetizer_disconnected = false;
     let mut last_audible_audio_end_ms = None;
+    let mut opening_pace = OpeningPace::default();
     loop {
         if stop.load(Ordering::Acquire) {
             break;
@@ -155,6 +156,7 @@ fn run_pump(
                         paused,
                         accumulated_pause_offset_ms,
                         &mut applied_pause_offset_ms,
+                        &mut opening_pace,
                     ) {
                         Ok(true) => {}
                         Ok(false) => break false,
@@ -502,6 +504,7 @@ fn wait_until_within_send_ahead_horizon(
     paused: &AtomicBool,
     accumulated_pause_offset_ms: &AtomicU64,
     applied_pause_offset_ms: &mut u64,
+    pace: &mut OpeningPace,
 ) -> Result<bool, DesktopErrorDto> {
     wait_until_within_send_ahead_horizon_with_clock(
         frame,
@@ -510,7 +513,38 @@ fn wait_until_within_send_ahead_horizon(
         paused,
         accumulated_pause_offset_ms,
         applied_pause_offset_ms,
+        pace,
     )
+}
+
+/// Paces a stream's opening (stream start-up loss, 2026-11-19).
+///
+/// At stream start every packet already inside the send-ahead horizon used
+/// to leave at once: with an 800 ms start lead and a 1 s horizon, ~40 audio
+/// datagrams back to back. On the A54 the Wi-Fi lost 18 of them (host QUIC
+/// `lost_packets=18`, one congestion event), a 65 ms dropout 0.07 s into
+/// the song, and audio datagrams are never retransmitted. Now no packet
+/// leaves faster than [`OPENING_PACE_RATE`] times real time, measured from
+/// the stream's first packet. Once the horizon is reached the horizon alone
+/// governs, so this only shapes the opening. A pause costs nothing: its
+/// duration passes in real time too.
+#[derive(Debug, Default)]
+pub(super) struct OpeningPace {
+    /// The first packet's send time and presentation time.
+    first: Option<(u64, u64)>,
+}
+
+/// How much faster than real time the opening may be sent.
+const OPENING_PACE_RATE: u64 = 2;
+
+impl OpeningPace {
+    /// When a packet presented at `presentation_ms` may be sent, given
+    /// the stream's first packet; the first packet itself may go now.
+    pub(super) fn earliest_send_ms(&mut self, now_ms: u64, presentation_ms: u64) -> u64 {
+        let (first_sent, first_presented) = *self.first.get_or_insert((now_ms, presentation_ms));
+        let ahead_ms = presentation_ms.saturating_sub(first_presented);
+        first_sent.saturating_add(ahead_ms.div_ceil(OPENING_PACE_RATE))
+    }
 }
 
 /// The injected transport clock permits deterministic pause/Stop regressions.
@@ -522,6 +556,7 @@ fn wait_until_within_send_ahead_horizon_with_clock(
     paused: &AtomicBool,
     accumulated_pause_offset_ms: &AtomicU64,
     applied_pause_offset_ms: &mut u64,
+    pace: &mut OpeningPace,
 ) -> Result<bool, DesktopErrorDto> {
     loop {
         if stop.load(Ordering::Acquire) {
@@ -549,9 +584,17 @@ fn wait_until_within_send_ahead_horizon_with_clock(
         if paused.load(Ordering::Acquire) {
             continue;
         }
-        let lead_ms = datagram.host_presentation_time_ms.get().saturating_sub(now);
+        let presentation_ms = datagram.host_presentation_time_ms.get();
+        let lead_ms = presentation_ms.saturating_sub(now);
         if lead_ms <= SEND_AHEAD_HORIZON_MS {
-            return Ok(true);
+            let earliest_ms = pace.earliest_send_ms(now, presentation_ms);
+            if now >= earliest_ms {
+                return Ok(true);
+            }
+            // Sleep exactly to the paced send time, so the opening leaves
+            // evenly rather than in poll-sized bursts.
+            thread::sleep(Duration::from_millis(earliest_ms - now).min(SEND_AHEAD_POLL_INTERVAL));
+            continue;
         }
         thread::sleep(SEND_AHEAD_POLL_INTERVAL);
     }

@@ -347,6 +347,7 @@ mod tests {
                 &paused,
                 &offset,
                 &mut applied,
+                &mut super::OpeningPace::default(),
             )
             .expect("clock lookup");
             assert!(ready);
@@ -382,6 +383,7 @@ mod tests {
                 &paused,
                 &offset,
                 &mut applied,
+                &mut super::OpeningPace::default(),
             )
             .expect("clock lookup");
             assert!(!ready, "Stop must cancel even while Paused");
@@ -389,6 +391,81 @@ mod tests {
         });
         assert!(!clock_called.load(Ordering::Acquire));
         assert_eq!(applied, 0);
+    }
+
+    /// A stream's opening leaves at twice real time, not all at once: with
+    /// an 800 ms start lead the 40 packets already inside the 1 s horizon
+    /// used to leave back to back, and Wi-Fi lost a burst of them on the A54.
+    #[test]
+    fn the_opening_is_paced_at_twice_real_time() {
+        let mut pace = super::OpeningPace::default();
+        let start = 10_000;
+        let first_presented = start + 800;
+        assert_eq!(pace.earliest_send_ms(start, first_presented), start, "the first packet goes at once");
+        let sends: Vec<u64> = (0..40)
+            .map(|k| pace.earliest_send_ms(start, first_presented + 5 * k))
+            .collect();
+        assert_eq!(sends[1], start + 3, "5 ms of audio every 2.5 ms, rounded up");
+        assert_eq!(sends[39], start + 98);
+        assert!(sends.windows(2).all(|pair| pair[1] >= pair[0]), "never earlier than the one before");
+    }
+
+    #[test]
+    fn pacing_never_holds_back_a_stream_that_has_caught_up_with_its_horizon() {
+        let mut pace = super::OpeningPace::default();
+        let start = 10_000;
+        pace.earliest_send_ms(start, start + 800);
+        // Ten seconds in, the horizon sends a packet presented 1 s ahead.
+        let now = start + 10_000;
+        assert!(pace.earliest_send_ms(now, now + 1_000) <= now);
+        // After a 30 s pause, presentation shifted by the pause and real
+        // time passed with it.
+        let after_pause = now + 30_000;
+        assert!(pace.earliest_send_ms(after_pause, after_pause + 1_000) <= after_pause);
+    }
+
+    #[test]
+    fn the_send_ahead_wait_releases_the_second_packet_only_at_its_paced_time() {
+        let paused = AtomicBool::new(false);
+        let stop = AtomicBool::new(false);
+        let offset = AtomicU64::new(0);
+        let clock = AtomicU64::new(10_000);
+        let mut pace = super::OpeningPace::default();
+        let mut applied = 0;
+        let mut first = audio_frame(10_800);
+        assert!(
+            wait_until_within_send_ahead_horizon_with_clock(
+                &mut first,
+                || Ok(clock.load(Ordering::Acquire)),
+                &stop,
+                &paused,
+                &offset,
+                &mut applied,
+                &mut pace,
+            )
+            .expect("first")
+        );
+        // The second packet is 100 ms later in the stream: it may leave 50
+        // ms after the first. Each clock read advances 1 ms.
+        let mut second = audio_frame(10_900);
+        let mut reads = Vec::new();
+        assert!(
+            wait_until_within_send_ahead_horizon_with_clock(
+                &mut second,
+                || {
+                    let now = clock.fetch_add(1, Ordering::AcqRel);
+                    reads.push(now);
+                    Ok(now)
+                },
+                &stop,
+                &paused,
+                &offset,
+                &mut applied,
+                &mut pace,
+            )
+            .expect("second")
+        );
+        assert_eq!(*reads.last().expect("read"), 10_050, "released at its paced time, not before");
     }
 
     /// The overwhelmingly common case -- no monitor active at all -- must
