@@ -89,8 +89,9 @@ pub use listener_boundary_schedule::{
 };
 pub use listener_playback::{
     FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError,
-    FfiListenerPlaybackHandle, FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence,
-    FfiSyncSampleOutcome, ListenerPlaybackError, ListenerPlaybackRuntime,
+    FfiListenerPlaybackHandle, FfiListenerSyncSession, FfiPlaybackDiagnostics, FfiPlaybackPhase,
+    FfiSyncConfidence, FfiSyncSampleOutcome, ListenerPlaybackError, ListenerPlaybackRuntime,
+    ListenerSyncSession,
 };
 pub use listener_proof::{
     FfiListenerProofSigner, FfiProofHostListener, FfiVerifiedProofListener, listener_prove_to_host,

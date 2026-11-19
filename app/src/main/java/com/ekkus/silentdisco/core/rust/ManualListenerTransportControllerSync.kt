@@ -3,6 +3,8 @@ package com.ekkus.silentdisco.core.rust
 import com.ekkus.silentdisco.core.model.ManualConnectUiState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
+import com.ekkus.silentdisco.core.uniffi.FfiListenerSyncSession
+import com.ekkus.silentdisco.core.uniffi.FfiSyncSampleOutcome
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
 import kotlinx.coroutines.CoroutineScope
@@ -23,6 +25,90 @@ private const val SYNC_PROBE_CADENCE_MS = 2_000L
 private const val SYNC_PROBE_ACQUIRE_CADENCE_MS = 250L
 
 /**
+ * Whatever the session's clock lock lives in right now: the running
+ * stream's runtime, or, before the first stream, the pre-stream
+ * [FfiListenerSyncSession]. Both keep the same clock across the handover,
+ * so probes and responses work identically on either.
+ */
+internal interface SyncProbeTarget {
+    fun nowMs(): ULong
+    fun beginSyncProbe(correlationId: ULong, localSendTimeMs: ULong)
+    fun observeSyncResponse(
+        correlationId: ULong,
+        echoedLocalSendTimeMs: ULong,
+        hostReceiveTimeMs: ULong,
+        hostSendTimeMs: ULong,
+        localReceiveTimeMs: ULong,
+    ): FfiSyncSampleOutcome
+    fun isLocked(): Boolean
+}
+
+private class RuntimeSyncTarget(private val runtime: FfiListenerPlaybackHandle) : SyncProbeTarget {
+    override fun nowMs() = runtime.nowMs()
+    override fun beginSyncProbe(correlationId: ULong, localSendTimeMs: ULong) =
+        runtime.beginSyncProbe(correlationId, localSendTimeMs)
+    override fun observeSyncResponse(
+        correlationId: ULong,
+        echoedLocalSendTimeMs: ULong,
+        hostReceiveTimeMs: ULong,
+        hostSendTimeMs: ULong,
+        localReceiveTimeMs: ULong,
+    ) = runtime.observeSyncResponse(
+        correlationId, echoedLocalSendTimeMs, hostReceiveTimeMs, hostSendTimeMs, localReceiveTimeMs,
+    )
+    override fun isLocked() = runtime.diagnostics().syncLocked
+}
+
+private class SessionSyncTarget(private val session: FfiListenerSyncSession) : SyncProbeTarget {
+    override fun nowMs() = session.nowMs()
+    override fun beginSyncProbe(correlationId: ULong, localSendTimeMs: ULong) =
+        session.beginSyncProbe(correlationId, localSendTimeMs)
+    override fun observeSyncResponse(
+        correlationId: ULong,
+        echoedLocalSendTimeMs: ULong,
+        hostReceiveTimeMs: ULong,
+        hostSendTimeMs: ULong,
+        localReceiveTimeMs: ULong,
+    ) = session.observeSyncResponse(
+        correlationId, echoedLocalSendTimeMs, hostReceiveTimeMs, hostSendTimeMs, localReceiveTimeMs,
+    )
+    override fun isLocked() = session.isLocked()
+}
+
+/** The running stream's runtime, else the pre-stream session, else nothing. */
+internal fun ManualListenerTransportController.currentSyncTarget(): SyncProbeTarget? =
+    playbackRuntime?.let(::RuntimeSyncTarget) ?: preStreamSync?.let(::SessionSyncTarget)
+
+/**
+ * Opens the pre-stream clock lock when the listener is admitted, unless a
+ * stream or a carried lock already exists, and anchors the transport clock
+ * to its timeline so sync responses translate onto it.
+ */
+internal fun ManualListenerTransportController.openPreStreamSync(handle: FfiListenerTransportHandle) {
+    if (playbackRuntime != null || syncHandover != null || preStreamSync != null) return
+    val session = try {
+        newSyncSession()
+    } catch (error: Throwable) {
+        // Not fatal: the first stream then acquires sync after it starts,
+        // as before, and may lose its opening. Visible in the log.
+        logger.w("manual.audio.pre_stream_sync_failed", error.message ?: "pre-stream sync could not open")
+        return
+    }
+    preStreamSync = session
+    transportClockOriginMs = runCatching {
+        val sessionNowMs = session.nowMs()
+        withManualHandle(handle) { it.nowMs() }
+            ?.let { transportNowMs -> transportClockOrigin(transportNowMs, sessionNowMs) }
+    }.getOrNull()
+    logger.i("manual.audio.pre_stream_sync_opened", "probing before the first stream")
+}
+
+/** Releases the pre-stream clock lock; its handover, if taken, lives on in the runtime. */
+internal fun ManualListenerTransportController.closePreStreamSync() {
+    preStreamSyncRef.getAndSet(null)?.close()
+}
+
+/**
  * Drives clock-sync probes for the life of one stream.
  *
  * The first probe goes out immediately rather than after a cadence delay:
@@ -37,12 +123,12 @@ internal fun ManualListenerTransportController.startSyncProbeLoop(
     syncProbeJob = scope.launch(Dispatchers.IO) {
         var correlationId = 1L
         while (isActive && handleGate.currentHandle() === handle) {
-            val runtime = playbackRuntime ?: break
-            val sendTimeMs = runtime.nowMs()
+            val target = currentSyncTarget() ?: break
+            val sendTimeMs = target.nowMs()
             // Register before sending: a response that beats its own
             // registration has nothing to correlate against.
             try {
-                runtime.beginSyncProbe(correlationId.toULong(), sendTimeMs)
+                target.beginSyncProbe(correlationId.toULong(), sendTimeMs)
             } catch (error: Throwable) {
                 if (!isActive || handleGate.currentHandle() !== handle) break
                 logger.w("manual.audio.sync_probe_failed", error.message ?: "sync probe registration failed")
@@ -64,7 +150,7 @@ internal fun ManualListenerTransportController.startSyncProbeLoop(
                 break
             }
             correlationId += 1
-            val locked = playbackRuntime?.diagnostics()?.syncLocked == true
+            val locked = runCatching { currentSyncTarget()?.isLocked() }.getOrNull() == true
             delay(if (locked) SYNC_PROBE_CADENCE_MS else SYNC_PROBE_ACQUIRE_CADENCE_MS)
         }
     }
@@ -147,14 +233,14 @@ internal fun ManualListenerTransportController.handleSyncResponse(
     handle: FfiListenerTransportHandle,
     event: FfiListenerTransportEvent.SyncResponseReceived,
 ) {
-    val runtime = playbackRuntime ?: return
+    val target = currentSyncTarget() ?: return
     val outcome = runCatching {
-        runtime.observeSyncResponse(
+        target.observeSyncResponse(
             event.correlationId,
             event.t1ListenerSendElapsedMs,
             event.t2HostReceiveElapsedMs,
             event.t3HostSendElapsedMs,
-            translateToPumpClock(runtime, event.receivedAtElapsedMs),
+            translateTransportElapsedToPumpClock(transportClockOriginMs, event.receivedAtElapsedMs, target::nowMs),
         )
     }.getOrElse { error ->
         logger.w("manual.audio.sync_rejected", error.message ?: "sync response rejected")

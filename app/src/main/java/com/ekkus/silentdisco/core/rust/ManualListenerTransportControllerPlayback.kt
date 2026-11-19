@@ -1,6 +1,8 @@
 package com.ekkus.silentdisco.core.rust
 
+import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.audio.OboeBridge
+import com.ekkus.silentdisco.core.uniffi.FfiAudioOutputHandle
 import com.ekkus.silentdisco.core.model.ManualConnectUiState
 import com.ekkus.silentdisco.core.model.PlaybackState
 import com.ekkus.silentdisco.core.protocol.StreamId
@@ -122,9 +124,11 @@ internal fun ManualListenerTransportController.handleStreamStarted(
 
     // A stream after the session's first continues on the previous stream's
     // clock and sync estimate, so it plays from its first packet instead of
-    // dropping ~0.8 s while sync is re-acquired.
-    val handover = syncHandover
+    // dropping ~0.8 s while sync is re-acquired. The first stream continues
+    // on the clock lock taken since approval, for the same reason.
+    val handover = syncHandover ?: runCatching { preStreamSync?.syncHandover() }.getOrNull()
     syncHandover = null
+    closePreStreamSync()
     val runtime = runCatching {
         val config =
             FfiListenerPlaybackConfig(
@@ -181,6 +185,17 @@ internal fun ManualListenerTransportController.handleStreamStarted(
     if (oboeStatus != OBOE_ADAPTER_STATUS_OK) {
         stopPlayback()
         handlePlaybackEngineFailure(IllegalStateException("Oboe stream failed to open (status=$oboeStatus)"))
+        return
+    }
+    // The output now plays this stream's ring; the standby ring is done.
+    runCatching { releaseStandbyOutput() }
+        .onFailure { error -> logger.w("manual.audio.standby_release_failed", error.message ?: "release failed") }
+    // Audio that overtook this stream's StreamStart goes in first, before
+    // the transport starts submitting directly, so the stream's opening is
+    // the runtime's to schedule rather than lost.
+    val earlyReplayFailure = runCatching { replayEarlyAudio(runtime, session, event.streamId) }.exceptionOrNull()
+    if (earlyReplayFailure != null) {
+        handlePlaybackEngineFailure(earlyReplayFailure)
         return
     }
     // Hand the audio path to Rust: from here the transport submits each
@@ -294,6 +309,9 @@ internal fun ManualListenerTransportController.endStream(
         // A teardown ends the session: its clock lock must not carry over.
         syncHandover?.let { stale -> capture { stale.close() } }
         syncHandover = null
+        capture { closePreStreamSync() }
+        clearEarlyAudio()
+        capture { releaseStandbyOutput() }
     }
     val runtime = playbackRuntime ?: run {
         // No stream to end, but a teardown still has to release the
@@ -344,9 +362,77 @@ internal fun ManualListenerTransportController.endStream(
     return firstFailure
 }
 
+/** Audio held while no stream runtime exists: 2 s of 5 ms packets. */
+internal const val MAX_EARLY_AUDIO_PACKETS = 400
+
+/**
+ * Holds audio that arrived before its stream's runtime opened, keeping the
+ * newest [MAX_EARLY_AUDIO_PACKETS]. The runtime decides what is still
+ * playable once it has it; this only stops the transport's ordering from
+ * deciding for it.
+ */
+internal fun ManualListenerTransportController.holdEarlyAudio(event: FfiListenerTransportEvent.AudioReceived) {
+    synchronized(earlyAudio) {
+        earlyAudio.addLast(event)
+        while (earlyAudio.size > MAX_EARLY_AUDIO_PACKETS) {
+            earlyAudio.removeFirst()
+            earlyAudioDropped += 1
+        }
+    }
+}
+
+/**
+ * Hands [runtime] the held audio of [streamId], in arrival order, and forgets
+ * the rest (an earlier stream's leftovers). Returns how many were submitted.
+ */
+internal fun ManualListenerTransportController.replayEarlyAudio(
+    runtime: FfiListenerPlaybackHandle,
+    session: SessionId,
+    streamId: String,
+): Int {
+    val (held, dropped) = synchronized(earlyAudio) {
+        val packets = earlyAudio.toList()
+        earlyAudio.clear()
+        val dropped = earlyAudioDropped
+        earlyAudioDropped = 0
+        packets to dropped
+    }
+    val forStream = held.filter { it.streamId == streamId }
+    forStream.forEach { event -> runtime.submitPacket(event.toFfiAudioPacket(), session.value, event.streamId) }
+    if (held.isNotEmpty() || dropped > 0) {
+        logger.i(
+            "manual.audio.early_audio_replayed",
+            "streamId=$streamId replayed=${forStream.size} otherStream=${held.size - forStream.size} " +
+                "droppedOverBound=$dropped",
+        )
+    }
+    return forStream.size
+}
+
+/** Forgets held early audio, for a teardown. */
+internal fun ManualListenerTransportController.clearEarlyAudio() {
+    synchronized(earlyAudio) {
+        earlyAudio.clear()
+        earlyAudioDropped = 0
+    }
+}
+
+private fun FfiListenerTransportEvent.AudioReceived.toFfiAudioPacket() = FfiAudioPacket(
+    sequence = sequence,
+    sampleRate = sampleRate,
+    channels = channels,
+    samplesPerPacket = samplesPerPacket,
+    firstSampleIndex = firstSampleIndex,
+    hostPresentationTimeMs = hostPresentationTimeMs,
+    payload = payload,
+)
+
 internal fun ManualListenerTransportController.handleAudioReceived(event: FfiListenerTransportEvent.AudioReceived) {
     val session = sessionId ?: return
-    val runtime = playbackRuntime ?: return
+    val runtime = playbackRuntime ?: run {
+        holdEarlyAudio(event)
+        return
+    }
     receivedCount += 1
     val sequence = event.sequence.toLong()
     val previousSequence = lastReceivedSequence
@@ -362,19 +448,7 @@ internal fun ManualListenerTransportController.handleAudioReceived(event: FfiLis
     // packet it rejects (duplicate, late, out of window) is ordinary
     // traffic that its own counters already account for.
     runCatching {
-        runtime.submitPacket(
-            FfiAudioPacket(
-                sequence = event.sequence,
-                sampleRate = event.sampleRate,
-                channels = event.channels,
-                samplesPerPacket = event.samplesPerPacket,
-                firstSampleIndex = event.firstSampleIndex,
-                hostPresentationTimeMs = event.hostPresentationTimeMs,
-                payload = event.payload,
-            ),
-            session.value,
-            event.streamId,
-        )
+        runtime.submitPacket(event.toFfiAudioPacket(), session.value, event.streamId)
     }.onFailure { error -> handlePlaybackEngineFailure(error) }
 }
 
@@ -395,3 +469,44 @@ internal fun manualResumedUiState(
     trustedForFuture,
     if (syncLocked) PlaybackState.PLAYING else PlaybackState.BUFFERING,
 )
+
+/** A standby ring: 0.1 s, enough for the callback to read silence from. */
+private const val STANDBY_RING_FRAMES: UInt = 4_800u
+
+/**
+ * Opens the native output on an empty ring, so it is already running when
+ * the first stream arrives. Returns the placeholder's release, or null when
+ * the output could not open (the first stream then opens it, as before).
+ */
+internal fun openSilentStandbyOutput(): AutoCloseable? {
+    val placeholder = FfiAudioOutputHandle.open(STANDBY_RING_FRAMES, 1u)
+    val status = OboeBridge.nativeOboeOpen(placeholder.engineToken())
+    if (status != OBOE_ADAPTER_STATUS_OK) {
+        placeholder.release()
+        placeholder.close()
+        return null
+    }
+    return AutoCloseable {
+        placeholder.release()
+        placeholder.close()
+    }
+}
+
+/** Opens the standby output after approval unless an output is already open. */
+internal fun ManualListenerTransportController.openStandbyOutputIfClosed() {
+    if (standbyOutput != null || playbackRuntime != null) return
+    standbyOutput = runCatching { openStandbyOutput() }
+        .onFailure { error ->
+            // Not fatal: the first stream opens the output itself, as before.
+            logger.w("manual.audio.standby_output_failed", error.message ?: "standby output failed")
+        }
+        .getOrNull()
+        ?.also { logger.i("manual.audio.standby_output_opened", "the output is open before the first stream") }
+}
+
+/** Releases the standby placeholder; the native output itself is not touched. */
+internal fun ManualListenerTransportController.releaseStandbyOutput() {
+    val standby = standbyOutput ?: return
+    standbyOutput = null
+    standby.close()
+}

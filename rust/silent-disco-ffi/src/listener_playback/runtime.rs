@@ -74,6 +74,14 @@ pub struct ListenerSyncHandover {
     estimator: ClockSyncEstimator,
 }
 
+impl ListenerSyncHandover {
+    /// A handover from a session's pre-stream clock lock
+    /// ([`super::sync_session::ListenerSyncSession`]).
+    pub(super) fn new(clock: Arc<PumpClock>, estimator: ClockSyncEstimator) -> Self {
+        Self { clock, estimator }
+    }
+}
+
 /// Pump-thread liveness exported alongside playback accounting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PumpLiveness {

@@ -8,6 +8,7 @@ import com.ekkus.silentdisco.core.protocol.SessionId
 import com.ekkus.silentdisco.core.protocol.StreamId
 import com.ekkus.silentdisco.core.uniffi.FfiListenerPlaybackHandle
 import com.ekkus.silentdisco.core.uniffi.FfiListenerSyncHandover
+import com.ekkus.silentdisco.core.uniffi.FfiListenerSyncSession
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportEvent
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportException
 import com.ekkus.silentdisco.core.uniffi.FfiListenerTransportHandle
@@ -93,6 +94,17 @@ class ManualListenerTransportController(
     internal val closeNativeOutput: () -> Unit = OboeBridge::nativeOboeClose,
     /** Rust's busy-refusal retry policy; JVM tests replace it (no native library). */
     private val busyRetries: BusyJoinRetries = BusyJoinRetries(),
+    /**
+     * Opens the Rust clock lock held from approval until the first stream.
+     * JVM tests replace it: they cannot load the Rust library.
+     */
+    internal val newSyncSession: () -> FfiListenerSyncSession = { FfiListenerSyncSession() },
+    /**
+     * Opens the native output on an empty placeholder ring before the first
+     * stream, returning what releases the placeholder (the output stays
+     * open), or null when it cannot. JVM tests replace it: no Oboe there.
+     */
+    internal val openStandbyOutput: () -> AutoCloseable? = ::openSilentStandbyOutput,
 ) : AutoCloseable {
     private val lifetime = ManualListenerLifetime()
     internal val handleGate = ListenerNativeHandleGate<FfiListenerTransportHandle>()
@@ -159,6 +171,38 @@ class ManualListenerTransportController(
      * teardown, so it never carries into another session.
      */
     internal var syncHandover: FfiListenerSyncHandover? = null
+
+    internal val preStreamSyncRef = AtomicReference<FfiListenerSyncSession?>(null)
+
+    /**
+     * The session's clock lock from approval until its first stream opens
+     * (startup-counter investigation, 2026-11-19). Without it the first
+     * stream acquired sync only after `StreamStart`, and the audio whose
+     * presentation time passed meanwhile -- the first ~0.57 s of the first
+     * song on the A54 -- was skipped. The first stream opens from its
+     * handover, then probing moves to the stream's runtime.
+     */
+    internal var preStreamSync: FfiListenerSyncSession?
+        get() = preStreamSyncRef.get()
+        set(value) = preStreamSyncRef.set(value)
+
+    /**
+     * Audio that arrived while no stream runtime existed, held for the stream
+     * it belongs to (startup-counter investigation, 2026-11-19). On the
+     * secure transport the host's first audio datagrams can overtake its
+     * `StreamStart`; dropping them cut the first ~0.12 s of the first song
+     * on the A54. Bounded; guarded by its own monitor.
+     */
+    internal val earlyAudio = ArrayDeque<FfiListenerTransportEvent.AudioReceived>()
+
+    /**
+     * The placeholder ring the native output plays (silence) between
+     * approval and the first stream, so the first stream rebinds an open
+     * output instead of spending ~350 ms opening one (startup-counter
+     * investigation, 2026-11-19). Released once a stream has rebound.
+     */
+    @Volatile internal var standbyOutput: AutoCloseable? = null
+    internal var earlyAudioDropped: Long = 0
 
     internal val _connectState = MutableStateFlow<ManualConnectUiState>(ManualConnectUiState.Idle)
     val connectState: StateFlow<ManualConnectUiState> = _connectState.asStateFlow()
@@ -387,6 +431,8 @@ class ManualListenerTransportController(
             is FfiListenerTransportEvent.JoinApproved -> {
                 trustedForFuture = event.trustedForFuture
                 _connectState.value = ManualConnectUiState.Approved(trustedForFuture)
+                openPreStreamSync(handle)
+                openStandbyOutputIfClosed()
                 startSyncProbeLoop(scope, handle)
             }
             is FfiListenerTransportEvent.JoinRejected ->

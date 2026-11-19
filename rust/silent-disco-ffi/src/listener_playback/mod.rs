@@ -21,18 +21,22 @@ mod ffi_handle;
 mod ffi_types;
 mod pump;
 mod runtime;
+mod sync_session;
 
 #[cfg(test)]
 mod stop_tests;
+#[cfg(test)]
+mod sync_session_tests;
 #[cfg(test)]
 mod sync_tests;
 #[cfg(test)]
 mod tests;
 
 pub use error::ListenerPlaybackError;
-pub use ffi_handle::FfiListenerPlaybackHandle;
+pub use ffi_handle::{FfiListenerPlaybackHandle, FfiListenerSyncSession};
 pub use ffi_types::{
     FfiAudioPacket, FfiCallbackCaptureBatch, FfiListenerPlaybackConfig, FfiListenerPlaybackError,
     FfiPlaybackDiagnostics, FfiPlaybackPhase, FfiSyncConfidence, FfiSyncSampleOutcome,
 };
 pub use runtime::ListenerPlaybackRuntime;
+pub use sync_session::ListenerSyncSession;

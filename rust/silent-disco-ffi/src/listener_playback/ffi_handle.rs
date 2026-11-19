@@ -18,6 +18,7 @@ use super::ffi_types::{
     FfiPlaybackDiagnostics, FfiSyncSampleOutcome,
 };
 use super::runtime::{ListenerPlaybackRuntime, ListenerSyncHandover};
+use super::sync_session::ListenerSyncSession;
 
 /// One session's clock lock, carried from a finished stream into the next
 /// stream's [`FfiListenerPlaybackHandle::open_continuing`]. Opaque to the
@@ -433,5 +434,91 @@ impl FfiListenerPlaybackHandle {
     ) -> Result<(), FfiListenerPlaybackError> {
         self.runtime.submit_packet(datagram)?;
         Ok(())
+    }
+}
+
+/// A listener's clock lock from admission until its session's first stream
+/// (startup-counter investigation, 2026-11-19). The platform probes through
+/// it exactly as through a running stream's handle, then opens the first
+/// stream with [`FfiListenerPlaybackHandle::open_continuing`] and
+/// [`Self::sync_handover`], so the stream starts already locked.
+#[derive(Debug, uniffi::Object)]
+pub struct FfiListenerSyncSession {
+    inner: ListenerSyncSession,
+}
+
+#[uniffi::export]
+impl FfiListenerSyncSession {
+    /// A new clock and an empty estimate.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidConfiguration` if the estimator cannot be created.
+    #[uniffi::constructor]
+    pub fn new() -> Result<Arc<Self>, FfiListenerPlaybackError> {
+        Ok(Arc::new(Self {
+            inner: ListenerSyncSession::new()?,
+        }))
+    }
+
+    /// Monotonic milliseconds on the timeline the first stream will use.
+    #[must_use]
+    pub fn now_ms(&self) -> u64 {
+        self.inner.now_ms()
+    }
+
+    /// Registers one outbound sync probe before it is sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Sync` for a duplicate or over-capacity probe.
+    pub fn begin_sync_probe(
+        &self,
+        correlation_id: u64,
+        local_send_time_ms: u64,
+    ) -> Result<(), FfiListenerPlaybackError> {
+        self.inner
+            .begin_sync_probe(correlation_id, local_send_time_ms)?;
+        Ok(())
+    }
+
+    /// Feeds one correlated four-timestamp sync response.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Sync` when the response does not correlate or its timestamps
+    /// are impossible.
+    pub fn observe_sync_response(
+        &self,
+        correlation_id: u64,
+        echoed_local_send_time_ms: u64,
+        host_receive_time_ms: u64,
+        host_send_time_ms: u64,
+        local_receive_time_ms: u64,
+    ) -> Result<FfiSyncSampleOutcome, FfiListenerPlaybackError> {
+        Ok(self
+            .inner
+            .observe_sync_response(
+                correlation_id,
+                echoed_local_send_time_ms,
+                host_receive_time_ms,
+                host_send_time_ms,
+                local_receive_time_ms,
+            )?
+            .into())
+    }
+
+    /// Whether a stream opened now would start already locked.
+    #[must_use]
+    pub fn is_locked(&self) -> bool {
+        self.inner.is_locked()
+    }
+
+    /// The clock and estimate for the session's first stream.
+    #[must_use]
+    pub fn sync_handover(&self) -> Arc<FfiListenerSyncHandover> {
+        Arc::new(FfiListenerSyncHandover {
+            inner: self.inner.sync_handover(),
+        })
     }
 }
