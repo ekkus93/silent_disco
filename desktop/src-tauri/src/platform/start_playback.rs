@@ -18,9 +18,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-/// Startup presentation buffer before the first audio sample plays, matching
-/// this project's ~400ms baseline (see `CLAUDE.md`).
-const STARTUP_BUFFER_MS: u64 = 400;
+/// How far after Play the stream's first sample is presented: the time every
+/// listener has to receive `StreamStart`, open its runtime and output, and
+/// take the stream's opening audio. Not the listener's own ~400 ms startup
+/// buffer (`CLAUDE.md`), which it keeps. Raised from 400 ms on 2026-11-19: on
+/// the A54 a first stream needed ~0.6 s after `StreamStart` before audio
+/// flowed, so the song's opening was lost (startup-counter investigation).
+/// The Android host uses the same lead.
+const STARTUP_BUFFER_MS: u64 = 800;
 
 /// Resolves the current host draft's audio source, opens the shared
 /// decoder, spawns the shared packetizer, and starts real-time delivery.

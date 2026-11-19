@@ -341,4 +341,11 @@ private fun MainViewModel.reportHostPlaybackCommandFailure(action: String, error
     refreshHostDiagnostics()
 }
 
-private const val HOST_STREAM_START_LEAD_MS = 500L
+/**
+ * How far after Play the stream's first sample is presented: the time each
+ * listener has to receive StreamStart, open its runtime and output, and take
+ * the opening audio. 800 ms, as on the desktop host (raised 2026-11-19 from
+ * 500 ms; on the A54 a first stream needed ~0.6 s after StreamStart before
+ * audio flowed, so the song's opening was lost).
+ */
+private const val HOST_STREAM_START_LEAD_MS = 800L
