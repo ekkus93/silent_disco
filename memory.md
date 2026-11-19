@@ -2068,3 +2068,9 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Gapless race item now open only for a listener disconnect inside a reservation race.
 - 2026-11-18 UI finding logged (remediation TODO §2 list, owner chose "record first"): a refused desktop queue edit makes the host_workflow_ops command wait the full 2 s of wait_for_queue_revision_change before returning; the error notification itself is immediate.
 - 2026-11-18T22:00:19Z claude-opus-5-5: fixed the 2 s refused-edit wait. `DesktopNotificationBuffer::operation_refused(op_id)` (last 32 error notifications with an operation ID); `wait_for_queue_revision_change(previous, operation_id)` returns None on refusal; `retarget_after_queue_change` passes the receipt. npm run check, desktop clippy, cargo test --locked (440) passed.
+
+## 2026-11-19T09:19:53Z - claude-opus-5-5 - Listener drop inside the reservation race; gapless §5 virtual-test item closed
+- `workflow_edit_race_tests.rs`: `listener_drops_inside_the_race_and_rejoins(DropPoint::{Reserved, BoundarySent})`. The reservation comes ~1 s before the boundary is *applied*, but the boundary is only *sent* when the pump reaches it, so "drop after reservation" never exercises replay; drop after the boundary is received to need the host replay. A rejoin then gets its first audio already past the boundary (host sends 1 s ahead).
+- Mutation: dropping `controls.extend(upcoming)` in `transport/socket/host/mod.rs::snapshot_at` fails the BoundarySent test only.
+- Gapless TODO "deterministic virtual tests" item checked [x] 2026-11-19.
+- One unidentified desktop `cargo test` failure (440 passed / 1 failed) in a single run; log not kept; 3 later runs clean (442/442). Watch for it.
