@@ -386,6 +386,9 @@ pub(super) struct ReceivedStream {
     /// `(first_sample_index, samples_per_packet, sequence)` per datagram.
     pub(super) audio: Vec<(u64, u64, u64)>,
     pub(super) boundaries: Vec<(String, u64)>,
+    /// Audio datagrams received again: the host sends a stream's opening
+    /// twice (2026-11-20), and a listener keeps the first copy.
+    pub(super) duplicate_audio: u64,
     pub(super) start_entry: Option<String>,
     /// The first `StreamStart`'s host start time, before any pause.
     pub(super) start_time_ms: Option<u64>,
@@ -413,6 +416,7 @@ pub(super) fn receive_until_stop(listener: &mut dyn ListenerTransportNode) -> Re
     let mut stream = ReceivedStream {
         audio: Vec::new(),
         boundaries: Vec::new(),
+        duplicate_audio: 0,
         start_entry: None,
         start_time_ms: None,
         last_audio_end_ms: 0,
@@ -420,6 +424,7 @@ pub(super) fn receive_until_stop(listener: &mut dyn ListenerTransportNode) -> Re
     };
     let deadline = Instant::now() + TEST_TIMEOUT;
     let mut stopped_at = None;
+    let mut seen = std::collections::HashSet::new();
     loop {
         let wait = if stopped_at.is_some() {
             Duration::from_millis(100)
@@ -433,6 +438,10 @@ pub(super) fn receive_until_stop(listener: &mut dyn ListenerTransportNode) -> Re
                 ..
             }) => {
                 let samples = u64::from(audio.samples_per_packet);
+                if !seen.insert(audio.sequence.get()) {
+                    stream.duplicate_audio += 1;
+                    continue;
+                }
                 stream.audio.push((
                     audio.first_sample_index.get(),
                     samples,

@@ -70,6 +70,7 @@ fn run_pump(
     let mut packetizer_disconnected = false;
     let mut last_audible_audio_end_ms = None;
     let mut opening_pace = OpeningPace::default();
+    let mut opening_resend = OpeningResend::default();
     loop {
         if stop.load(Ordering::Acquire) {
             break;
@@ -182,6 +183,13 @@ fn run_pump(
                 };
                 if !accepted {
                     break;
+                }
+                if let Some(copy) = opening_resend.after_sent(&frame, applied_pause_offset_ms) {
+                    // Best effort: a pause or stop now simply skips the copy.
+                    if let Err(error) = network.broadcast_playback_frame_unless_paused(&copy, paused, stop) {
+                        streaming_error = Some(error);
+                        break;
+                    }
                 }
                 let audio_end_ms = match &frame {
                     ProtocolFrame::Audio(audio) => Some(
@@ -537,6 +545,54 @@ pub(super) struct OpeningPace {
 /// How much faster than real time the opening may be sent.
 const OPENING_PACE_RATE: u64 = 2;
 
+/// How much of a stream's opening is sent twice.
+const OPENING_RESEND_MS: u64 = 200;
+
+/// How many packets later each copy goes: ~50 ms at the opening's paced rate,
+/// so a loss that takes out a moment of Wi-Fi does not take both copies.
+const OPENING_RESEND_DELAY_PACKETS: usize = 20;
+
+/// Sends each packet of a stream's first [`OPENING_RESEND_MS`] a second time,
+/// [`OPENING_RESEND_DELAY_PACKETS`] packets later (stream start-up loss,
+/// 2026-11-20). Pacing the opening cut Wi-Fi loss at stream start from 18
+/// packets to 4 on the A54, all in the first ~50 ms; audio datagrams are not
+/// retransmitted. A listener drops the copy of a packet it already has as a
+/// duplicate and fills a gap with the copy of one it lost; playback runs
+/// ~800 ms behind, so the copy is in time. Copies never reach the local
+/// monitor. A pause during the opening discards copies not yet sent: their
+/// presentation time predates the pause.
+#[derive(Default)]
+pub(super) struct OpeningResend {
+    first_presentation_ms: Option<u64>,
+    /// Copies waiting, with the pause offset they were sent under.
+    pending: VecDeque<(ProtocolFrame, u64)>,
+}
+
+impl OpeningResend {
+    /// Called after `frame` was sent under `pause_offset_ms`. Returns the copy
+    /// due to be sent now, if any.
+    pub(super) fn after_sent(&mut self, frame: &ProtocolFrame, pause_offset_ms: u64) -> Option<ProtocolFrame> {
+        let ProtocolFrame::Audio(datagram) = frame else {
+            return None;
+        };
+        let presentation_ms = datagram.host_presentation_time_ms.get();
+        let first = *self.first_presentation_ms.get_or_insert(presentation_ms);
+        let in_opening = presentation_ms.saturating_sub(first) < OPENING_RESEND_MS;
+        if in_opening {
+            self.pending.push_back((frame.clone(), pause_offset_ms));
+        }
+        if self.pending.len() <= OPENING_RESEND_DELAY_PACKETS && in_opening {
+            return None;
+        }
+        let (copy, sent_offset_ms) = self.pending.pop_front()?;
+        if sent_offset_ms != pause_offset_ms {
+            self.pending.clear();
+            return None;
+        }
+        Some(copy)
+    }
+}
+
 impl OpeningPace {
     /// When a packet presented at `presentation_ms` may be sent, given
     /// the stream's first packet; the first packet itself may go now.
@@ -600,3 +656,4 @@ fn wait_until_within_send_ahead_horizon_with_clock(
     }
 }
 use silent_disco_core::audio::{HostBoundarySchedule, PendingHostBoundary};
+use std::collections::VecDeque;

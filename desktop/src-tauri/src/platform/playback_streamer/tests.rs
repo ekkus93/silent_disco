@@ -468,6 +468,66 @@ mod tests {
         assert_eq!(*reads.last().expect("read"), 10_050, "released at its paced time, not before");
     }
 
+    fn sequenced_audio(sequence: u64, presentation_ms: u64) -> ProtocolFrame {
+        let ProtocolFrame::Audio(mut datagram) = audio_frame(presentation_ms) else {
+            unreachable!("audio_frame builds audio");
+        };
+        datagram.sequence = PacketSequence::new(sequence);
+        ProtocolFrame::Audio(datagram)
+    }
+
+    fn sequence_of(frame: &ProtocolFrame) -> u64 {
+        match frame {
+            ProtocolFrame::Audio(datagram) => datagram.sequence.get(),
+            _ => panic!("expected audio"),
+        }
+    }
+
+    /// The first 200 ms are sent twice, each copy 20 packets after its
+    /// original; nothing later is copied (stream start-up loss, 2026-11-20).
+    #[test]
+    fn each_packet_of_the_opening_is_sent_once_more_twenty_packets_later() {
+        let mut resend = super::OpeningResend::default();
+        let mut copies = Vec::new();
+        for sequence in 0..200 {
+            let frame = sequenced_audio(sequence, 10_800 + 5 * sequence);
+            if let Some(copy) = resend.after_sent(&frame, 0) {
+                copies.push((sequence, sequence_of(&copy)));
+            }
+        }
+        assert_eq!(copies.len(), 40, "200 ms of 5 ms packets");
+        assert_eq!(copies.first(), Some(&(20, 0)), "the first copy follows packet 20");
+        assert!(copies.iter().all(|(sent_after, copied)| sent_after - copied == 20));
+        assert_eq!(copies.last(), Some(&(59, 39)), "the last packet of the opening");
+    }
+
+    #[test]
+    fn a_pause_during_the_opening_discards_copies_not_yet_sent() {
+        let mut resend = super::OpeningResend::default();
+        for sequence in 0..10 {
+            assert!(resend.after_sent(&sequenced_audio(sequence, 10_800 + 5 * sequence), 0).is_none());
+        }
+        // Resumed with a 2 s pause offset: copies sent under the old offset
+        // carry pre-pause presentation times and must not go out.
+        let copies: Vec<u64> = (10..80)
+            .filter_map(|sequence| resend.after_sent(&sequenced_audio(sequence, 12_800 + 5 * sequence), 2_000))
+            .map(|copy| sequence_of(&copy))
+            .collect();
+        assert!(copies.iter().all(|&sequence| sequence >= 10), "no pre-pause copy: {copies:?}");
+    }
+
+    #[test]
+    fn control_frames_are_never_copied() {
+        let mut resend = super::OpeningResend::default();
+        let stop = ProtocolFrame::Control(ControlMessage::Disconnect(Disconnect {
+            session_id: SessionId::new("session-pump-test").expect("session id"),
+            listener_id: silent_disco_core::domain::DeviceId::new("device-pump-test")
+                .expect("device id"),
+            reason: "test".to_owned(),
+        }));
+        assert!(resend.after_sent(&stop, 0).is_none());
+    }
+
     /// The overwhelmingly common case -- no monitor active at all -- must
     /// also be a true no-op.
     #[test]

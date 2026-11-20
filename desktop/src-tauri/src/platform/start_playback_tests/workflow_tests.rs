@@ -271,6 +271,11 @@ fn playback_crosses_every_queued_boundary_and_ends_with_the_session_still_open()
     );
     stream.assert_contiguous();
     assert_eq!(stream.total_samples(), 3 * SHORT_TRACK_SAMPLES);
+    // The opening's 200 ms (40 packets of 5 ms) arrives twice (2026-11-20).
+    assert_eq!(
+        stream.duplicate_audio, 40,
+        "every packet of the opening sent once more"
+    );
     assert!(stream.stop_time_ms >= stream.last_audio_end_ms);
 
     let ended = workflow.wait(|snapshot| {
