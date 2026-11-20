@@ -82,3 +82,9 @@
 - **Run 4 (diagnostics, AppImage `1b5ebd15…`, APK `ac81c26d…`):** host `audio_datagrams_sent=7200`, QUIC `lost_packets=18 congestion_events=1`; listener `audioDatagramsReceived=7182 eventDrops=0`. Loss on the Wi-Fi, in the host's ~40-packet opening burst; 65 ms silence at 0.07 s.
 - **Run 5 (paced opening, AppImage `fea21bdf…`):** QUIC `lost_packets=4`; listener received 7 196; ring-input capture has no silent gap, the first 50 ms block at 84 % level (concealment), both boundaries exact.
 - Evidence: `~/work/silent_disco-evidence/playback-run-2026-11-19/run4-transport-stats/`, `run5-paced-opening/` (not CI evidence).
+
+## 2026-11-20 — Opening sent twice: no packet lost to playback (A54 run 6)
+
+- **Build:** AppImage `4224605b…` (desktop opening paced + first 200 ms re-sent 20 packets later), A54 APK `ac81c26d…`.
+- **Measured:** host `audio_datagrams_sent=7240` (40 copies), QUIC `lost_packets=5`; listener received 7 235, accepted **7 200 / 7 200**, `duplicate=35`; ring-input capture: no gap, no level dip (first 50 ms at 98.5 %), boundaries exactly 12.000 / 24.000 s.
+- Evidence: `~/work/silent_disco-evidence/playback-run-2026-11-19/run6-opening-resend/` (not CI evidence).

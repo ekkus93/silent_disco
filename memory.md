@@ -2096,3 +2096,8 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Intermittent: one failure of `songs_added_during_live_playback_are_queued_and_play_at_the_exact_boundary` in 12 network runs after pacing; message not captured; that test reads its listener only after staging (overflow-prone pattern).
 - Open option for the owner: send the first ~200 ms twice to cover the last 4 packets.
 - Owner took the A54 away 2026-11-19 ~23:15Z; Battery Saver was left off by my runs.
+
+## 2026-11-20T09:14:48Z - claude-opus-5-5 - Desktop opening sent twice; stream start now lossless on the A54
+- `OpeningResend` in desktop pump: each packet of the first 200 ms re-sent 20 packets later (~50 ms at 2x pacing). Run 6: QUIC lost 5, listener accepted 7200/7200, duplicates 35, capture clean.
+- Test receiver `receive_until_stop` now skips duplicate sequences (`duplicate_audio` count); a raw receiver would fail contiguity on the intentional copies.
+- Not covered: Android host (sends at 1x from the start, never measured for start loss), multiple listeners (40 extra datagrams per listener per stream start).
