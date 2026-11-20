@@ -124,8 +124,10 @@ fn queue_commands_apply_current_revisions_and_reject_stale_ones_visibly() {
             .eq(reordered.iter())
     });
 
-    // Both revisions are now stale: the actor rejects the removal and the
-    // frontend channel receives the rejection; the queue is unchanged.
+    // Both revisions are now stale: the actor rejects the removal for its
+    // stale queue revision (a queue edit's precondition; the snapshot revision
+    // is not checked for queue edits) and the frontend channel receives the
+    // rejection; the queue is unchanged.
     host_workflow_ops::remove_host_queue_entry(
         &workflow.state,
         &workflow.registry,
@@ -138,7 +140,7 @@ fn queue_commands_apply_current_revisions_and_reject_stale_ones_visibly() {
     .expect("the command is accepted for authoritative validation");
     workflow
         .notifications
-        .wait_for_error("expected snapshot revision");
+        .wait_for_error("queue revision changed");
     assert_eq!(workflow.queue_ids(), reordered);
 
     // A fresh snapshot revision with a stale queue revision is still rejected.
@@ -237,6 +239,82 @@ fn songs_added_during_live_playback_are_queued_and_play_at_the_exact_boundary() 
     );
     stream.assert_contiguous();
     assert!(stream.stop_time_ms >= stream.last_audio_end_ms);
+    listener.shutdown().expect("listener shutdown");
+    workflow.close();
+}
+
+/// Device matrix, 2026-11-20: during playback the desktop's move and remove
+/// buttons silently did nothing on the A54. They send the revisions on screen,
+/// and position updates outdate the snapshot revision within milliseconds; the
+/// actor refused the edit. A queue edit is now checked against its queue
+/// revision alone, so an edit made from what the screen shows applies.
+#[test]
+fn live_moves_and_removals_from_the_shown_revisions_apply_and_play_in_order() {
+    let workflow = open_or_skip!();
+    let picked = workflow.pick(&[
+        ("current.wav", long_pcm_wav()),
+        ("b.wav", pcm_wav()),
+        ("c.wav", pcm_wav()),
+    ]);
+    workflow.add_songs(&picked).expect("queue three songs");
+    workflow.wait(|snapshot| snapshot.host_queue.entries().len() == 3);
+    let ids = workflow.queue_ids();
+    let endpoint = workflow.create_session();
+    let mut listener = workflow.join_listener(endpoint);
+    workflow
+        .state
+        .start_host_playback(&workflow.registry)
+        .expect("start playback");
+    let _ = wait_for_stream_start(&mut *listener);
+    let _ = wait_for_audio(&mut *listener);
+
+    // What the screen shows when the user presses "Move c.wav up".
+    let (shown_revision, shown_queue_revision) = workflow.revisions();
+    let shown = workflow.snapshot().revision;
+    workflow.wait(|snapshot| snapshot.revision > shown);
+    let moved = vec![ids[0].clone(), ids[2].clone(), ids[1].clone()];
+    host_workflow_ops::reorder_host_queue(
+        &workflow.state,
+        &workflow.registry,
+        ReorderHostQueueRequest {
+            expected_revision: shown_revision,
+            expected_queue_revision: shown_queue_revision,
+            ordered_entry_ids: moved.clone(),
+        },
+    )
+    .expect("the reorder is submitted");
+    workflow.wait(|snapshot| {
+        snapshot
+            .host_queue
+            .entries()
+            .iter()
+            .map(|entry| &entry.entry_id)
+            .eq(moved.iter())
+    });
+
+    // Then "Remove b.wav", again from what the screen shows.
+    let (shown_revision, shown_queue_revision) = workflow.revisions();
+    let shown = workflow.snapshot().revision;
+    workflow.wait(|snapshot| snapshot.revision > shown);
+    host_workflow_ops::remove_host_queue_entry(
+        &workflow.state,
+        &workflow.registry,
+        HostQueueEntryCommandRequest {
+            expected_revision: shown_revision,
+            expected_queue_revision: shown_queue_revision,
+            entry_id: ids[1].clone(),
+        },
+    )
+    .expect("the removal is submitted");
+    workflow.wait(|snapshot| snapshot.host_queue.entries().len() == 2);
+
+    let stream = receive_until_stop(&mut *listener);
+    assert_eq!(
+        stream.boundaries,
+        vec![(ids[2].clone(), LONG_TRACK_SAMPLES)],
+        "c plays right after the current song, and b not at all"
+    );
+    stream.assert_contiguous();
     listener.shutdown().expect("listener shutdown");
     workflow.close();
 }

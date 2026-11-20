@@ -219,7 +219,8 @@ impl ActorState {
                 // serialized command, so requiring the UI's sampled revision here can reject
                 // the only shutdown request while leaving the host advertised. The actor still
                 // validates that a session is active in `end_host_session`; all other commands
-                // retain optimistic revision checks to protect against stale edits.
+                // retain optimistic revision checks to protect against stale edits
+                // (queue edits use their queue revision instead; see below).
                 // Shutdown is also terminal. `CoreActorRuntime::shutdown` samples the
                 // revision and queues Shutdown separately; a command that lands in
                 // between would reject a stale Shutdown, leave the actor running, and
@@ -234,7 +235,25 @@ impl ActorState {
                         | CoreCommand::Shutdown
                         | CoreCommand::ListenerRevoked { .. }
                 );
-                if request.expected_revision != self.snapshot.revision && !is_terminal {
+                // A queue edit carries its own exact precondition, the queue
+                // revision, which every queue change (including a track
+                // change) advances. Position updates advance the snapshot
+                // revision several times a second while a stream plays, so
+                // requiring it here refused nearly every live edit made from
+                // the host UI (device matrix, 2026-11-20). The handlers still
+                // check the queue revision, the reserved next track and
+                // whether the queue is editable.
+                let is_queue_edit = matches!(
+                    &request.command,
+                    CoreCommand::AppendHostQueue { .. }
+                        | CoreCommand::ReorderHostQueue { .. }
+                        | CoreCommand::RemoveHostQueueEntry { .. }
+                        | CoreCommand::ClearHostQueue { .. }
+                );
+                if request.expected_revision != self.snapshot.revision
+                    && !is_terminal
+                    && !is_queue_edit
+                {
                     return Err(invalid_state(
                         format!(
                             "command expected snapshot revision {}, but current revision is {}",
