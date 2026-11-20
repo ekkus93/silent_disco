@@ -653,3 +653,42 @@ fn append_without_validation(
         .expect("append damaged source");
     workflow.wait(|snapshot| snapshot.host_queue.entries().len() == before + 1);
 }
+
+/// Device matrix, 2026-11-20: the opening was sent twice only for a
+/// session's first stream. After the queue ended and Play started a second
+/// stream, the A54 counted no duplicates and the host sent no copies.
+#[test]
+fn every_stream_of_a_session_sends_its_opening_twice() {
+    let workflow = open_or_skip!();
+    let first = workflow.pick(&[("first.wav", long_pcm_wav())]);
+    workflow.add_songs(&first).expect("queue the first song");
+    workflow.wait(|snapshot| snapshot.host_queue.entries().len() == 1);
+    let endpoint = workflow.create_session();
+    let mut listener = workflow.join_listener(endpoint);
+
+    for (round, name) in ["first", "second", "third"].into_iter().enumerate() {
+        if round > 0 {
+            let picked = workflow.pick(&[(&format!("{name}.wav"), long_pcm_wav())]);
+            workflow.add_songs(&picked).expect("queue the next song");
+            workflow.wait(|snapshot| snapshot.host_queue.entries().len() == 1);
+        }
+        workflow
+            .state
+            .start_host_playback(&workflow.registry)
+            .expect("start playback");
+        let stream = receive_until_stop(&mut *listener);
+        stream.assert_contiguous();
+        assert_eq!(
+            stream.duplicate_audio,
+            40,
+            "stream {} sends its opening twice",
+            round + 1
+        );
+        workflow.wait(|snapshot| {
+            snapshot.playback_state == PlaybackState::Stopped
+                && snapshot.host_queue.entries().is_empty()
+        });
+    }
+    listener.shutdown().expect("listener shutdown");
+    workflow.close();
+}

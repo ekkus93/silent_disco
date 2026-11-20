@@ -72,8 +72,13 @@ mod paused_midqueue_socket_pcm_tests;
 mod playback_controls_format_tests;
 #[cfg(test)]
 mod playback_controls_tests;
+#[cfg(test)]
+mod replay_resend_tests;
 
 const MAX_CACHED_TRACK_BOUNDARIES: usize = 100;
+/// How many of a replayed stream's most recent packets may be sent again. The
+/// desktop host re-sends its opening 20 packets after each original.
+pub(crate) const REPLAY_RESEND_WINDOW_PACKETS: usize = 64;
 
 #[derive(Default)]
 pub(crate) struct PlaybackControls {
@@ -104,6 +109,11 @@ pub(crate) struct PlaybackControls {
     // A replayed packet must never rewind its presentation clock even when
     // the packet sequence and sample index happen to match the next slot.
     replay_last_presentation_ms: Option<u64>,
+    // The replay generation's most recent packets, as (sequence, first
+    // sample, presentation). An exact copy of one is a deliberate re-send of
+    // audio this generation already sent, not retired UDP: a retired packet
+    // is anchored to an earlier start, so it can never match all three.
+    replay_recent: VecDeque<(u64, u64, u64)>,
     // A Pause/Resume keeps the stream ID and packet sequence, but moves the
     // presentation anchor. Retired pre-pause UDP must not leak after Resume.
     resume_anchor_floor: Option<u64>,
@@ -239,6 +249,7 @@ impl PlaybackControls {
                         self.awaiting_replay_first_packet = true;
                         self.replay_next_packet = None;
                         self.replay_last_presentation_ms = None;
+                        self.replay_recent.clear();
                     }
                 }
                 self.stream_start = Some(current_start);
@@ -320,6 +331,7 @@ impl PlaybackControls {
                 self.awaiting_replay_first_packet = true;
                 self.replay_next_packet = None;
                 self.replay_last_presentation_ms = None;
+                self.replay_recent.clear();
                 true
             }
             // Explicit Stop must disarm idle listener liveness even when the
@@ -338,6 +350,7 @@ impl PlaybackControls {
                     self.awaiting_replay_first_packet = true;
                     self.replay_next_packet = None;
                     self.replay_last_presentation_ms = None;
+                    self.replay_recent.clear();
                     true
                 }
             }
@@ -379,6 +392,14 @@ impl PlaybackControls {
         };
         if !allowed {
             return false;
+        }
+        let identity = (
+            packet.sequence.get(),
+            packet.first_sample_index.get(),
+            packet.host_presentation_time_ms.get(),
+        );
+        if self.replay_next_packet.is_some() && self.replay_recent.contains(&identity) {
+            return true;
         }
         if self.awaiting_replay_first_packet
             && (packet.sequence.get() != 0 || packet.first_sample_index.get() != 0)
@@ -422,6 +443,10 @@ impl PlaybackControls {
             self.awaiting_replay_first_packet = false;
             self.replay_next_packet = Some((sequence, sample));
             self.replay_last_presentation_ms = Some(packet.host_presentation_time_ms.get());
+            if self.replay_recent.len() == REPLAY_RESEND_WINDOW_PACKETS {
+                self.replay_recent.pop_front();
+            }
+            self.replay_recent.push_back(identity);
         }
         true
     }
