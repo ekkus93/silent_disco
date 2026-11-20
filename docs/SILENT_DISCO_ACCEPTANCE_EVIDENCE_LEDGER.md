@@ -88,3 +88,14 @@
 - **Build:** AppImage `4224605b…` (desktop opening paced + first 200 ms re-sent 20 packets later), A54 APK `ac81c26d…`.
 - **Measured:** host `audio_datagrams_sent=7240` (40 copies), QUIC `lost_packets=5`; listener received 7 235, accepted **7 200 / 7 200**, `duplicate=35`; ring-input capture: no gap, no level dip (first 50 ms at 98.5 %), boundaries exactly 12.000 / 24.000 s.
 - Evidence: `~/work/silent_disco-evidence/playback-run-2026-11-19/run6-opening-resend/` (not CI evidence).
+
+## 2026-11-20 — Live queue edits and a second stream's opening on the A54 (device matrix)
+
+- **Live edits, before the fix** (AppImage `4224605b…`): during playback, every move and remove made from the desktop UI was refused because the snapshot revision was stale, and the panel showed no error. Fixed in `806a7f0e` (queue edits checked against the queue revision).
+- **Queue end, then add and Play** (`4224605b…`): a new stream started at the first added song, and the phone played the host's queue exactly (A, B, D, C, E, each 15.00 s).
+- **After the fixes** (AppImage `ed9196bd…`, `009ec3e5`):
+  - A live "Move D up" applied within 5 s, and the phone played the edited order (A, B, D, C, each 15.00 s, gapless).
+  - Stream 2 of the same session delivered its re-sent opening: the host sent 9 040 datagrams for 9 000 packets, and the phone counted `duplicate=40` (before `009ec3e5`: 0 duplicates, and the host sent exactly the packet count).
+  - Stream 1: `duplicate=37` with QUIC `lost_packets=3`.
+- **Not verified:** the remove and the add of E in the same run. The desktop accessibility tree slowed under memory pressure, so these actions landed late; E ended up starting stream 2. Scenarios still to run: pause/resume at a boundary, Stop/Play, late join, reconnect, and network loss.
+- Evidence: `~/work/silent_disco-evidence/device-matrix-2026-11-20/` (`s1-rerun/`, `s2-both-fixes/`). Not CI evidence.

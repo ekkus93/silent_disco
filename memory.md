@@ -2113,3 +2113,10 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - Likely root cause of the earlier intermittent songs_added_during_live_playback failure: the desktop read a fresh snapshot revision, but a position update could land before the actor saw the append.
 - Passed: check-rust.sh, desktop clippy, desktop cargo test --locked (449), network tests 3x, npm run check (203). Not run: the Android gate. The OS killed it during the Kotlin compile for low memory (7.1 GB machine), together with the device-matrix desktop app and logcat capture. The AppImage was not rebuilt.
 - UI finding: HostQueueControls shows no error when the core refuses an edit (the refusal arrives as a notification, not as a command error).
+
+## 2026-11-20T12:58:07Z - claude-opus-5-5 - Second-stream re-send fixed in the core fence; device matrix partly done
+- 009ec3e5: after a Stop, the host PlaybackControls fence (transport/socket/host/mod.rs permits_audio) admitted only the strictly next packet, so the desktop's opening copies were dropped for every stream except a session's first. It now also admits exact (sequence, sample, presentation) copies of the last 64 packets. A54: stream 2 duplicate=40.
+- secure_rejoin_tests::a_v4_listener_gets_the_stop_then_a_fresh_stream... is pre-existing flaky (~1/40, same with and without the fix): packet 0 can overtake StreamStart on loopback, and wait_for_stream_start discards it.
+- Summing cargo "test result" lines with awk miscounts when two binaries interleave output ("okok"); grep for FAILED instead.
+- Device driving: on the phone's verified-invitation screen, Connect is a content-desc (match text OR content-desc). Under memory pressure AT-SPI is slow, so live edits can land late; check with edit_step.py.
+- svc power stayon usb was set during the run and restored to false.
