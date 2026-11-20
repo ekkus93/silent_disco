@@ -2101,3 +2101,15 @@ LISTEN 0      64                   [::]:2049             [::]:*           on the
 - `OpeningResend` in desktop pump: each packet of the first 200 ms re-sent 20 packets later (~50 ms at 2x pacing). Run 6: QUIC lost 5, listener accepted 7200/7200, duplicates 35, capture clean.
 - Test receiver `receive_until_stop` now skips duplicate sequences (`duplicate_audio` count); a raw receiver would fail contiguity on the intentional copies.
 - Not covered: Android host (sends at 1x from the start, never measured for start loss), multiple listeners (40 extra datagrams per listener per stream start).
+
+## 2026-11-20T10:18:43Z - claude-opus-5-5 - Disk cleanup; device matrix paused on a live-edit bug
+- Disk was 100% full (516 MB free). Deleted rust/target (20G), desktop/src-tauri/target (14G), app/build (4G): ~37G free. The next builds regenerate them, and the first Rust/Android build will be slow.
+- The run-6 AppImage (4224605b) moved to ~/work/silent_disco-evidence/builds/silent-disco-4224605b.AppImage.
+- Device matrix (~/work/silent_disco-evidence/device-matrix-2026-11-20/): queue end then add+Play is OK, and playback follows the host queue exactly. Live move/remove during playback silently fails: the UI sends the on-screen snapshot revision, position updates make it stale, and the core refuses it (actor_runtime/state/mod.rs:237). The queue panel shows no error. A core fix is proposed and awaiting the owner.
+
+## 2026-11-20T10:58:12Z - claude-opus-5-5 - Core fix for live queue edits (uncommitted); Android gate killed for low memory
+- Fix in actor_runtime/state/mod.rs: queue edits (Append/Reorder/Remove/Clear) are exempt from the snapshot revision check, and their handlers still check the queue revision, the reservations and editability. complete_current bumps the queue revision, so a track change still outdates an edit planned before it.
+- Tests: core tests/host_queue_edit_during_playback.rs (4 tests, the first failed before the fix). Desktop workflow test live_moves_and_removals_from_the_shown_revisions_apply_and_play_in_order fails with the exemption disabled. The stale-edit workflow test now expects "queue revision changed".
+- Likely root cause of the earlier intermittent songs_added_during_live_playback failure: the desktop read a fresh snapshot revision, but a position update could land before the actor saw the append.
+- Passed: check-rust.sh, desktop clippy, desktop cargo test --locked (449), network tests 3x, npm run check (203). Not run: the Android gate. The OS killed it during the Kotlin compile for low memory (7.1 GB machine), together with the device-matrix desktop app and logcat capture. The AppImage was not rebuilt.
+- UI finding: HostQueueControls shows no error when the core refuses an edit (the refusal arrives as a notification, not as a command error).
